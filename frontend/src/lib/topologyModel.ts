@@ -28,12 +28,29 @@ export type TopologyHealth =
   | 'disabled'
   | 'unknown'
 
+export type TopologySkillState = 'ready' | 'running' | 'missing' | 'blocked'
+
+export interface TopologySkill {
+  id: string
+  label: string
+  state: TopologySkillState
+  description: string
+  targetPath?: string
+}
+
+export interface TopologyPorts {
+  inputs: string[]
+  outputs: string[]
+}
+
 export interface TopologyNodeData extends Record<string, unknown> {
   kind: TopologyKind
   title: string
   subtitle: string
   health: TopologyHealth
   badges: string[]
+  skills: TopologySkill[]
+  ports: TopologyPorts
   targetPath?: string
   detail: Record<string, unknown>
 }
@@ -43,6 +60,8 @@ interface TopologyNodeBody {
   subtitle: string
   health: TopologyHealth
   badges: string[]
+  skills: TopologySkill[]
+  ports: TopologyPorts
   targetPath?: string
   detail: Record<string, unknown>
 }
@@ -71,6 +90,13 @@ export interface TopologyGraph {
     warning: number
     active: number
     disabled: number
+    skills: {
+      total: number
+      ready: number
+      running: number
+      missing: number
+      blocked: number
+    }
   }
 }
 
@@ -110,6 +136,15 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
   const seenNodes = new Set<string>()
   const seenEdges = new Set<string>()
   const rowsByColumn = new Map<number, number>()
+  const schedulesBySource = groupBy(input.schedules ?? [], (schedule) => schedule.source_id)
+  const tasksBySource = groupBy(input.tasks, (task) => task.source_id)
+  const recordsBySource = groupBy(input.records, (record) => record.source_id)
+  const rulesBySource = groupBy(
+    input.notificationRules.filter((rule) => rule.source_id),
+    (rule) => rule.source_id ?? '',
+  )
+  const logsByRule = groupBy(input.notificationLogs, (log) => log.rule_id)
+  const logsByRecord = groupBy(input.notificationLogs, (log) => log.record_id || '')
 
   const addNode = (kind: TopologyKind, rawId: string, data: TopologyNodeBody) => {
     const id = nodeId(kind, rawId)
@@ -133,11 +168,50 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
   }
 
   for (const source of input.sources) {
+    const sourceSchedules = schedulesBySource.get(source.id) ?? []
+    const sourceTasks = tasksBySource.get(source.id) ?? []
+    const sourceRecords = recordsBySource.get(source.id) ?? []
+    const sourceRules = rulesBySource.get(source.id) ?? []
     addNode('source', source.id, {
       title: source.name,
       subtitle: source.channel_type,
       health: source.enabled ? 'healthy' : 'disabled',
       badges: compact([source.enabled ? 'enabled' : 'disabled', ...source.tags.slice(0, 2)]),
+      skills: [
+        skill('collect', 'Collect', source.enabled ? 'ready' : 'blocked', source.enabled ? 'Channel can be triggered' : 'Source is disabled', '/sources'),
+        skill(
+          'schedule',
+          'Schedule',
+          sourceSchedules.length > 0 ? 'ready' : 'missing',
+          sourceSchedules.length > 0 ? `${sourceSchedules.length} plan(s) attached` : 'No schedule attached',
+          `/schedules?source_id=${encodeURIComponent(source.id)}`,
+        ),
+        skill(
+          'process',
+          'Process',
+          sourceTasks.some((task) => task.agent_id) ? 'ready' : 'missing',
+          sourceTasks.some((task) => task.agent_id) ? 'Recent task used an agent' : 'No agent-linked run yet',
+          '/agents',
+        ),
+        skill(
+          'notify',
+          'Notify',
+          sourceRules.length > 0 ? 'ready' : 'missing',
+          sourceRules.length > 0 ? `${sourceRules.length} notification rule(s)` : 'No notification rule attached',
+          '/notifications',
+        ),
+        skill(
+          'records',
+          'Records',
+          sourceRecords.length > 0 ? 'ready' : 'missing',
+          sourceRecords.length > 0 ? `${sourceRecords.length} record(s) observed` : 'No records observed yet',
+          '/records',
+        ),
+      ],
+      ports: {
+        inputs: ['topic'],
+        outputs: ['collect'],
+      },
       targetPath: '/sources',
       detail: {
         id: source.id,
@@ -157,6 +231,33 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
         schedule.timezone,
         schedule.next_run_at ? `next ${shortDate(schedule.next_run_at)}` : undefined,
       ]),
+      skills: [
+        skill(
+          'cron',
+          'Cron',
+          schedule.enabled ? 'ready' : 'blocked',
+          schedule.enabled ? schedule.cron_expression : 'Schedule is disabled',
+          `/schedules?source_id=${encodeURIComponent(schedule.source_id)}`,
+        ),
+        skill(
+          'next-run',
+          'Next run',
+          schedule.next_run_at ? 'ready' : 'missing',
+          schedule.next_run_at ? shortDate(schedule.next_run_at) : 'No next run calculated',
+          '/schedules',
+        ),
+        skill(
+          'agent',
+          'Agent',
+          schedule.agent_id ? 'ready' : 'missing',
+          schedule.agent_id ? `Agent ${shortId(schedule.agent_id)}` : 'Runs without a pinned agent',
+          '/agents',
+        ),
+      ],
+      ports: {
+        inputs: ['source_ref'],
+        outputs: ['trigger'],
+      },
       targetPath: `/schedules?source_id=${encodeURIComponent(schedule.source_id)}`,
       detail: {
         id: schedule.id,
@@ -180,6 +281,27 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
       subtitle: task.trigger_type,
       health: healthFromTaskStatus(task.status),
       badges: compact([task.status, `P${task.priority}`]),
+      skills: [
+        skill(
+          'run',
+          'Run',
+          task.status === 'running' ? 'running' : task.status === 'failed' || task.status === 'cancelled' ? 'blocked' : 'ready',
+          task.status,
+          '/tasks',
+        ),
+        skill(
+          'agent',
+          'Agent',
+          task.agent_id ? 'ready' : 'missing',
+          task.agent_id ? `Agent ${shortId(task.agent_id)}` : 'No agent attached',
+          '/agents',
+        ),
+        skill('priority', 'Priority', task.priority > 0 ? 'ready' : 'missing', `Priority ${task.priority}`, '/tasks'),
+      ],
+      ports: {
+        inputs: ['trigger'],
+        outputs: ['enrich'],
+      },
       targetPath: '/tasks',
       detail: {
         id: task.id,
@@ -199,6 +321,27 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
       subtitle: agent.model || agent.processor_type,
       health: agent.enabled ? 'healthy' : 'disabled',
       badges: compact([agent.enabled ? 'enabled' : 'disabled', agent.processor_type]),
+      skills: [
+        skill(
+          'prompt',
+          'Prompt',
+          agent.prompt_template ? 'ready' : 'missing',
+          agent.prompt_template ? 'Prompt template configured' : 'No prompt template',
+          '/agents',
+        ),
+        skill('model', 'Model', agent.model ? 'ready' : 'missing', agent.model || 'No model override', '/providers'),
+        skill(
+          'runtime',
+          'Runtime',
+          agent.enabled ? 'ready' : 'blocked',
+          agent.enabled ? agent.processor_type : 'Agent is disabled',
+          '/agents',
+        ),
+      ],
+      ports: {
+        inputs: ['record'],
+        outputs: ['enrich'],
+      },
       targetPath: '/agents',
       detail: {
         id: agent.id,
@@ -224,11 +367,39 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
 
   for (const record of sampledRecords) {
     const title = readRecordTitle(record) || `Record ${shortId(record.id)}`
+    const recordLogs = logsByRecord.get(record.id) ?? []
     const recordNode = addNode('record', record.id, {
       title,
       subtitle: record.status,
       health: healthFromRecordStatus(record.status),
       badges: compact([record.status, shortId(record.content_hash)]),
+      skills: [
+        skill(
+          'normalize',
+          'Normalize',
+          record.normalized_data && Object.keys(record.normalized_data).length > 0 ? 'ready' : 'missing',
+          'Normalized payload',
+          '/records',
+        ),
+        skill(
+          'ai',
+          'AI',
+          record.ai_enrichment && Object.keys(record.ai_enrichment).length > 0 ? 'ready' : 'missing',
+          record.ai_enrichment ? 'AI enrichment present' : 'No AI enrichment',
+          '/records',
+        ),
+        skill(
+          'notify',
+          'Notify',
+          recordLogs.length > 0 ? 'ready' : 'missing',
+          recordLogs.length > 0 ? `${recordLogs.length} notification log(s)` : 'No notification sent',
+          '/notifications',
+        ),
+      ],
+      ports: {
+        inputs: ['source', 'task'],
+        outputs: ['notification'],
+      },
       targetPath: '/records',
       detail: {
         id: record.id,
@@ -243,16 +414,37 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
     addEdge(nodeId('source', record.source_id), recordNode, 'collects', healthFromRecordStatus(record.status))
   }
 
-  const logsByRule = groupBy(input.notificationLogs, (log) => log.rule_id)
-  const logsByRecord = groupBy(input.notificationLogs, (log) => log.record_id || '')
-
   for (const rule of input.notificationRules.slice(0, maxNotifications)) {
     const ruleLogs = logsByRule.get(rule.id) ?? []
+    const hasAck = ruleLogs.some((log) => log.ack_status === 'acked')
+    const hasPendingAck = ruleLogs.some((log) => log.ack_status === 'pending')
+
     const notificationNode = addNode('notification', rule.id, {
       title: rule.name,
       subtitle: rule.notifier_type,
       health: healthFromNotification(rule, ruleLogs),
       badges: compact([rule.enabled ? 'enabled' : 'disabled', rule.trigger_event]),
+      skills: [
+        skill('deliver', 'Deliver', rule.enabled ? 'ready' : 'blocked', rule.enabled ? rule.notifier_type : 'Rule is disabled', '/notifications'),
+        skill(
+          'ack',
+          'ACK',
+          hasAck ? 'ready' : hasPendingAck ? 'running' : 'missing',
+          hasAck ? 'Downstream acknowledged' : hasPendingAck ? 'Waiting for downstream ACK' : 'No ACK observed',
+          '/notifications',
+        ),
+        skill(
+          'filter',
+          'Filter',
+          rule.filter_conditions && Object.keys(rule.filter_conditions).length > 0 ? 'ready' : 'missing',
+          rule.filter_conditions ? 'Filter configured' : 'Broadcast rule',
+          '/notifications',
+        ),
+      ],
+      ports: {
+        inputs: ['record'],
+        outputs: ['ack'],
+      },
       targetPath: '/notifications',
       detail: {
         id: rule.id,
@@ -283,6 +475,21 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
       subtitle: `${node.protocol.toUpperCase()} · ${node.mode}`,
       health: node.status === 'online' ? 'healthy' : 'failed',
       badges: compact([node.node_type, node.status]),
+      skills: [
+        skill('transport', 'Transport', node.status === 'online' ? 'ready' : 'blocked', node.protocol.toUpperCase(), '/nodes'),
+        skill('browser', 'Browser', node.mode ? 'ready' : 'missing', node.mode, '/nodes'),
+        skill(
+          'heartbeat',
+          'Heartbeat',
+          node.last_seen_at ? 'ready' : 'missing',
+          node.last_seen_at ? shortDate(node.last_seen_at) : 'No heartbeat yet',
+          '/nodes',
+        ),
+      ],
+      ports: {
+        inputs: ['control'],
+        outputs: ['route'],
+      },
       targetPath: '/nodes',
       detail: {
         id: node.id,
@@ -294,11 +501,27 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
   }
 
   for (const worker of input.workers) {
+    const workerHealth = healthFromWorker(worker)
     addNode('worker', worker.id, {
       title: worker.hostname || worker.worker_id,
       subtitle: worker.worker_id,
-      health: healthFromWorker(worker),
+      health: workerHealth,
       badges: compact([worker.status, `${worker.active_tasks} active`]),
+      skills: [
+        skill('execute', 'Execute', workerHealth === 'failed' ? 'blocked' : 'ready', worker.status, '/workers'),
+        skill('queue', 'Queue', worker.active_tasks > 0 ? 'running' : 'ready', `${worker.active_tasks} active task(s)`, '/workers'),
+        skill(
+          'heartbeat',
+          'Heartbeat',
+          worker.last_heartbeat ? 'ready' : 'missing',
+          worker.last_heartbeat ? shortDate(worker.last_heartbeat) : 'No heartbeat yet',
+          '/workers',
+        ),
+      ],
+      ports: {
+        inputs: ['task'],
+        outputs: ['result'],
+      },
       targetPath: '/workers',
       detail: {
         id: worker.id,
@@ -316,8 +539,16 @@ export function buildTopologyGraph(input: TopologyInput, options: TopologyOption
       warning: acc.warning + (node.data.health === 'warning' ? 1 : 0),
       active: acc.active + (node.data.health === 'active' ? 1 : 0),
       disabled: acc.disabled + (node.data.health === 'disabled' ? 1 : 0),
+      skills: summarizeSkills(acc.skills, node.data.skills),
     }),
-    { total: 0, failed: 0, warning: 0, active: 0, disabled: 0 },
+    {
+      total: 0,
+      failed: 0,
+      warning: 0,
+      active: 0,
+      disabled: 0,
+      skills: { total: 0, ready: 0, running: 0, missing: 0, blocked: 0 },
+    },
   )
 
   return { nodes, edges, summary }
@@ -416,4 +647,30 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string) {
 
 function compact(items: Array<string | undefined | null | false>) {
   return items.filter((item): item is string => typeof item === 'string' && item.length > 0)
+}
+
+function skill(id: string, label: string, state: TopologySkillState, description: string, targetPath?: string): TopologySkill {
+  return { id, label, state, description, targetPath }
+}
+
+function summarizeSkills(
+  accumulator: {
+    total: number
+    ready: number
+    running: number
+    missing: number
+    blocked: number
+  },
+  items: TopologySkill[],
+) {
+  return items.reduce(
+    (next, item) => ({
+      total: next.total + 1,
+      ready: next.ready + (item.state === 'ready' ? 1 : 0),
+      running: next.running + (item.state === 'running' ? 1 : 0),
+      missing: next.missing + (item.state === 'missing' ? 1 : 0),
+      blocked: next.blocked + (item.state === 'blocked' ? 1 : 0),
+    }),
+    accumulator,
+  )
 }
