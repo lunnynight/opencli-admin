@@ -102,6 +102,7 @@ docker compose up -d   # 启动中心 + agent-1
 
 ```bash
 npm install
+npm run env:check    # 校验 Node/Nx/依赖环境
 npm run dev           # 同时启动 frontend 与 extension 的 dev 任务
 npm run dev:frontend  # 只启动 frontend（监听 5173）
 npm run build         # 一键构建前端与扩展
