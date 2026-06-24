@@ -49,6 +49,7 @@ import Card from '../components/Card'
 import ErrorAlert from '../components/ErrorAlert'
 import { PageLoader } from '../components/LoadingSpinner'
 import PageHeader from '../components/PageHeader'
+import { OperatorCard, WorkbenchPanel } from '../components/opencli'
 import {
   buildTopologyGraph,
   fallbackLayout,
@@ -577,42 +578,29 @@ function TopologyOperations({
   ]
 
   return (
-    <Card padding={false} className="overflow-hidden">
-      <div className="border-b border-white/10 p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="telemetry-label">OPERATIONS QUEUE</p>
-            <h2 className="mt-1 text-lg font-semibold text-zinc-100">先处理工作，再打开诊断画布</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-500">
-              拓扑页现在先回答“哪里需要人介入”，画布负责解释关系和定位根因。
-            </p>
-          </div>
-          <div className="shrink-0 border border-white/10 bg-black/25 px-3 py-2 text-xs text-zinc-500">
-            {isFetching ? t('topology.refreshing') : t('topology.edgeCount', { count: graph.edges.length })}
-          </div>
+    <WorkbenchPanel
+      label="OPERATIONS QUEUE"
+      title="先处理工作，再打开诊断画布"
+      description="拓扑页现在先回答“哪里需要人介入”，画布负责解释关系和定位根因。"
+      action={(
+        <div className="border border-white/10 bg-black/25 px-3 py-2 text-xs text-zinc-500">
+          {isFetching ? t('topology.refreshing') : t('topology.edgeCount', { count: graph.edges.length })}
         </div>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
-          {cards.map((card) => {
-            const Icon = card.icon
-            return (
-              <button
-                key={card.id}
-                type="button"
-                onClick={() => onSetMode(card.mode)}
-                className="group min-h-28 border border-white/10 bg-black/20 p-3 text-left transition-colors hover:border-primary-500/45 hover:bg-white/[0.04]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <span className={`grid h-9 w-9 shrink-0 place-items-center border ${card.tone}`}>
-                    <Icon size={16} />
-                  </span>
-                  <span className="font-code text-2xl text-zinc-50">{card.value}</span>
-                </div>
-                <p className="mt-3 text-sm font-semibold text-zinc-100">{card.label}</p>
-                <p className="mt-1 text-xs leading-5 text-zinc-500">{card.hint}</p>
-              </button>
-            )
-          })}
+      )}
+    >
+      <div className="border-b border-white/10 p-4">
+        <div className="grid gap-3 md:grid-cols-4">
+          {cards.map((card) => (
+            <OperatorCard
+              key={card.id}
+              label={card.label}
+              value={card.value}
+              hint={card.hint}
+              icon={card.icon}
+              tone={card.tone}
+              onClick={() => onSetMode(card.mode)}
+            />
+          ))}
         </div>
       </div>
 
@@ -669,7 +657,7 @@ function TopologyOperations({
           </div>
         )}
       </div>
-    </Card>
+    </WorkbenchPanel>
   )
 }
 

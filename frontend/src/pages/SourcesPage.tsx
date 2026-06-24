@@ -45,7 +45,7 @@ import ChannelConfigForm, { type ChannelType, PRESET_DEFAULT, SITE_LABELS, COMMA
 import { TableSkeleton } from '../components/SkeletonLoader'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Pagination from '../components/Pagination'
-import { MetricTile, PanelHeader } from '../components/opencli'
+import { MetricTile, OperatorCard, PanelHeader, WorkbenchPanel } from '../components/opencli'
 import { cn } from '@/lib/utils'
 import {
   SOURCE_WORKFLOW_LAYOUT_KEY,
@@ -1861,6 +1861,169 @@ function StatePill({ health }: { health: WorkflowHealth }) {
   )
 }
 
+function SourceConfigurationPanel({
+  sources,
+  statsBySource,
+  selectedSourceId,
+  actionStates,
+  showDiagnosticCanvas,
+  onSelect,
+  onTrigger,
+  onEdit,
+  onAddSchedule,
+  onToggle,
+  onOpenAdd,
+  onToggleDiagnosticCanvas,
+}: {
+  sources: DataSource[]
+  statsBySource: Record<string, SourceWorkflowStats>
+  selectedSourceId?: string
+  actionStates: Record<string, ActionState>
+  showDiagnosticCanvas: boolean
+  onSelect: (source: DataSource) => void
+  onTrigger: (source: DataSource) => void
+  onEdit: (source: DataSource) => void
+  onAddSchedule: (source: DataSource) => void
+  onToggle: (source: DataSource) => void
+  onOpenAdd: () => void
+  onToggleDiagnosticCanvas: () => void
+}) {
+  const enabledCount = sources.filter((source) => source.enabled).length
+  const scheduleCount = sources.reduce((total, source) => total + (statsBySource[source.id]?.scheduleCount ?? 0), 0)
+  const failedCount = sources.reduce((total, source) => total + (statsBySource[source.id]?.failedTasks ?? 0), 0)
+
+  return (
+    <WorkbenchPanel
+      label="SOURCE CONFIGURATION"
+      title="数据源配置台"
+      description="这里负责采集源身份、参数、计划和触发；节点关系和跨系统诊断移到拓扑工作台。"
+      action={(
+        <div className="flex flex-wrap gap-2">
+          <Link to="/topology" className="inline-flex h-9 items-center justify-center gap-2 border border-white/14 bg-black/25 px-3 font-telemetry text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-200 hover:border-white/28 hover:bg-white/[0.075]">
+            <ExternalLink size={14} />
+            拓扑工作台
+          </Link>
+          <Button type="button" size="sm" variant="outline" onClick={onToggleDiagnosticCanvas}>
+            {showDiagnosticCanvas ? '关闭诊断画布' : '打开诊断画布'}
+          </Button>
+          <Button type="button" size="sm" onClick={onOpenAdd}>
+            <Plus size={14} />
+            新增数据源
+          </Button>
+        </div>
+      )}
+    >
+      <div className="border-b border-white/10 p-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <OperatorCard
+            label="启用数据源"
+            value={`${enabledCount}/${sources.length}`}
+            hint="这里只看采集源配置"
+            icon={Database}
+            tone="border-primary-500/40 bg-primary-500/12 text-primary-100"
+          />
+          <OperatorCard
+            label="采集计划"
+            value={scheduleCount}
+            hint="计划仍在源上配置"
+            icon={Calendar}
+            tone="border-emerald-400/35 bg-emerald-400/10 text-emerald-100"
+          />
+          <OperatorCard
+            label="失败任务"
+            value={failedCount}
+            hint="处理入口在 Run Inbox"
+            icon={Filter}
+            tone={failedCount > 0 ? 'border-red-400/35 bg-red-400/10 text-red-100' : 'border-white/10 bg-white/[0.035] text-zinc-300'}
+          />
+        </div>
+      </div>
+
+      <div className="p-4">
+        {sources.length === 0 ? (
+          <div className="grid min-h-56 place-items-center border border-dashed border-white/12 bg-black/20 px-6 text-center">
+            <div>
+              <Database className="mx-auto h-10 w-10 text-zinc-700" />
+              <h3 className="mt-4 text-sm font-semibold text-zinc-200">还没有数据源</h3>
+              <p className="mt-2 text-sm text-zinc-500">先创建一个 OpenCLI、RSS 或 API 源，再去拓扑工作台看运行关系。</p>
+              <Button type="button" className="mt-5" onClick={onOpenAdd}>
+                <Plus size={15} />
+                新增数据源
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {sources.map((source) => {
+              const meta = CHANNEL_META[source.channel_type as ChannelType] ?? CHANNEL_META.opencli
+              const Icon = meta.icon
+              const stats = statsBySource[source.id]
+              const triggerKey = makeNodeActionStateKey('source', source.id, 'source.trigger')
+              const triggerState = actionStates[triggerKey]
+              return (
+                <article
+                  key={source.id}
+                  data-active={selectedSourceId === source.id}
+                  className="min-w-0 border border-white/10 bg-black/20 p-4 data-[active=true]:border-primary-500/65 data-[active=true]:bg-primary-500/[0.075]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <button type="button" onClick={() => onSelect(source)} className="flex min-w-0 flex-1 items-start gap-3 text-left">
+                      <span className={cn('grid h-10 w-10 shrink-0 place-items-center border', meta.tone)}>
+                        <Icon size={18} />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={cn('h-2 w-2 rounded-full', source.enabled ? 'bg-emerald-400' : 'bg-zinc-600')} />
+                          <h3 className="truncate text-base font-semibold text-zinc-100">{source.name}</h3>
+                        </div>
+                        <p className="mt-1 truncate font-code text-xs text-zinc-500">{sourceTarget(source)}</p>
+                      </div>
+                    </button>
+                    <Badge variant="outline" className={cn('border', meta.tone)}>{meta.short}</Badge>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <MetricBox label="PLANS" value={stats?.scheduleCount ?? 0} />
+                    <MetricBox label="TASKS" value={stats?.taskCount ?? 0} />
+                    <MetricBox label="FAILED" value={stats?.failedTasks ?? 0} danger={(stats?.failedTasks ?? 0) > 0} />
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button type="button" size="xs" onClick={() => onTrigger(source)} disabled={triggerState === 'loading'}>
+                      {triggerState === 'loading' ? (
+                        <span className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
+                      ) : (
+                        <Play size={13} />
+                      )}
+                      触发
+                    </Button>
+                    <Button type="button" size="xs" variant="outline" onClick={() => onAddSchedule(source)}>
+                      <Calendar size={13} />
+                      计划
+                    </Button>
+                    <Button type="button" size="xs" variant="ghost" onClick={() => onEdit(source)}>
+                      <Pencil size={13} />
+                      编辑
+                    </Button>
+                    <Button type="button" size="xs" variant="ghost" onClick={() => onToggle(source)}>
+                      {source.enabled ? '停用' : '启用'}
+                    </Button>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-3 text-xs text-zinc-500">
+                    <span>最近任务：{stats?.latestTaskStatus ?? 'N/A'}</span>
+                    <span>{formatDateTime(stats?.latestTaskUpdatedAt)}</span>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </WorkbenchPanel>
+  )
+}
+
 export default function SourcesPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [draftType, setDraftType] = useState<ChannelType>('opencli')
@@ -1872,6 +2035,7 @@ export default function SourcesPage() {
   const [deleteScheduleTarget, setDeleteScheduleTarget] = useState<CronSchedule | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [channelFilter, setChannelFilter] = useState<FilterType>('all')
+  const [showDiagnosticCanvas, setShowDiagnosticCanvas] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [flowNodes, setFlowNodes] = useState<WorkflowFlowNode[]>([])
   const [layoutVersion, setLayoutVersion] = useState(0)
@@ -2214,8 +2378,8 @@ export default function SourcesPage() {
   if (isInitialLoading) return (
     <div className="space-y-5">
       <PageHeader
-        title="数据源工作流"
-        description="用自由画布组织数据源、采集计划和最近任务。"
+        title="数据源配置"
+        description="配置采集源、认证参数和采集计划；拓扑关系进入拓扑工作台处理。"
         action={<Button type="button" onClick={() => openAddModal('opencli')}><Plus size={16} /> 新增数据源</Button>}
       />
       <Card padding={false}><TableSkeleton rows={6} /></Card>
@@ -2226,8 +2390,8 @@ export default function SourcesPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="数据源工作流"
-        description="源、采集计划和最近任务在同一张画布里拖拽、聚焦、设定计划。"
+        title="数据源配置"
+        description="数据源页只负责源身份、参数和计划；节点关系和运行诊断交给拓扑工作台。"
         action={
           <div className="flex flex-wrap items-center gap-2">
             {selectedSource && (
@@ -2257,23 +2421,42 @@ export default function SourcesPage() {
           icon={Calendar}
           tone={graph.summary.enabledSchedules > 0 ? 'success' : 'neutral'}
         />
-        <MetricTile
-          label="RUNNING"
-          value={graph.summary.runningTasks}
-          sub={`${graph.summary.tasks} 个任务进入画布`}
-          icon={Activity}
-          tone={graph.summary.runningTasks > 0 ? 'warning' : 'neutral'}
-        />
-        <MetricTile
-          label="FAILED"
-          value={graph.summary.failedTasks}
-          sub={isFetching ? '正在刷新' : `${filteredSources.length} 个源可见`}
-          icon={Filter}
-          tone={graph.summary.failedTasks > 0 ? 'danger' : 'neutral'}
-        />
-      </div>
+      <MetricTile
+        label="RUNNING"
+        value={graph.summary.runningTasks}
+        sub={`${graph.summary.tasks} 个采集任务`}
+        icon={Activity}
+        tone={graph.summary.runningTasks > 0 ? 'warning' : 'neutral'}
+      />
+      <MetricTile
+        label="FAILED"
+        value={graph.summary.failedTasks}
+        sub={isFetching ? '正在刷新' : `${filteredSources.length} 个源可见`}
+        icon={Filter}
+        tone={graph.summary.failedTasks > 0 ? 'danger' : 'neutral'}
+      />
+    </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+    <SourceConfigurationPanel
+      sources={filteredSources}
+      statsBySource={graph.sourceStats}
+      selectedSourceId={selectedSource?.id}
+      actionStates={actionStates}
+      showDiagnosticCanvas={showDiagnosticCanvas}
+      onSelect={(source) => setSelectedNodeId(workflowNodeId('source', source.id))}
+      onTrigger={(source) => {
+        setSelectedNodeId(workflowNodeId('source', source.id))
+        setPendingActionSource({ source, actionId: 'source.trigger' })
+      }}
+      onEdit={setEditSource}
+      onAddSchedule={(source) => setScheduleDraftSourceId(source.id)}
+      onToggle={(source) => toggleMut.mutate({ id: source.id, enabled: !source.enabled })}
+      onOpenAdd={() => openAddModal('opencli')}
+      onToggleDiagnosticCanvas={() => setShowDiagnosticCanvas((value) => !value)}
+    />
+
+    {showDiagnosticCanvas && (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
         <section className="min-w-0 overflow-hidden border border-white/10 bg-black/20">
           <PanelHeader
             label="COLLECTION CANVAS"
@@ -2418,10 +2601,11 @@ export default function SourcesPage() {
             }
           }}
           onDeleteSchedule={() => { if (selectedSchedule) setDeleteScheduleTarget(selectedSchedule) }}
-        />
-      </div>
+      />
+    </div>
+    )}
 
-      {showAdd && (
+    {showAdd && (
         <SourceModal
           key={draftType}
           initialType={draftType}
