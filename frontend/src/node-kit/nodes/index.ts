@@ -3,6 +3,7 @@
 //   processors→ backend processors (openai/claude/local/external_http)
 //   pipeline  → pipeline stages (schedule/manual trigger, store, notify)
 //   primitives→ generic compute atoms (value/filter/map/branch/display/note)
+import { COLLECTION_NODES } from './collection'
 import { PIPELINE_NODES } from './pipeline'
 import { PRIMITIVE_NODES } from './primitives'
 import { PROCESSOR_NODES } from './processors'
@@ -13,10 +14,12 @@ export { SOURCE_NODES } from './sources'
 export { PROCESSOR_NODES } from './processors'
 export { PIPELINE_NODES } from './pipeline'
 export { PRIMITIVE_NODES } from './primitives'
+export { COLLECTION_NODES } from './collection'
 
 export const ALL_NODES: NodeSpec<any>[] = [
   ...SOURCE_NODES,
   ...PROCESSOR_NODES,
   ...PIPELINE_NODES,
   ...PRIMITIVE_NODES,
+  ...COLLECTION_NODES,
 ]

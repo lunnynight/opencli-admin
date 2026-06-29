@@ -1,22 +1,26 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import {
   Background,
   BackgroundVariant,
   Controls,
-  Handle,
   MiniMap,
   Panel,
-  Position,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
   useReactFlow,
 } from '@xyflow/react'
-import type { Edge, Node, NodeProps } from '@xyflow/react'
+import type { Edge, Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import type { TopologyHealth, TopologyNodeData } from './topologyModel'
+import { ALL_NODES, hasNode, nodeTypesForXyflow, registerNodes } from '../../node-kit'
+
+// The collection.* specs must exist before this canvas mounts (it may mount
+// before NetworkPage runs its own registerNodes). Idempotent: the registry is a
+// Map keyed by type, so registering again just overwrites with the same spec.
+registerNodes(ALL_NODES)
 
 type TopologyNodeViewData = TopologyNodeData & { onDive?: () => void }
 type TopologyFlowNode = Node<TopologyNodeViewData>
@@ -38,124 +42,27 @@ const m3Decel = (t: number) => 1 - Math.pow(1 - t, 4)
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-const NODE_WIDTH = 264
-
-function TopologyNodeView({ data, selected }: NodeProps<TopologyFlowNode>) {
-  const status = readDetailString(data.detail, 'current_status', healthLabel(data.health))
-  const gap = readDetailString(data.detail, 'capability_gap', '暂无能力缺口')
-  const responsibility = readDetailString(data.detail, 'responsibility', data.subtitle)
-  const stageCode = readDetailString(data.detail, 'stage_code', data.kind.slice(0, 2).toUpperCase())
-  const actionLabel = data.actions.find((action) => action.enabled)?.label ?? data.actions[0]?.label ?? '查看详情'
-  const missingCount = data.skills.filter((item) => item.state === 'missing' || item.state === 'blocked').length
-  const hasInput = data.ports.inputs.length > 0
-  const hasOutput = data.ports.outputs.length > 0
-
-  return (
-    <div
-      style={{ width: NODE_WIDTH }}
-      className={[
-        'group relative rounded-lg border bg-[#0a0a0c]/95 px-3 py-3 text-left shadow-xl backdrop-blur transition-colors',
-        selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-white/[0.12] hover:border-white/30',
-      ].join(' ')}
-    >
-      {hasInput && (
-        <Handle
-          type="target"
-          position={Position.Left}
-          className={`!h-3 !w-3 !border-2 !border-[#0a0a0c] ${handleColorClass(data.health)}`}
-        />
-      )}
-      {hasOutput && (
-        <Handle
-          type="source"
-          position={Position.Right}
-          className={`!h-3 !w-3 !border-2 !border-[#0a0a0c] ${handleColorClass(data.health)}`}
-        />
-      )}
-
-      <div className="flex items-start gap-3">
-        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${healthSoftClass(data.health)}`}>
-          <span className="font-code text-[10px] font-semibold uppercase">{stageCode}</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              {data.subtitle}
-            </span>
-            <span className={`h-2 w-2 rounded-full ${healthDotClass(data.health)}`} />
-          </div>
-          <div className="mt-1 truncate text-sm font-semibold text-white" title={data.title}>
-            {data.title}
-          </div>
-          <div className="mt-1 max-h-8 overflow-hidden text-[11px] leading-4 text-slate-400" title={responsibility}>
-            {responsibility}
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-3 grid gap-1.5 text-[10px] leading-4">
-        <NodeFact label="状态" value={status} />
-        <NodeFact label="缺口" value={gap} tone={missingCount > 0 ? 'warning' : 'neutral'} />
-        {data.onDive ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              data.onDive?.()
-            }}
-            className="nodrag nopan flex items-center justify-between gap-2 border border-sky-500/40 bg-sky-500/[0.12] px-2 py-1 font-medium text-sky-100 transition hover:bg-sky-500/20 active:scale-[0.99]"
-          >
-            <span>进入子网</span>
-            <span aria-hidden className="text-sky-300">›</span>
-          </button>
-        ) : (
-          <NodeFact label="动作" value={actionLabel} tone="action" />
-        )}
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {data.badges.slice(0, 2).map((badge) => (
-          <span
-            key={badge}
-            className="max-w-[116px] truncate rounded-sm border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-zinc-300"
-            title={badge}
-          >
-            {badge}
-          </span>
-        ))}
-        {missingCount > 0 && (
-          <span className="rounded-sm border border-red-400/35 bg-red-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-100">
-            {missingCount} gaps
-          </span>
-        )}
-      </div>
-    </div>
-  )
+// L1/L2 stage cards now render through node-kit's <KitNode> (collection.* specs);
+// the per-stage facts/config are projected from TopologyNodeData below.
+function stageConfig(d: TopologyNodeData): Record<string, unknown> {
+  const detail = d.detail ?? {}
+  return {
+    __entityId: detail.id,
+    __sourceId: detail.source_id,
+    __agentId: detail.agent_id,
+    __badges: d.badges,
+    enabled: d.health !== 'disabled',
+    name: d.title,
+    channel_type: d.subtitle,
+    status: detail.status,
+  }
 }
 
-const topologyNodeTypes = {
-  topologyNode: TopologyNodeView,
-}
-
-function NodeFact({
-  label,
-  value,
-  tone = 'neutral',
-}: {
-  label: string
-  value: string
-  tone?: 'neutral' | 'warning' | 'action'
-}) {
-  const valueClass =
-    tone === 'warning' ? 'text-amber-100' : tone === 'action' ? 'text-sky-100' : 'text-zinc-300'
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-2 border border-white/[0.06] bg-white/[0.025] px-2 py-1">
-      <span className="shrink-0 text-zinc-600">{label}</span>
-      <span className={`truncate font-medium ${valueClass}`} title={value}>
-        {value}
-      </span>
-    </div>
-  )
+function stageFacts(d: TopologyNodeData): Record<string, unknown> {
+  return {
+    状态: readDetailString(d.detail, 'current_status', healthLabel(d.health)),
+    缺口: readDetailString(d.detail, 'capability_gap', '暂无能力缺口'),
+  }
 }
 
 function ReactFlowTopologyCanvasInner({
@@ -170,6 +77,9 @@ function ReactFlowTopologyCanvasInner({
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TopologyFlowNode>([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TopologyFlowEdge>([])
   const { fitView } = useReactFlow()
+  // One nodeTypes map from the registry (KitNode bound per spec.type). Only the
+  // set of registered types matters, so it's stable for this component's life.
+  const nodeTypes = useMemo(() => nodeTypesForXyflow(), [])
 
   // Keep dive callback in a ref so the sync effect below does NOT depend on its
   // (per-render-unstable) identity — otherwise every parent re-render rebuilds
@@ -186,14 +96,24 @@ function ReactFlowTopologyCanvasInner({
       const posById = new Map(prev.map((n) => [n.id, n.position]))
       return nodes.map((node) => {
         const isProject = readDetailString(node.data.detail, 'kind', '') === 'project'
+        // KitNode reads data.config/facts; the right-drawer inspector keeps reading
+        // the TopologyNodeData fields — so make data a superset of both.
+        const baseData = {
+          ...node.data,
+          config: stageConfig(node.data),
+          facts: stageFacts(node.data),
+        }
+        // Guard: an unregistered type makes xyflow draw a blank default node, so a
+        // new/unknown backend kind would silently vanish. Fall back to a visible spec.
+        const kindType = `collection.${node.data.kind}`
         return {
           ...node,
-          type: 'topologyNode',
+          type: hasNode(kindType) ? kindType : 'collection.source',
           position: posById.get(node.id) ?? node.position,
           selected: node.id === selectedNodeId,
           data: isProject
-            ? { ...node.data, onDive: () => diveRef.current?.(node.id) }
-            : node.data,
+            ? { ...baseData, onDive: () => diveRef.current?.(node.id) }
+            : baseData,
         }
       })
     })
@@ -228,7 +148,7 @@ function ReactFlowTopologyCanvasInner({
       edges={rfEdges}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
-      nodeTypes={topologyNodeTypes}
+      nodeTypes={nodeTypes}
       onNodeClick={(_, node) => onSelectNode(node.id)}
       onNodeDoubleClick={onNodeDoubleClick ? (_, node) => onNodeDoubleClick(node.id) : undefined}
       fitView
@@ -281,42 +201,6 @@ function healthLabel(health: TopologyHealth) {
     unknown: 'unknown',
   }
   return labels[health]
-}
-
-function healthSoftClass(health: TopologyHealth) {
-  const classes: Record<TopologyHealth, string> = {
-    healthy: 'border border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
-    active: 'border border-sky-400/35 bg-sky-400/10 text-sky-200',
-    warning: 'border border-amber-400/35 bg-amber-400/10 text-amber-200',
-    failed: 'border border-red-400/35 bg-red-400/10 text-red-200',
-    disabled: 'border border-slate-500/35 bg-slate-500/10 text-slate-300',
-    unknown: 'border border-zinc-500/35 bg-zinc-500/10 text-zinc-300',
-  }
-  return classes[health]
-}
-
-function healthDotClass(health: TopologyHealth) {
-  const classes: Record<TopologyHealth, string> = {
-    healthy: 'bg-emerald-400',
-    active: 'bg-sky-400',
-    warning: 'bg-amber-400',
-    failed: 'bg-red-400',
-    disabled: 'bg-slate-500',
-    unknown: 'bg-zinc-500',
-  }
-  return classes[health]
-}
-
-function handleColorClass(health: TopologyHealth) {
-  const classes: Record<TopologyHealth, string> = {
-    healthy: '!bg-emerald-400',
-    active: '!bg-sky-400',
-    warning: '!bg-amber-400',
-    failed: '!bg-red-400',
-    disabled: '!bg-slate-500',
-    unknown: '!bg-zinc-500',
-  }
-  return classes[health]
 }
 
 function miniColor(health: TopologyHealth) {

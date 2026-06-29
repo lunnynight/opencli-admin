@@ -53,7 +53,7 @@ export {
 } from './render/atoms'
 
 // atomic node library (real system functionality, nodified)
-export { ALL_NODES, SOURCE_NODES, PROCESSOR_NODES, PIPELINE_NODES, PRIMITIVE_NODES } from './nodes'
+export { ALL_NODES, SOURCE_NODES, PROCESSOR_NODES, PIPELINE_NODES, PRIMITIVE_NODES, COLLECTION_NODES } from './nodes'
 
 // agent bridge
 export {
