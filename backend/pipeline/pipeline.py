@@ -149,12 +149,13 @@ async def run_pipeline(
 
     # Steps 2+3: Normalize + Store, behind the write seam. The sink owns its own
     # normalization, dedup, and persistence; the orchestrator stays
-    # destination-agnostic. Default = LegacyDbSink (collected_records), the
-    # original inline path. write_strategy selects OdpSink/DualSink here later.
-    from backend.pipeline.sinks import LegacyDbSink
+    # destination-agnostic. An explicitly injected sink wins (tests, callers);
+    # otherwise the source's write_strategy selects it (default 'legacy' →
+    # LegacyDbSink, the original inline path).
     from backend.pipeline.sinks.base import RunContext
+    from backend.pipeline.sinks.strategy import select_sink
 
-    active_sink = sink or LegacyDbSink()
+    active_sink = sink or select_sink(getattr(source, "write_strategy", None))
     sink_ctx = RunContext(
         task_id=task_id,
         source_id=source.id,

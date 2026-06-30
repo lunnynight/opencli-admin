@@ -73,6 +73,27 @@ async def test_dual_sink_swallows_odp_failure():
 
 
 @pytest.mark.asyncio
+async def test_dual_sink_required_reraises_on_odp_failure():
+    # require_odp=True (odp_dual_required / odp_primary): an ODP failure must be
+    # surfaced, not swallowed — even though the legacy write already happened.
+    items = [{"title": "A", "url": "https://x/a"}]
+    rec = MagicMock()
+    store_mock = AsyncMock(return_value=([rec], 0))
+    boom = AsyncMock(side_effect=RuntimeError("odp down"))
+
+    with (
+        patch("backend.pipeline.storer.store_records", new=store_mock),
+        patch("backend.pipeline.odp_client.forward_triples", new=boom),
+        patch("backend.database.AsyncSessionLocal", return_value=_session_cm()),
+    ):
+        with pytest.raises(RuntimeError, match="odp down"):
+            await DualSink(require_odp=True).write_batch(_ctx(), items)
+
+    # Legacy still ran (and would not double-send).
+    assert store_mock.call_args.kwargs["forward_to_odp"] is False
+
+
+@pytest.mark.asyncio
 async def test_legacy_sink_forward_flag_passthrough():
     store_mock = AsyncMock(return_value=([], 0))
     with (

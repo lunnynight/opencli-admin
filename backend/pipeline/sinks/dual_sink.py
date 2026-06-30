@@ -26,10 +26,19 @@ logger = logging.getLogger(__name__)
 class DualSink:
     """Write to the legacy table and shadow-forward to ODP without double-sending."""
 
-    def __init__(self, legacy: ItemSink | None = None, odp: ItemSink | None = None) -> None:
+    def __init__(
+        self,
+        legacy: ItemSink | None = None,
+        odp: ItemSink | None = None,
+        require_odp: bool = False,
+    ) -> None:
         # The default legacy leg must NOT forward — OdpSink is the single ODP sender.
         self.legacy = legacy if legacy is not None else LegacyDbSink(forward_to_odp=False)
         self.odp = odp if odp is not None else OdpSink()
+        # require_odp=True (odp_dual_required / odp_primary): an ODP failure is
+        # surfaced (re-raised) instead of swallowed — the dual-write invariant must
+        # hold. Default False (odp_shadow): ODP is best-effort.
+        self.require_odp = require_odp
 
     async def write_batch(self, ctx: RunContext, items: Sequence[dict]) -> SinkResult:
         result = await self.legacy.write_batch(ctx, items)  # authoritative
@@ -41,7 +50,12 @@ class DualSink:
                 shadow.duplicates,
                 shadow.rejected,
             )
-        except Exception as exc:  # ODP must never break the legacy path
+        except Exception as exc:
+            if self.require_odp:
+                # Dual-write required: surface the failure even though legacy wrote.
+                logger.error("odp forward failed under require_odp: %s", exc)
+                raise
+            # Shadow mode: ODP must never break the legacy path.
             logger.warning("odp shadow forward failed (legacy unaffected): %s", exc)
             result.errors.append(f"odp shadow: {exc}")
         return result
