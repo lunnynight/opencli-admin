@@ -33,11 +33,12 @@ async def run_pipeline(
     enable_notifications: bool = True,
     agent_config: dict[str, Any] | None = None,
     run_id: str | None = None,
+    sink=None,  # ItemSink | None — write destination; defaults to LegacyDbSink
 ) -> PipelineResult:
     """Execute the full collection pipeline. Each write step uses its own
     short-lived session so no write lock is held during long-running I/O."""
     from backend.database import AsyncSessionLocal
-    from backend.pipeline import ai_processor, collector, notifier_dispatch, normalizer, storer
+    from backend.pipeline import ai_processor, collector, notifier_dispatch
 
     started = datetime.now(timezone.utc)
     params = parameters or {}
@@ -146,35 +147,42 @@ async def run_pipeline(
             elapsed_ms=step1_elapsed,
         )
 
-    # Step 2: Normalize
-    triples = normalizer.normalize_items(channel_result.items, source.id)
-    logger.info("[task:%s] step2/normalize done | items=%d", task_id, len(triples))
-    if run_id:
-        await events.emit(
-            run_id, "normalize",
-            f"归一化完成 | {len(triples)} 条",
-            detail={"items": len(triples)},
-        )
+    # Steps 2+3: Normalize + Store, behind the write seam. The sink owns its own
+    # normalization, dedup, and persistence; the orchestrator stays
+    # destination-agnostic. Default = LegacyDbSink (collected_records), the
+    # original inline path. write_strategy selects OdpSink/DualSink here later.
+    from backend.pipeline.sinks import LegacyDbSink
+    from backend.pipeline.sinks.base import RunContext
 
-    # Step 3: Store
-    logger.info("[task:%s] step3/store start | items=%d", task_id, len(triples))
+    active_sink = sink or LegacyDbSink()
+    sink_ctx = RunContext(
+        task_id=task_id,
+        source_id=source.id,
+        provider=source.channel_type,
+        run_id=run_id,
+    )
+    logger.info("[task:%s] step2-3/sink start | sink=%s items=%d",
+                task_id, type(active_sink).__name__, channel_result.count)
     try:
-        async with AsyncSessionLocal() as session:
-            new_records, skipped = await storer.store_records(
-                session, task_id, source.id, triples, channel_type=source.channel_type
-            )
-            await session.commit()
+        sink_result = await active_sink.write_batch(sink_ctx, channel_result.items)
     except Exception as exc:
-        logger.exception("[task:%s] step3/store exception | %s", task_id, exc)
+        logger.exception("[task:%s] step2-3/sink exception | %s", task_id, exc)
         return PipelineResult(
             success=False,
             source_id=source.id,
             collected=channel_result.count,
             error=str(exc),
         )
-    logger.info("[task:%s] step3/store done | new=%d skipped=%d",
-                task_id, len(new_records), skipped)
+    new_records = sink_result.records
+    skipped = sink_result.duplicates
+    logger.info("[task:%s] step2-3/sink done | normalized=%d new=%d skipped=%d",
+                task_id, sink_result.normalized, len(new_records), skipped)
     if run_id:
+        await events.emit(
+            run_id, "normalize",
+            f"归一化完成 | {sink_result.normalized} 条",
+            detail={"items": sink_result.normalized},
+        )
         await events.emit(
             run_id, "store",
             f"入库完成 | 新增 {len(new_records)} 条，跳过 {skipped} 条（重复）",
