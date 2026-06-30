@@ -353,3 +353,74 @@ async def test_collect_without_run_id_is_self_contained(monkeypatch):
     assert result.metadata["executed"] is True
     assert result.metadata["awaiting_confirm"] is False
     assert result.items == [{"title": "Solo"}]
+
+
+# ── SkillService leg: load SKILL.md from the DB, no inline body ─────────────────
+async def test_collect_resolves_skill_from_db(spine_db, monkeypatch):
+    """With no inline ``skill_md``, the channel resolves the persisted Skill by
+    ``skill_id`` (and by ``(domain, capability)``), executes it, and appends the
+    self-eval back to that row's ``evidence``."""
+    from backend.channels.skill_channel import SkillChannel
+    from backend.models.skill import Skill
+
+    fake_page = FakePage()
+    script = [
+        ("extract", {"data": {"title": "FromDB"}}),
+        ("done", {"status": "success", "note": "list page shown"}),
+    ]
+    _patch_browser_and_model(monkeypatch, fake_page, script)
+
+    # Seed a persisted skill — its body lives only in the DB, never in config.
+    async with spine_db() as session:
+        skill = Skill(
+            domain="demo",
+            capability="list-rows",
+            name="demo skill",
+            skill_md=SKILL_MD,
+            elements=ELEMENTS,
+            enabled=True,
+        )
+        session.add(skill)
+        await session.flush()
+        skill_id = skill.id
+        await session.commit()
+
+    # (a) resolve by skill_id — no skill_md inline.
+    result = await SkillChannel().collect({"skill_id": skill_id}, {})
+    assert result.success is True
+    assert result.items == [{"title": "FromDB"}]
+
+    # self-eval written back to the resolved row (proves identity flowed through).
+    async with spine_db() as session:
+        row = await session.get(Skill, skill_id)
+        assert len(row.evidence) == 1
+
+    # (b) resolve by the unique (domain, capability).
+    result2 = await SkillChannel().collect(
+        {"domain": "demo", "capability": "list-rows"}, {}
+    )
+    assert result2.success is True
+    assert result2.items == [{"title": "FromDB"}]
+
+    # (c) a disabled skill refuses to execute with a clear error.
+    async with spine_db() as session:
+        row = await session.get(Skill, skill_id)
+        row.enabled = False
+        await session.commit()
+    blocked = await SkillChannel().collect({"skill_id": skill_id}, {})
+    assert blocked.success is False
+    assert "disabled" in (blocked.error or "")
+
+
+# ── SkillService leg: unresolvable skill → clean failure, not a crash ──────────
+async def test_collect_unknown_skill_fails_cleanly(spine_db, monkeypatch):
+    """A skill_id / (domain, capability) with no matching row returns a failed
+    ChannelResult (not an exception)."""
+    from backend.channels.skill_channel import SkillChannel
+
+    fake_page = FakePage()
+    _patch_browser_and_model(monkeypatch, fake_page, [])
+
+    missing = await SkillChannel().collect({"skill_id": "nope-404"}, {})
+    assert missing.success is False
+    assert "not found" in (missing.error or "")

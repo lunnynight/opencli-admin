@@ -33,9 +33,10 @@ outcome (:func:`backend.skills.trace.assemble_trace`), computes a
 resolvable), and surfaces the trace on ``ChannelResult.metadata['trace']`` (the
 ``correct`` leg / re-distill lives in :mod:`backend.skills.correction`).
 
-Still deferred (other issues): ``skill_id`` / ``(domain, capability)`` → DB
-resolution for *loading* the SKILL.md (inline ``config['skill_md']`` suffices for
-v1); cross-process pause/resume of an ``awaiting_confirm`` run (v2).
+``skill_id`` / ``(domain, capability)`` → DB resolution for *loading* the
+SKILL.md is wired in :func:`_resolve_skill` (a short-lived ``AsyncSessionLocal``,
+same pattern as the self-eval write — ``collect()`` holds no injected session).
+Still deferred (v2): cross-process pause/resume of an ``awaiting_confirm`` run.
 """
 
 from __future__ import annotations
@@ -71,18 +72,95 @@ STEP_EXTRACT = "skill_extract"
 STEP_DONE = "skill_done"
 
 
-def _resolve_skill_md(config: dict[str, Any]) -> tuple[str | None, str | None]:
-    """Return (skill_md, error). Inline SKILL.md only for now; skill_id lookup
-    is deferred to a SkillService (DB session not available in collect())."""
+async def _load_skill_fields(
+    skill_id: str | None, domain: str | None, capability: str | None
+) -> dict[str, Any] | None:
+    """Load a persisted Skill's fields via a short-lived session.
+
+    ``collect()`` holds no injected session, so — exactly like ``_append_self_eval``
+    and ``events.emit`` — we open our own ``AsyncSessionLocal()``. Resolves by
+    ``skill_id`` first, then the unique ``(domain, capability)``. Reads the needed
+    columns *inside* the session and returns a plain dict so the caller never
+    touches a detached ORM instance; ``None`` when no row matches.
+    """
+    from sqlalchemy import select
+
+    from backend.database import AsyncSessionLocal
+    from backend.models.skill import Skill
+
+    async with AsyncSessionLocal() as session:
+        skill: Skill | None = None
+        if skill_id:
+            skill = await session.get(Skill, skill_id)
+        if skill is None and domain and capability:
+            res = await session.execute(
+                select(Skill).where(Skill.domain == domain, Skill.capability == capability)
+            )
+            skill = res.scalars().first()
+        if skill is None:
+            return None
+        return {
+            "id": skill.id,
+            "skill_md": skill.skill_md,
+            "elements": skill.elements,
+            "domain": skill.domain,
+            "capability": skill.capability,
+            "version": skill.version,
+            "enabled": skill.enabled,
+        }
+
+
+async def _resolve_skill(
+    config: dict[str, Any],
+) -> tuple[str | None, dict | None, dict[str, Any], str | None]:
+    """Resolve ``(skill_md, elements, identity, error)`` for a run.
+
+    Inline ``config['skill_md']`` wins (fast path, no DB). Otherwise load the
+    persisted skill by ``skill_id`` or ``(domain, capability)`` — the
+    "SkillService" leg (ADR-0003): the channel reads the stored SKILL.md +
+    structured elements so a distilled skill executes straight from the DB
+    without re-supplying its body. ``identity`` carries the resolved
+    ``skill_id`` / ``domain`` / ``capability`` / ``version`` so the trace +
+    self-eval write back to the right row.
+    """
     skill_md = config.get("skill_md")
     if skill_md:
-        return skill_md, None
-    if config.get("skill_id") or (config.get("domain") and config.get("capability")):
-        return None, (
-            "skill_id / (domain, capability) resolution not wired yet — pass "
-            "config['skill_md'] inline, or run via the SkillService once added."
+        return skill_md, _resolve_elements(config), {}, None
+
+    skill_id = config.get("skill_id")
+    domain = config.get("domain")
+    capability = config.get("capability")
+    if not skill_id and not (domain and capability):
+        return None, None, {}, (
+            "skill channel requires config['skill_md'], or 'skill_id', or "
+            "('domain' + 'capability')."
         )
-    return None, "skill channel requires config['skill_md'] (or a resolvable skill_id)."
+
+    try:
+        fields = await _load_skill_fields(skill_id, domain, capability)
+    except Exception as exc:  # DB failure — surface as a clean fail, don't crash collect
+        logger.error("skill resolve | DB load failed: %s", exc)
+        return None, None, {}, f"skill resolve failed: {exc}"
+
+    if fields is None:
+        ident = skill_id or f"{domain}/{capability}"
+        return None, None, {}, f"skill not found: {ident}"
+    if fields["enabled"] is False:
+        return None, None, {}, f"skill {fields['id']} is disabled — enable it before executing."
+    md = fields["skill_md"] or ""
+    if not md:
+        return None, None, {}, f"skill {fields['id']} has empty skill_md."
+
+    elements = (
+        fields["elements"] if isinstance(fields["elements"], dict) and fields["elements"] else None
+    )
+    identity = {
+        "skill_id": fields["id"],
+        "domain": fields["domain"],
+        "capability": fields["capability"],
+        "version": fields["version"],
+    }
+    return md, elements, identity, None
 
 
 def _resolve_elements(config: dict[str, Any]) -> dict | None:
@@ -320,13 +398,12 @@ class SkillChannel(AbstractChannel):
     async def collect(
         self, config: dict[str, Any], parameters: dict[str, Any]
     ) -> ChannelResult:
-        skill_md, err = _resolve_skill_md(config)
+        skill_md, elements, identity, err = await _resolve_skill(config)
         if err:
             return ChannelResult.fail(err)
 
         run_id = parameters.get("run_id")
         task = parameters.get("task") or config.get("task") or ""
-        elements = _resolve_elements(config)
         # Cheap executor model (distinct from the distill model). Shape matches
         # backend.skills.distill provider config.
         provider = config.get("provider", {})
@@ -384,9 +461,10 @@ class SkillChannel(AbstractChannel):
                 # conditions, and append it to skills.evidence when a persisted
                 # Skill is resolvable (inline-skill case: best-effort skip).
                 trace_id = run_id or f"skill-{uuid.uuid4().hex}"
-                domain = config.get("domain") or "unknown"
+                domain = identity.get("domain") or config.get("domain") or "unknown"
                 label = (
-                    config.get("capability")
+                    identity.get("capability")
+                    or config.get("capability")
                     or config.get("label")
                     or (task[:80] if task else "")
                     or "unknown"
@@ -408,7 +486,7 @@ class SkillChannel(AbstractChannel):
                 )
                 # self_eval reads elements off a Skill row or a bare elements dict.
                 ev = self_eval(outcome, elements or config)
-                await _append_self_eval(config, ev)
+                await _append_self_eval({**config, **identity}, ev)
 
                 metadata: dict[str, Any] = {
                     "channel": "skill",
