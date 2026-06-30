@@ -38,6 +38,7 @@ export {
 export { KitNode, type KitNodeData } from './render/KitNode'
 export { nodeTypesForXyflow } from './render/nodeTypes'
 export { NodeWorkbench, type WorkbenchSeed } from './render/NodeWorkbench'
+export { NodeInspector } from './render/NodeInspector'
 
 // runtime — self-built P0 executor (topo-sort → run pure nodes → backend hook → artifact)
 export { runGraph, type RunNode, type RunEdge, type RunGraphResult, type BackendRunner } from './runtime/engine'
@@ -79,3 +80,10 @@ export {
   configToJsonSchema,
   type AgentNodeDescriptor,
 } from './agent/toSchema'
+export {
+  instantiateGraph,
+  type AgentGraph,
+  type AgentGraphNode,
+  type AgentGraphEdge,
+  type GraphBuildResult,
+} from './agent/graph'

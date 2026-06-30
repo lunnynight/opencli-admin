@@ -33,7 +33,7 @@ import {
   type Node,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Boxes, Network, Play, Trash2 } from 'lucide-react'
+import { Boxes, Network, Play, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -46,11 +46,13 @@ import {
   saveMacro,
   type MacroDef,
 } from '../macros'
-import { instantiate, listNodes } from '../registry'
+import { instantiateGraph, type AgentGraph } from '../agent/graph'
+import { getNode, instantiate, listNodes } from '../registry'
 import { runGraph } from '../runtime/engine'
 import type { ConfigValues, NodeCategory, NodeSpec } from '../spec'
 import { iconByName } from './atoms'
 import { elkLayout } from './elkLayout'
+import { NodeInspector } from './NodeInspector'
 import { NodeSearchMenu } from './NodeSearchMenu'
 import { nodeTypesForXyflow } from './nodeTypes'
 
@@ -118,10 +120,11 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
   const palette = useMemo(() => listNodes(), [registryVersion])
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(seed?.nodes ?? [])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(seed?.edges ?? [])
-  const { screenToFlowPosition, getIntersectingNodes, fitView } = useReactFlow()
+  const { screenToFlowPosition, getIntersectingNodes, fitView, updateNodeData } = useReactFlow()
   // xyflow writes node.selected into state via onNodesChange, so read selection
   // straight off the nodes array — no onSelectionChange plumbing needed.
   const selected = useMemo(() => nodes.filter((n) => n.selected), [nodes])
+  const selectedOne = selected.length === 1 ? selected[0] : null
   const seq = useRef(1)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const mouse = useRef({ cx: 0, cy: 0 })
@@ -315,6 +318,42 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
     }
   }, [nodes, edges, setNodes, fitView])
 
+  // Property-panel edit → write back to the selected node's data.config.
+  const setSelectedField = useCallback(
+    (key: string, value: unknown) => {
+      if (!selectedOne) return
+      updateNodeData(selectedOne.id, {
+        config: { ...((selectedOne.data as { config?: ConfigValues })?.config ?? {}), [key]: value },
+      })
+    },
+    [updateNodeData, selectedOne],
+  )
+
+  // AI graph authoring: paste an agent-emitted {nodes,edges} JSON → validate →
+  // load onto the canvas, surfacing every validation problem to console + toast.
+  const importAgentGraph = useCallback(() => {
+    const raw = window.prompt('粘贴 AI 产出的图 JSON：{"nodes":[{"type":"value","config":{}}],"edges":[]}')
+    if (!raw) return
+    let parsed: AgentGraph
+    try {
+      parsed = JSON.parse(raw) as AgentGraph
+    } catch {
+      toast.error('JSON 解析失败')
+      return
+    }
+    const res = instantiateGraph(parsed)
+    if (res.errors.length) console.warn('[node-kit instantiateGraph]', res.errors)
+    if (res.nodes.length === 0) {
+      toast.error(`产图失败：${res.errors[0] ?? '无有效节点'}`)
+      return
+    }
+    setNodes(res.nodes)
+    setEdges(res.edges)
+    requestAnimationFrame(() => void fitView({ padding: 0.2, duration: 400 }))
+    if (res.errors.length) toast.warning(`产图完成 · ${res.nodes.length} 节点，${res.errors.length} 个告警（看 console）`)
+    else toast.success(`产图完成 · ${res.nodes.length} 节点 · ${res.edges.length} 边`)
+  }, [setNodes, setEdges, fitView])
+
   const groups = useMemo(() => {
     const m = new Map<NodeCategory, NodeSpec[]>()
     for (const s of palette) {
@@ -414,6 +453,14 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
             </button>
             <button
               type="button"
+              onClick={importAgentGraph}
+              title="粘贴 AI 产出的节点图 JSON，校验后落到画布"
+              className="inline-flex items-center gap-1 rounded-md border border-fuchsia-500/40 bg-fuchsia-500/10 px-2.5 py-1 text-[11px] font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/20"
+            >
+              <Sparkles size={12} /> AI 产图
+            </button>
+            <button
+              type="button"
               onClick={tidy}
               disabled={laying}
               title="按数据流自动排版 (ELK)"
@@ -440,6 +487,7 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
             </button>
           </div>
         </div>
+        {selectedOne && <NodeInspector node={selectedOne} onField={setSelectedField} />}
       </div>
 
       {/* dnd-kit drag ghost */}
