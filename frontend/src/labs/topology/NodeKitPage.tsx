@@ -1,10 +1,13 @@
 // Component-library workbench: register the atomic nodes, then hand them to the
 // reusable NodeWorkbench (Touch Bar + canvas) to browse, add, and wire into
 // functions. This is the home of "manage atomic nodes" the kit provides.
-import { NodeWorkbench, registerNodes, ALL_NODES } from '../../node-kit'
+import { NodeWorkbench, registerNodes, registerSavedMacros, ALL_NODES } from '../../node-kit'
 
-// register the atomic node library (idempotent — registry is a module Map)
+// register the atomic node library (idempotent — registry is a module Map), then
+// the persisted macros so NodeWorkbench's useMemo([]) nodeTypes/palette snapshot
+// includes them at first mount.
 registerNodes(ALL_NODES)
+registerSavedMacros()
 
 export default function NodeKitPage() {
   return (

@@ -15,12 +15,14 @@ import type { Edge, Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import type { TopologyHealth, TopologyNodeData } from './topologyModel'
-import { ALL_NODES, hasNode, nodeTypesForXyflow, registerNodes } from '../../node-kit'
+import { ALL_NODES, hasNode, nodeTypesForXyflow, registerNodes, registerSavedMacros } from '../../node-kit'
 
 // The collection.* specs must exist before this canvas mounts (it may mount
 // before NetworkPage runs its own registerNodes). Idempotent: the registry is a
 // Map keyed by type, so registering again just overwrites with the same spec.
+// Saved macros register too, keeping both registries consistent.
 registerNodes(ALL_NODES)
+registerSavedMacros()
 
 type TopologyNodeViewData = TopologyNodeData & { onDive?: () => void }
 type TopologyFlowNode = Node<TopologyNodeViewData>

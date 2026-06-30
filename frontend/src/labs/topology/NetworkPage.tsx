@@ -31,11 +31,14 @@ import ErrorAlert from '../../components/ErrorAlert'
 import { cn } from '../../lib/utils'
 import { AgentDock, type DockContextNode } from './AgentDock'
 import { ReactFlowTopologyCanvas } from './ReactFlowTopologyCanvas'
-import { ALL_NODES, NodeWorkbench, hasNode, registerNodes, type WorkbenchSeed } from '../../node-kit'
+import { ALL_NODES, NodeWorkbench, hasNode, registerNodes, registerSavedMacros, type WorkbenchSeed } from '../../node-kit'
 
 // L3 atomic layer lives below 采集网络's L2 stages — register the atom library
-// here too so diving into a project can render its atomic node graph.
+// here too so diving into a project can render its atomic node graph. Saved
+// macros register right after so they are in the registry before NodeWorkbench
+// (atomMode branch) mounts and snapshots its nodeTypes/palette.
 registerNodes(ALL_NODES)
+registerSavedMacros()
 
 // Map a project (source) to its underlying atomic node graph: trigger → source.<channel> → store.
 function sourceToAtomGraph(source: DataSource): WorkbenchSeed {

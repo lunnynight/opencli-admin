@@ -55,6 +55,22 @@ export {
 // atomic node library (real system functionality, nodified)
 export { ALL_NODES, SOURCE_NODES, PROCESSOR_NODES, PIPELINE_NODES, PRIMITIVE_NODES, COLLECTION_NODES } from './nodes'
 
+// macros — saved subgraph + collapse/expand (pure graph ops) + runGraph flatten
+export type { MacroDef, MacroPort } from './macros'
+export {
+  buildMacroDef,
+  deriveBoundaryPorts,
+  makeMacroSpec,
+  registerMacroSpec,
+  registerSavedMacros,
+  inlineMacro,
+  flattenForRun,
+  listMacros,
+  saveMacro,
+  getMacro,
+  deleteMacro,
+} from './macros'
+
 // agent bridge
 export {
   nodeCatalogForAgent,

@@ -33,9 +33,19 @@ import {
   type Node,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Network, Play, Trash2 } from 'lucide-react'
+import { Boxes, Network, Play, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
+import {
+  buildMacroDef,
+  flattenForRun,
+  getMacroDef,
+  inlineMacro,
+  listMacros,
+  registerMacroSpec,
+  saveMacro,
+  type MacroDef,
+} from '../macros'
 import { instantiate, listNodes } from '../registry'
 import { runGraph } from '../runtime/engine'
 import type { ConfigValues, NodeCategory, NodeSpec } from '../spec'
@@ -55,6 +65,22 @@ function makeNode(type: string, position: { x: number; y: number }, seq: number)
   const made = instantiate({ type, id: `${type}-${seq}`, config: {}, position })
   if (!made) return null
   return { id: made.instance.id, type, position, data: { config: made.instance.config } }
+}
+
+// Drop transient/runtime-only fields before a node goes into a saved macro so the
+// def never carries collision ghost classes ('kit-collide') or stale selection.
+function stripTransient(n: Node): Node {
+  const { className: _c, selected: _s, dragging: _d, ...rest } = n
+  return rest as Node
+}
+
+function centroid(ns: Node[]): { x: number; y: number } {
+  if (ns.length === 0) return { x: 0, y: 0 }
+  const sum = ns.reduce(
+    (acc, n) => ({ x: acc.x + (n.position?.x ?? 0), y: acc.y + (n.position?.y ?? 0) }),
+    { x: 0, y: 0 },
+  )
+  return { x: sum.x / ns.length, y: sum.y / ns.length }
 }
 
 function PaletteChip({ spec, color, onClick }: { spec: NodeSpec; color: string; onClick: () => void }) {
@@ -84,11 +110,18 @@ export interface WorkbenchSeed {
 }
 
 function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
-  const nodeTypes = useMemo(() => nodeTypesForXyflow(), [])
-  const palette = useMemo(() => listNodes(), [])
+  // registryVersion makes nodeTypes/palette re-derive when a macro is registered
+  // IN-SESSION (组成宏). Boot-time saved macros are already registered before mount;
+  // this covers the create-now case the empty-dep memos would otherwise miss.
+  const [registryVersion, setRegistryVersion] = useState(0)
+  const nodeTypes = useMemo(() => nodeTypesForXyflow(), [registryVersion])
+  const palette = useMemo(() => listNodes(), [registryVersion])
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(seed?.nodes ?? [])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(seed?.edges ?? [])
   const { screenToFlowPosition, getIntersectingNodes, fitView } = useReactFlow()
+  // xyflow writes node.selected into state via onNodesChange, so read selection
+  // straight off the nodes array — no onSelectionChange plumbing needed.
+  const selected = useMemo(() => nodes.filter((n) => n.selected), [nodes])
   const seq = useRef(1)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const mouse = useRef({ cx: 0, cy: 0 })
@@ -171,18 +204,91 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
     setNodes((nds) => nds.map((n) => (n.className ? { ...n, className: '' } : n)))
   }, [setNodes])
 
+  // ── Macro: collapse a multi-node selection into one reusable node ───────────
+  const groupIntoMacro = useCallback(() => {
+    if (selected.length < 2) return
+    // Nested macros are out of MVP scope — refuse if any selected node is a macro.
+    if (selected.some((n) => getMacroDef(String(n.type)))) {
+      toast.error('暂不支持把宏再组成宏')
+      return
+    }
+    const name = window.prompt('宏名称', `宏 ${listMacros().length + 1}`)?.trim()
+    if (!name) return
+
+    const ids = new Set(selected.map((n) => n.id))
+    const subNodes = selected.map(stripTransient)
+    const internalEdges = edges.filter((e) => ids.has(e.source) && ids.has(e.target))
+    const crossingIn = edges.filter((e) => !ids.has(e.source) && ids.has(e.target))
+    const crossingOut = edges.filter((e) => ids.has(e.source) && !ids.has(e.target))
+
+    const def = buildMacroDef(name, subNodes, internalEdges)
+    saveMacro(def)
+    registerMacroSpec(def)
+    // bump so the (empty-dep) nodeTypes/palette memos re-derive and the new macro
+    // type both renders on canvas and shows in the left palette.
+    setRegistryVersion((v) => v + 1)
+
+    const macroNode: Node = {
+      id: `${def.id}#1`,
+      type: def.id,
+      position: centroid(selected),
+      data: { config: { __macro: true } },
+    }
+    // Rewrite crossing edges onto the macro's synthetic ports
+    // (port id === innerNodeId:innerHandle, which buildMacroDef guarantees exists).
+    const rewired: Edge[] = [
+      ...edges.filter((e) => !ids.has(e.source) && !ids.has(e.target)),
+      ...crossingIn.map((e) => ({
+        ...e,
+        target: macroNode.id,
+        targetHandle: `${e.target}:${e.targetHandle ?? 'in'}`,
+      })),
+      ...crossingOut.map((e) => ({
+        ...e,
+        source: macroNode.id,
+        sourceHandle: `${e.source}:${e.sourceHandle ?? 'out'}`,
+      })),
+    ]
+    setNodes((nds) => [...nds.filter((n) => !ids.has(n.id)), macroNode])
+    setEdges(rewired)
+    toast.success(`已组成宏「${name}」· ${subNodes.length} 节点（双击展开）`)
+  }, [selected, edges, setNodes, setEdges])
+
+  // ── Macro: double-click a macro node to expand it back into its subgraph ─────
+  const expandMacroNode = useCallback(
+    (macroNode: Node, def: MacroDef) => {
+      // Compute once from the current closure (nodes+edges both in deps) and set
+      // atomically — two inlineMacro calls with split snapshots tear the graph.
+      const next = inlineMacro(nodes, edges, macroNode, def)
+      setNodes(next.nodes)
+      setEdges(next.edges)
+    },
+    [nodes, edges, setNodes, setEdges],
+  )
+
+  const onNodeDoubleClick = useCallback(
+    (_: ReactMouseEvent, node: Node) => {
+      const def = getMacroDef(String(node.type))
+      if (!def) return // only macro nodes expand
+      expandMacroNode(node, def)
+    },
+    [expandMacroNode],
+  )
+
   // run the graph through the self-built P0 runtime
   const runNow = useCallback(async () => {
     if (nodes.length === 0) {
       toast.message('画布为空，先加几个节点')
       return
     }
-    const rn = nodes.map((n) => ({
+    // Flatten macros → atoms before running; the engine is macro-blind by design.
+    const flat = flattenForRun(nodes, edges)
+    const rn = flat.nodes.map((n) => ({
       id: n.id,
       type: String(n.type),
       config: ((n.data as { config?: ConfigValues })?.config ?? {}) as ConfigValues,
     }))
-    const re = edges.map((e) => ({ source: e.source, sourceHandle: e.sourceHandle, target: e.target, targetHandle: e.targetHandle }))
+    const re = flat.edges.map((e) => ({ source: e.source, sourceHandle: e.sourceHandle, target: e.target, targetHandle: e.targetHandle }))
     const res = await runGraph(rn, re)
     const errCount = Object.keys(res.errors).length
     if (errCount) toast.error(`运行完成 · ${errCount} 个节点出错（看 console）`)
@@ -267,6 +373,7 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
             onConnect={onConnect}
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
+            onNodeDoubleClick={onNodeDoubleClick}
             nodeTypes={nodeTypes}
             deleteKeyCode={['Backspace', 'Delete']}
             fitView
@@ -296,6 +403,15 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
           )}
 
           <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={groupIntoMacro}
+              disabled={selected.length < 2}
+              title="把选中的多个节点折叠成一个可复用宏（双击展开）"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-500/20 disabled:opacity-40"
+            >
+              <Boxes size={12} /> 组成宏{selected.length >= 2 ? ` (${selected.length})` : ''}
+            </button>
             <button
               type="button"
               onClick={tidy}
