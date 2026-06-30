@@ -45,7 +45,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from backend.channels.base import AbstractChannel, ChannelResult
+from backend.channels.base import AbstractChannel, Capabilities, ChannelResult
 from backend.channels.registry import register_channel
 from backend.pipeline import events
 
@@ -394,6 +394,9 @@ class SkillChannel(AbstractChannel):
     """Execute a distilled browser skill via a cheap model over CDP."""
 
     channel_type = "skill"
+    # Drives a real Chrome from the shared pool → must run on the node holding the
+    # live session; the pipeline resolves a site-keyed browser binding for it.
+    capabilities = Capabilities(session_affinity=True)
 
     async def collect(
         self, config: dict[str, Any], parameters: dict[str, Any]

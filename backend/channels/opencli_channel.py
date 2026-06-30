@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from backend.channels.base import AbstractChannel, ChannelResult
+from backend.channels.base import AbstractChannel, Capabilities, ChannelResult
 from backend.channels.registry import register_channel
 
 logger = logging.getLogger(__name__)
@@ -317,6 +317,9 @@ class OpenCLIChannel(AbstractChannel):
     """Collect data by running the opencli CLI tool."""
 
     channel_type = "opencli"
+    # Drives a real Chrome from the shared pool → must run on the node holding the
+    # live session; the pipeline resolves a site-keyed browser binding for it.
+    capabilities = Capabilities(session_affinity=True)
 
     async def collect(
         self, config: dict[str, Any], parameters: dict[str, Any]

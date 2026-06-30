@@ -43,13 +43,22 @@ async def run_pipeline(
     started = datetime.now(timezone.utc)
     params = parameters or {}
 
-    # Pre-step: auto-resolve chrome endpoint from a browser binding. Both the
-    # opencli and skill channels drive a real Chrome from the shared pool, so a
-    # site-keyed binding lets them attach to a logged-in browser. Best-effort: a
-    # missing binding is not an error (browser_pool.acquire(endpoint=None) picks a
-    # default), so we only override chrome_endpoint when a binding exists.
+    # Pre-step: auto-resolve chrome endpoint from a browser binding. Channels that
+    # declare capabilities.session_affinity (opencli, skill) drive a real Chrome
+    # from the shared pool, so a site-keyed binding lets them attach to a
+    # logged-in browser. Best-effort: a missing binding is not an error
+    # (browser_pool.acquire(endpoint=None) picks a default), so we only override
+    # chrome_endpoint when a binding exists. Gated by the capability rather than a
+    # hardcoded channel list, so a new session-bound channel needs no change here.
+    from backend.channels.registry import get_channel
+
+    try:
+        _affinity_channel = get_channel(source.channel_type)
+    except Exception:
+        _affinity_channel = None  # unknown channel_type surfaces in the collect step
     if (
-        source.channel_type in ("opencli", "skill")
+        _affinity_channel is not None
+        and _affinity_channel.capabilities.session_affinity
         and not params.get("chrome_endpoint")
     ):
         site = source.channel_config.get("site", "")
