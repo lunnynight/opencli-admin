@@ -1,12 +1,23 @@
-"""HTTP client for ODP ingest API (Rust hot path)."""
+"""HTTP client for ODP ingest API (Rust hot path).
+
+The wire shape (:class:`RecordEvent`) and the response
+(:class:`OdpIngestResponse`) live in :mod:`backend.odp` as a typed mirror of the
+Rust ``odp-contracts`` crate. This module is just the transport: build events
+through the mapper, POST the batch, parse the response. One shape definition is
+what lets a later step move this forward into an ``OdpSink`` behind a
+characterization test proving the bytes are unchanged.
+"""
 
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
 from typing import Any
+
 import httpx
+
+from backend.odp.mapper import RecordEventMapper
+from backend.odp.schemas import OdpIngestResponse
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +29,6 @@ def ingest_url() -> str | None:
     return base or None
 
 
-def _provider_for_channel(channel_type: str) -> str:
-    return f"opencli-admin/{channel_type}"
-
-
 def triple_to_event(
     *,
     channel_type: str,
@@ -31,30 +38,19 @@ def triple_to_event(
     normalized: dict[str, Any],
     content_hash: str,
 ) -> dict[str, Any]:
-    published = normalized.get("published_at") or ""
-    try:
-        if published:
-            source_ts = datetime.fromisoformat(published.replace("Z", "+00:00"))
-            if source_ts.tzinfo is None:
-                source_ts = source_ts.replace(tzinfo=timezone.utc)
-        else:
-            source_ts = datetime.now(timezone.utc)
-    except ValueError:
-        source_ts = datetime.now(timezone.utc)
+    """Normalized triple -> ODP wire event.
 
-    return {
-        "schema_version": 1,
-        "provider": _provider_for_channel(channel_type),
-        "source_id": str(source_id),
-        "event_id": content_hash,
-        "ingest_mode": "snapshot",
-        "source_ts": source_ts.isoformat().replace("+00:00", "Z"),
-        "cursor": None,
-        "payload": normalized,
-        "raw_data": raw,
-        "trace_id": None,
-        "task_id": str(task_id),
-    }
+    Thin wrapper over :class:`RecordEventMapper` so the legacy forward path and
+    the future ``OdpSink`` share exactly one shape definition.
+    """
+    return RecordEventMapper.from_triple(
+        channel_type=channel_type,
+        source_id=source_id,
+        task_id=task_id,
+        raw=raw,
+        normalized=normalized,
+        content_hash=content_hash,
+    ).to_wire()
 
 
 async def post_batch(
@@ -74,18 +70,16 @@ async def post_batch(
         resp.raise_for_status()
         data = resp.json()
 
-    accepted = int(data.get("accepted", 0))
-    duplicates = int(data.get("duplicates", 0))
-    rejected = int(data.get("rejected", 0))
+    parsed = OdpIngestResponse.from_wire(data)
     logger.info(
         "odp ingest | channel=%s sent=%d accepted=%d duplicates=%d rejected=%d",
         channel_type,
         len(events),
-        accepted,
-        duplicates,
-        rejected,
+        parsed.accepted,
+        parsed.duplicates,
+        parsed.rejected,
     )
-    return accepted, duplicates, rejected
+    return parsed.accepted, parsed.duplicates, parsed.rejected
 
 
 async def forward_triples(
