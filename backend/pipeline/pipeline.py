@@ -190,6 +190,20 @@ async def run_pipeline(
             detail={"new": len(new_records), "skipped": skipped},
         )
 
+    # Incremental cursor: advance the persisted cursor ONLY now that the write sink
+    # has accepted this batch. A raised/failed sink returned above, so reaching here
+    # means the data landed; committing during fetch would skip items that never got
+    # written. (Deeper ODP durability — a queued 202 that never persists — is an
+    # ODP-side guarantee, tracked separately.)
+    pending_cursor = channel_result.metadata.pop("cursor_pending", None)
+    cursor_source_id = channel_result.metadata.pop("cursor_source_id", None)
+    if pending_cursor is not None and cursor_source_id is not None:
+        from backend.pipeline.cursor_store import DBCursorStore
+
+        await DBCursorStore().save(cursor_source_id, pending_cursor)
+        logger.info("[task:%s] cursor committed post-write | source=%s",
+                    task_id, cursor_source_id)
+
     # Step 4: AI processing
     effective_ai_config = agent_config or source.ai_config
     ai_count = 0

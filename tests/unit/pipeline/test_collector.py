@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.channels.base import ChannelResult
+from backend.channels.base import Capabilities, ChannelResult
 from backend.pipeline.collector import collect
 
 
@@ -15,6 +15,7 @@ async def test_collect_dispatches_to_channel():
 
     expected = ChannelResult.ok([{"title": "Test"}])
     mock_channel = AsyncMock()
+    mock_channel.capabilities = Capabilities()  # non-incremental → legacy collect() path
     mock_channel.collect = AsyncMock(return_value=expected)
 
     with patch("backend.pipeline.collector.get_channel", return_value=mock_channel):
@@ -35,6 +36,7 @@ async def test_collect_propagates_failure():
 
     error_result = ChannelResult.fail("timeout")
     mock_channel = AsyncMock()
+    mock_channel.capabilities = Capabilities()  # non-incremental → legacy collect() path
     mock_channel.collect = AsyncMock(return_value=error_result)
 
     with patch("backend.pipeline.collector.get_channel", return_value=mock_channel):
