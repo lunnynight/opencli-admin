@@ -37,11 +37,14 @@ async def _collect_via_runner(
     from backend.pipeline.channel_runner import run_channel
     from backend.pipeline.cursor_store import DBCursorStore, InMemoryCursorStore
 
-    db_cursor = DBCursorStore()
     staging = InMemoryCursorStore()
-    start = await db_cursor.load(source.id)
-    if start is not None:
-        await staging.save(source.id, start)
+    if channel.capabilities.incremental:
+        # Only incremental channels can ever have a persisted cursor row — skip
+        # the SELECT entirely for the rest (api/opencli/skill/cli/web_scraper),
+        # since run_channel() would find nothing to stage for them anyway.
+        start = await DBCursorStore().load(source.id)
+        if start is not None:
+            await staging.save(source.id, start)
 
     run_result = await run_channel(source, parameters, cursor_store=staging, channel=channel)
     staged = await staging.load(source.id)

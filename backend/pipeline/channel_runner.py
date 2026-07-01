@@ -69,12 +69,20 @@ async def run_channel(
 
     auth = await AuthManager().resolve_context(source.id, cap.auth_kind)
 
-    owns_http = http is None
-    client = http or RateLimitedClient(
-        httpx.AsyncClient(timeout=30),
-        TokenBucket(parse_rate(cap.default_rate)),
-        log=log,
-    )
+    # A channel that hasn't overridden fetch() uses the default adapter, which
+    # bridges straight to collect() and never reads ctx.http — building a real
+    # RateLimitedClient (+ its own httpx.AsyncClient/TokenBucket) for it is pure
+    # waste, held open for the channel's whole run (minutes, for skill/opencli's
+    # browser-automation loops) and torn down unused.
+    channel_migrated = type(chan).fetch is not AbstractChannel.fetch
+    owns_client = http is None and channel_migrated
+    client = http
+    if owns_client:
+        client = RateLimitedClient(
+            httpx.AsyncClient(timeout=30),
+            TokenBucket(parse_rate(cap.default_rate)),
+            log=log,
+        )
 
     items: list[dict[str, Any]] = []
     metadata: dict[str, Any] = {}
@@ -107,7 +115,7 @@ async def run_channel(
                 log.warning("run_channel hit MAX_PAGES=%s for source %s", MAX_PAGES, source.id)
                 break
     finally:
-        if owns_http and isinstance(client, RateLimitedClient):
+        if owns_client:
             await client.aclose()
 
     return RunResult(items=items, metadata=metadata)

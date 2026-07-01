@@ -3,6 +3,7 @@ cursor load/save) so channels stay thin and only implement fetch()."""
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -129,6 +130,31 @@ class MetadataChannel(AbstractChannel):
 
     async def validate_config(self, config):
         return []
+
+
+@pytest.mark.asyncio
+async def test_unmigrated_channel_builds_no_rate_limited_client():
+    """CollectOnlyChannel never overrides fetch() — the default adapter bridges
+    straight to collect() and never reads ctx.http, so building a real
+    RateLimitedClient/httpx.AsyncClient for it (and holding it open for the
+    channel's whole run) is pure waste."""
+    with patch("backend.pipeline.channel_runner.RateLimitedClient") as mock_rlc:
+        result = await run_channel(
+            _source(), {}, channel=CollectOnlyChannel(), cursor_store=InMemoryCursorStore()
+        )
+    mock_rlc.assert_not_called()
+    assert result.items == [{"id": "x"}]
+
+
+@pytest.mark.asyncio
+async def test_migrated_channel_still_builds_rate_limited_client_when_none_injected():
+    """A channel that DOES override fetch() (e.g. RSS/PagedChannel) still needs
+    the shared client when the caller doesn't inject its own."""
+    chan = PagedChannel(total_pages=1)
+    with patch("backend.pipeline.channel_runner.RateLimitedClient") as mock_rlc:
+        mock_rlc.return_value.aclose = AsyncMock()
+        await run_channel(_source(), {}, channel=chan, cursor_store=InMemoryCursorStore())
+    mock_rlc.assert_called_once()
 
 
 @pytest.mark.asyncio

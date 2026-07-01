@@ -67,3 +67,21 @@ async def test_collect_propagates_failure():
     ):
         with pytest.raises(ChannelFetchError, match="timeout"):
             await collect(source, {})
+
+
+@pytest.mark.asyncio
+async def test_collect_non_incremental_channel_skips_cursor_db_load():
+    """Only incremental channels can ever have a persisted cursor — collect()
+    must not even instantiate DBCursorStore for the other channel types (api,
+    cli, opencli, skill, web_scraper)."""
+    source = SimpleNamespace(id="src-3", channel_type="stub", channel_config={})
+    channel = _StubChannel(ChannelResult.ok([{"id": 1}]))
+
+    with (
+        patch("backend.pipeline.collector.get_channel", return_value=channel),
+        patch("backend.pipeline.cursor_store.DBCursorStore") as mock_db_cursor,
+    ):
+        result = await collect(source, {})
+
+    assert result.success is True
+    mock_db_cursor.assert_not_called()
