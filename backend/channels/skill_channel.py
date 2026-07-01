@@ -506,7 +506,9 @@ class SkillChannel(AbstractChannel):
                 return ChannelResult.ok(items, **metadata)
         except Exception as exc:
             logger.error("skill channel | browser acquire/exec failed: %s", exc)
-            return ChannelResult.fail(f"skill channel browser error: {exc}")
+            return ChannelResult.fail(
+                f"skill channel browser error: {exc}", error_type=type(exc).__name__
+            )
 
     async def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors: list[str] = []

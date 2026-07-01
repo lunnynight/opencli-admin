@@ -35,12 +35,16 @@ class WebScraperChannel(AbstractChannel):
             ) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-        except httpx.TimeoutException:
-            return ChannelResult.fail(f"Request to {url} timed out after {timeout}s")
+        except httpx.TimeoutException as exc:
+            return ChannelResult.fail(
+                f"Request to {url} timed out after {timeout}s", error_type=type(exc).__name__
+            )
         except httpx.HTTPStatusError as exc:
-            return ChannelResult.fail(f"HTTP {exc.response.status_code} from {url}")
+            return ChannelResult.fail(
+                f"HTTP {exc.response.status_code} from {url}", error_type=type(exc).__name__
+            )
         except Exception as exc:
-            return ChannelResult.fail(f"Request failed: {exc}")
+            return ChannelResult.fail(f"Request failed: {exc}", error_type=type(exc).__name__)
 
         soup = BeautifulSoup(response.text, "lxml")
 

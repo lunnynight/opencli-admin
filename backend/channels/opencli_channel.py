@@ -419,19 +419,25 @@ class OpenCLIChannel(AbstractChannel):
 
             try:
                 returncode, stdout_text, stderr_text = await _run_opencli(cmd, env)
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as exc:
                 logger.error("opencli timeout | cmd=%s", " ".join(cmd))
                 if mode == "cdp":
                     await _cleanup_cdp_tabs(cdp_endpoint, pre_tab_ids)
-                return ChannelResult.fail("opencli command timed out after 120s")
-            except FileNotFoundError:
+                return ChannelResult.fail(
+                    "opencli command timed out after 120s", error_type=type(exc).__name__
+                )
+            except FileNotFoundError as exc:
                 logger.error("opencli binary not found: %s", opencli_bin)
-                return ChannelResult.fail(f"opencli binary not found: {opencli_bin}")
+                return ChannelResult.fail(
+                    f"opencli binary not found: {opencli_bin}", error_type=type(exc).__name__
+                )
             except Exception as exc:
                 logger.exception("opencli subprocess error | %s", exc)
                 if mode == "cdp":
                     await _cleanup_cdp_tabs(cdp_endpoint, pre_tab_ids)
-                return ChannelResult.fail(f"Failed to run opencli: {exc}")
+                return ChannelResult.fail(
+                    f"Failed to run opencli: {exc}", error_type=type(exc).__name__
+                )
 
             if mode == "cdp":
                 await _cleanup_cdp_tabs(cdp_endpoint, pre_tab_ids)
@@ -452,7 +458,10 @@ class OpenCLIChannel(AbstractChannel):
         except Exception as exc:
             logger.error("opencli parse error | format=%s error=%s output_preview=%s",
                          output_format, exc, raw[:300])
-            return ChannelResult.fail(f"Failed to parse opencli {output_format} output: {exc}")
+            return ChannelResult.fail(
+                f"Failed to parse opencli {output_format} output: {exc}",
+                error_type=type(exc).__name__,
+            )
 
         logger.info("opencli done | site=%s cmd=%s mode=%s items=%d", site, command, mode, len(items))
         return ChannelResult.ok(items, site=site, command=command, chrome_mode=mode)

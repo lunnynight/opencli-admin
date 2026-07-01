@@ -10,6 +10,10 @@ class ChannelResult:
     success: bool
     items: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    #: The failing exception's class name (e.g. "TimeoutException"), when the
+    #: failure came from a caught exception — lets callers build a retryable-vs-
+    #: permanent taxonomy without re-parsing the free-text error message.
+    error_type: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -21,8 +25,8 @@ class ChannelResult:
         return cls(success=True, items=items, metadata=metadata)
 
     @classmethod
-    def fail(cls, error: str) -> "ChannelResult":
-        return cls(success=False, error=error)
+    def fail(cls, error: str, error_type: str | None = None) -> "ChannelResult":
+        return cls(success=False, error=error, error_type=error_type)
 
 
 # ── Thick channel contract (Phase 0) ─────────────────────────────────────────

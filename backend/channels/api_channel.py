@@ -55,7 +55,8 @@ class ApiChannel(AbstractChannel):
         try:
             result = await self.fetch(ctx)
         except ChannelFetchError as exc:
-            return ChannelResult.fail(str(exc))
+            cause = exc.__cause__
+            return ChannelResult.fail(str(exc), error_type=type(cause).__name__ if cause else None)
         return ChannelResult.ok(result.items, **result.metadata)
 
     async def fetch(self, ctx: FetchContext) -> FetchResult:

@@ -50,12 +50,16 @@ class CLIChannel(AbstractChannel):
                 env=env,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return ChannelResult.fail(f"CLI command timed out after {timeout}s")
-        except FileNotFoundError:
-            return ChannelResult.fail(f"Binary not found: {binary!r}")
+        except asyncio.TimeoutError as exc:
+            return ChannelResult.fail(
+                f"CLI command timed out after {timeout}s", error_type=type(exc).__name__
+            )
+        except FileNotFoundError as exc:
+            return ChannelResult.fail(
+                f"Binary not found: {binary!r}", error_type=type(exc).__name__
+            )
         except Exception as exc:
-            return ChannelResult.fail(f"CLI execution failed: {exc}")
+            return ChannelResult.fail(f"CLI execution failed: {exc}", error_type=type(exc).__name__)
 
         if proc.returncode != 0:
             return ChannelResult.fail(

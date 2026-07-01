@@ -128,18 +128,21 @@ async def run_pipeline(
                 run_id, "collect",
                 f"采集失败: {exc}",
                 level="error",
-                detail={"error": str(exc)},
+                detail={"error": str(exc), "error_type": type(exc).__name__},
             )
         return PipelineResult(success=False, source_id=source.id, error=str(exc))
 
     if not channel_result.success:
-        logger.error("[task:%s] step1/collect failed | error=%s", task_id, channel_result.error)
+        logger.error(
+            "[task:%s] step1/collect failed | error=%s error_type=%s",
+            task_id, channel_result.error, channel_result.error_type,
+        )
         if run_id:
             await events.emit(
                 run_id, "collect",
                 f"采集失败: {channel_result.error}",
                 level="error",
-                detail={"error": channel_result.error},
+                detail={"error": channel_result.error, "error_type": channel_result.error_type},
             )
         return PipelineResult(success=False, source_id=source.id, error=channel_result.error)
 
@@ -176,7 +179,17 @@ async def run_pipeline(
     try:
         sink_result = await active_sink.write_batch(sink_ctx, channel_result.items)
     except Exception as exc:
-        logger.exception("[task:%s] step2-3/sink exception | %s", task_id, exc)
+        logger.exception(
+            "[task:%s] step2-3/sink exception | error_type=%s | %s",
+            task_id, type(exc).__name__, exc,
+        )
+        if run_id:
+            await events.emit(
+                run_id, "store",
+                f"持久化失败: {exc}",
+                level="error",
+                detail={"error": str(exc), "error_type": type(exc).__name__},
+            )
         return PipelineResult(
             success=False,
             source_id=source.id,
