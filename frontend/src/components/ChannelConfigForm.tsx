@@ -206,17 +206,26 @@ function CredentialField({
 }) {
   const [stored, setStored] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    setLoadError(false)
     listSourceCredentials(sourceId)
       .then((keys) => {
         if (!cancelled) setStored(keys.some((k) => k.key_name === keyName))
       })
-      .catch(() => {})
+      .catch(() => {
+        // Status unknown, not confirmed-absent — don't let the UI claim
+        // "not configured" for a credential that might well already be
+        // stored (the fetch just failed), or a re-save could silently
+        // rotate/overwrite a working credential without the user realizing
+        // one existed.
+        if (!cancelled) setLoadError(true)
+      })
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
@@ -262,7 +271,15 @@ function CredentialField({
         className={`${input} flex-1`}
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder={loading ? '…' : stored ? '● 已加密存储 — 输入新值以覆盖' : label}
+        placeholder={
+          loading
+            ? '…'
+            : loadError
+              ? '⚠ 无法获取存储状态,请重试'
+              : stored
+                ? '● 已加密存储 — 输入新值以覆盖'
+                : label
+        }
       />
       <button
         type="button"
