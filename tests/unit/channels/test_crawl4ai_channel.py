@@ -5,9 +5,14 @@ browser_pool, per ADR: Crawl4AI manages its own anti-detection browser)."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.channels.base import ChannelFetchError, FetchContext
 from backend.channels.crawl4ai_channel import Crawl4AIChannel
+
+
+def _sessionmaker(db_engine):
+    return async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest.fixture
@@ -41,14 +46,22 @@ async def test_validate_config_missing_url(channel):
 
 
 @pytest.mark.asyncio
-async def test_validate_config_missing_selectors(channel):
+async def test_validate_config_missing_selectors_and_instruction(channel):
     errors = await channel.validate_config({"url": "https://example.com"})
-    assert "'selectors' is required for crawl4ai channel" in errors
+    assert any("selectors" in e and "instruction" in e for e in errors)
 
 
 @pytest.mark.asyncio
 async def test_validate_config_valid(channel):
     errors = await channel.validate_config({"url": "https://example.com", "selectors": {"title": "h1"}})
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_validate_config_instruction_only_is_valid(channel):
+    errors = await channel.validate_config(
+        {"url": "https://example.com", "instruction": "extract the article title and author"}
+    )
     assert errors == []
 
 
@@ -125,6 +138,121 @@ async def test_fetch_cookie_auth_passes_resolved_cookies_to_browser_config(chann
     resolve_cookies.assert_awaited_once_with("example.com")
     assert browser_config_ctor.call_args.kwargs["cookies"] == fake_cookies
     crawler_ctor.assert_called_once()
+
+
+# ── LLM extraction fallback (no 'selectors' configured) ─────────────────────
+@pytest.mark.asyncio
+async def test_fetch_llm_fallback_no_instruction_raises(channel):
+    ctx = FetchContext(config={"url": "https://example.com"}, params={})
+    with pytest.raises(ChannelFetchError, match="provide 'instruction'"):
+        await channel.fetch(ctx)
+
+
+@pytest.mark.asyncio
+async def test_fetch_llm_fallback_builds_llm_strategy_when_no_selectors(channel):
+    import json
+
+    result = _make_result(extracted_content=json.dumps([{"title": "Alpha"}]))
+    ctx_mgr, crawler = _make_crawler_ctx(result)
+
+    ctx = FetchContext(
+        config={"url": "https://example.com", "instruction": "extract the article title"},
+        params={},
+    )
+    fake_llm_config = MagicMock()
+    with patch("crawl4ai.AsyncWebCrawler", return_value=ctx_mgr), patch(
+        "backend.channels.crawl4ai_channel.Crawl4AIChannel._resolve_llm_config",
+        AsyncMock(return_value=fake_llm_config),
+    ) as resolve_llm:
+        fetch_result = await channel.fetch(ctx)
+
+    assert fetch_result.items == [{"title": "Alpha"}]
+    resolve_llm.assert_awaited_once_with(None)
+    run_config = crawler.arun.call_args.kwargs["config"]
+    assert run_config.extraction_strategy.instruction == "extract the article title"
+    assert run_config.extraction_strategy.llm_config is fake_llm_config
+    assert run_config.extraction_strategy.extract_type == "block"
+
+
+@pytest.mark.asyncio
+async def test_fetch_llm_fallback_with_schema_uses_schema_extraction_type(channel):
+    import json
+
+    result = _make_result(extracted_content=json.dumps({"title": "Alpha"}))
+    ctx_mgr, crawler = _make_crawler_ctx(result)
+
+    ctx = FetchContext(
+        config={
+            "url": "https://example.com",
+            "instruction": "extract structured fields",
+            "extraction_schema": {"title": "string"},
+            "provider_id": "provider-123",
+        },
+        params={},
+    )
+    fake_llm_config = MagicMock()
+    with patch("crawl4ai.AsyncWebCrawler", return_value=ctx_mgr), patch(
+        "backend.channels.crawl4ai_channel.Crawl4AIChannel._resolve_llm_config",
+        AsyncMock(return_value=fake_llm_config),
+    ) as resolve_llm:
+        fetch_result = await channel.fetch(ctx)
+
+    assert fetch_result.items == [{"title": "Alpha"}]
+    resolve_llm.assert_awaited_once_with("provider-123")
+    run_config = crawler.arun.call_args.kwargs["config"]
+    assert run_config.extraction_strategy.extract_type == "schema"
+    assert run_config.extraction_strategy.schema == {"title": "string"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_llm_config_no_enabled_provider_raises(channel, db_engine):
+    with patch("backend.database.AsyncSessionLocal", _sessionmaker(db_engine)):
+        with pytest.raises(ChannelFetchError, match="no enabled model provider"):
+            await channel._resolve_llm_config(None)
+
+
+@pytest.mark.asyncio
+async def test_resolve_llm_config_maps_claude_provider_to_anthropic_prefix(channel, db_engine):
+    from backend.models.provider import ModelProvider
+
+    sm = _sessionmaker(db_engine)
+    async with sm() as session:
+        session.add(
+            ModelProvider(
+                name="my-claude",
+                provider_type="claude",
+                api_key="sk-test",
+                default_model="claude-haiku-4-5-20251001",
+            )
+        )
+        await session.commit()
+
+    with patch("backend.database.AsyncSessionLocal", sm):
+        llm_config = await channel._resolve_llm_config(None)
+
+    assert llm_config.provider == "anthropic/claude-haiku-4-5-20251001"
+    assert llm_config.api_token == "sk-test"
+
+
+@pytest.mark.asyncio
+async def test_resolve_llm_config_defaults_unknown_provider_type_to_openai_prefix(
+    channel, db_engine
+):
+    from backend.models.provider import ModelProvider
+
+    sm = _sessionmaker(db_engine)
+    async with sm() as session:
+        session.add(
+            ModelProvider(
+                name="local-gateway", provider_type="local", api_key="k", default_model="llama3"
+            )
+        )
+        await session.commit()
+
+    with patch("backend.database.AsyncSessionLocal", sm):
+        llm_config = await channel._resolve_llm_config(None)
+
+    assert llm_config.provider == "openai/llama3"
 
 
 # ── health_check ─────────────────────────────────────────────────────────────

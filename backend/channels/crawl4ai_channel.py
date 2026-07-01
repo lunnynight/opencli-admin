@@ -1,9 +1,18 @@
 """Crawl4AI channel: JS-rendered pages + built-in anti-detection.
 
-CSS-structured extraction only (JsonCssExtractionStrategy) — no
-LLMExtractionStrategy. AI enrichment is the pipeline's own downstream AI step
-(backend.pipeline.pipeline's collect -> normalize/store -> AI -> notify), not
-a channel's job; a thin channel only fetches + structurally parses.
+Two extraction paths: CSS-structured (JsonCssExtractionStrategy) when
+'selectors' is configured — the default, no AI cost — falling back to
+LLMExtractionStrategy when it isn't (targeted sources where writing a CSS
+selector up front isn't practical: give an 'instruction' describing what to
+pull instead). This is extraction — deciding what the *items* are — not the
+pipeline's separate downstream AI *enrichment* step (backend.pipeline.pipeline
+'s collect -> normalize/store -> AI -> notify, which adds derived fields to
+records that already exist); the two don't overlap.
+
+LLM credentials reuse the same ModelProvider row the enrichment step and
+AIAgent use (backend.models.provider) — configure a provider once, both paths
+just work. No 'provider_id' in config → first enabled provider, same
+autonomous-default convention as backend.pipeline.runner.
 
 Deliberately does NOT go through backend.browser_pool / connect_over_cdp like
 every other browser-touching channel (skill/opencli channels attach to an
@@ -69,11 +78,17 @@ class Crawl4AIChannel(AbstractChannel):
         except ImportError as exc:
             raise ChannelFetchError("crawl4ai package not installed") from exc
 
-        schema = {
-            "baseSelector": list_selector or "body",
-            "fields": [{"name": name, "selector": sel, "type": "text"} for name, sel in selectors.items()],
-        }
-        extraction_strategy = JsonCssExtractionStrategy(schema)
+        if selectors:
+            schema = {
+                "baseSelector": list_selector or "body",
+                "fields": [
+                    {"name": name, "selector": sel, "type": "text"}
+                    for name, sel in selectors.items()
+                ],
+            }
+            extraction_strategy = JsonCssExtractionStrategy(schema)
+        else:
+            extraction_strategy = await self._build_llm_strategy(config)
 
         browser_config = BrowserConfig(headless=True, enable_stealth=True, cookies=cookies or None)
         run_config = CrawlerRunConfig(
@@ -92,17 +107,85 @@ class Crawl4AIChannel(AbstractChannel):
             raise ChannelFetchError(f"crawl4ai request to {url} failed: {exc}") from exc
 
         if not result.success:
-            raise ChannelFetchError(f"crawl4ai fetch failed: {result.error_message or 'unknown error'}")
+            err = result.error_message or "unknown error"
+            raise ChannelFetchError(f"crawl4ai fetch failed: {err}")
 
         items: list[dict[str, Any]] = []
         if result.extracted_content:
             try:
                 parsed = json.loads(result.extracted_content)
             except (json.JSONDecodeError, TypeError) as exc:
-                raise ChannelFetchError("crawl4ai: could not parse extracted_content as JSON") from exc
+                raise ChannelFetchError(
+                    "crawl4ai: could not parse extracted_content as JSON"
+                ) from exc
             items = parsed if isinstance(parsed, list) else [parsed]
 
         return FetchResult(items=items, metadata={"url": url, "status_code": result.status_code})
+
+    @staticmethod
+    async def _build_llm_strategy(config: dict[str, Any]) -> Any:
+        """No 'selectors' configured — fall back to instruction-driven LLM
+        extraction. 'instruction'/provider availability are runtime state
+        (not config shape), so they're checked here rather than in
+        validate_config."""
+        instruction: str = config.get("instruction", "")
+        if not instruction:
+            raise ChannelFetchError(
+                "crawl4ai channel: no 'selectors' configured — provide 'instruction' "
+                "for LLM-based extraction"
+            )
+
+        from crawl4ai.extraction_strategy import LLMExtractionStrategy
+
+        llm_config = await Crawl4AIChannel._resolve_llm_config(config.get("provider_id"))
+        extraction_schema = config.get("extraction_schema")
+
+        return LLMExtractionStrategy(
+            llm_config=llm_config,
+            instruction=instruction,
+            schema=extraction_schema,
+            extraction_type="schema" if extraction_schema else "block",
+            apply_chunking=config.get("apply_chunking", True),
+        )
+
+    @staticmethod
+    async def _resolve_llm_config(provider_id: str | None) -> Any:
+        """Same autonomous-default convention as backend.pipeline.runner: an
+        explicit provider_id wins, otherwise the first enabled ModelProvider."""
+        from crawl4ai import LLMConfig
+        from sqlalchemy import select
+
+        from backend.database import AsyncSessionLocal
+        from backend.models.provider import ModelProvider
+
+        async with AsyncSessionLocal() as session:
+            if provider_id:
+                provider = await session.get(ModelProvider, provider_id)
+            else:
+                result = await session.execute(
+                    select(ModelProvider)
+                    .where(ModelProvider.enabled.is_(True))
+                    .order_by(ModelProvider.created_at.asc())
+                )
+                provider = result.scalars().first()
+
+        if not provider or not provider.enabled:
+            raise ChannelFetchError(
+                "crawl4ai LLM extraction: no enabled model provider configured "
+                "(add one under Providers first)"
+            )
+
+        litellm_prefix = {"claude": "anthropic", "openai": "openai", "local": "openai"}.get(
+            provider.provider_type, "openai"
+        )
+        default_model = (
+            "claude-haiku-4-5-20251001" if litellm_prefix == "anthropic" else "gpt-4o-mini"
+        )
+        return LLMConfig(
+            provider=f"{litellm_prefix}/{provider.default_model or default_model}",
+            api_token=provider.api_key or None,
+            base_url=provider.base_url or None,
+        )
 
     @staticmethod
     async def _resolve_cookies(url: str) -> list[dict]:
@@ -121,8 +204,11 @@ class Crawl4AIChannel(AbstractChannel):
         errors: list[str] = []
         if not config.get("url"):
             errors.append("'url' is required for crawl4ai channel")
-        if not config.get("selectors"):
-            errors.append("'selectors' is required for crawl4ai channel")
+        if not config.get("selectors") and not config.get("instruction"):
+            errors.append(
+                "'selectors' (CSS extraction) or 'instruction' (LLM extraction) "
+                "is required for crawl4ai channel"
+            )
         return errors
 
     async def health_check(
