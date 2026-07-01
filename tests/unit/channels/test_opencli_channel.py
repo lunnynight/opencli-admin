@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.channels.base import ChannelResult
 from backend.channels.opencli_channel import (
@@ -16,6 +17,10 @@ from backend.channels.opencli_channel import (
     _parse_yaml,
     _run_opencli,
 )
+
+
+def _sessionmaker(db_engine):
+    return async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ── Pure parser function tests ─────────────────────────────────────────────────
@@ -365,6 +370,71 @@ async def test_health_check_cdp_mode_unreachable_returns_false(channel):
     ):
         result = await channel.health_check()
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_health_check_routes_to_source_bound_endpoint(channel, db_engine):
+    """A source with a browser binding for its site must probe that bound
+    endpoint, not an arbitrary pool member — same lookup pipeline.py does
+    before collect() so the probe reflects the endpoint this source actually
+    uses."""
+    from backend.services import browser_service
+
+    sm = _sessionmaker(db_engine)
+    async with sm() as session:
+        await browser_service.create_binding(
+            session, browser_endpoint="http://bound-chrome:9222", site="example.com"
+        )
+        await session.commit()
+
+    mock_pool = _make_mock_pool(mode="cdp")
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client_ctx = AsyncMock()
+    mock_client_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("os.path.isfile", return_value=True),
+        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="local")),
+        patch("backend.browser_pool.get_pool", return_value=mock_pool),
+        patch("backend.database.AsyncSessionLocal", sm),
+        patch("httpx.AsyncClient", return_value=mock_client_ctx),
+    ):
+        result = await channel.health_check({"site": "example.com"})
+
+    assert result is True
+    mock_pool.acquire.assert_called_once_with(endpoint="http://bound-chrome:9222")
+
+
+@pytest.mark.asyncio
+async def test_health_check_no_binding_falls_back_to_default_pool_member(channel, db_engine):
+    """No binding row for the site → acquire(endpoint=None), same as before
+    this fix (a missing binding is not an error, matches pipeline.py's
+    best-effort resolution)."""
+    sm = _sessionmaker(db_engine)
+    mock_pool = _make_mock_pool(mode="cdp")
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client_ctx = AsyncMock()
+    mock_client_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("os.path.isfile", return_value=True),
+        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="local")),
+        patch("backend.browser_pool.get_pool", return_value=mock_pool),
+        patch("backend.database.AsyncSessionLocal", sm),
+        patch("httpx.AsyncClient", return_value=mock_client_ctx),
+    ):
+        result = await channel.health_check({"site": "unbound-site.com"})
+
+    assert result is True
+    mock_pool.acquire.assert_called_once_with(endpoint=None)
 
 
 # ── collect: agent mode tests ──────────────────────────────────────────────────
