@@ -5,7 +5,13 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 
-from backend.channels.base import AbstractChannel, ChannelResult
+from backend.channels.base import (
+    AbstractChannel,
+    ChannelFetchError,
+    ChannelResult,
+    FetchContext,
+    FetchResult,
+)
 from backend.channels.registry import register_channel
 
 
@@ -18,6 +24,25 @@ class WebScraperChannel(AbstractChannel):
     async def collect(
         self, config: dict[str, Any], parameters: dict[str, Any]
     ) -> ChannelResult:
+        """Thin wrapper around fetch() — see api_channel.collect() for the
+        pattern this mirrors. A bare FetchContext (no ctx.http) reproduces
+        this method's original one-shot-client behaviour exactly."""
+        ctx = FetchContext(config=config, params=parameters)
+        try:
+            result = await self.fetch(ctx)
+        except ChannelFetchError as exc:
+            cause = exc.__cause__
+            return ChannelResult.fail(str(exc), error_type=type(cause).__name__ if cause else None)
+        return ChannelResult.ok(result.items, **result.metadata)
+
+    async def fetch(self, ctx: FetchContext) -> FetchResult:
+        """Thick-contract fetch: goes through the runner's rate-limited/
+        retrying client (ctx.http) when present, falling back to a one-shot
+        client otherwise. Headers can't be baked into the shared client's
+        constructor (it's reused across sources), so the shared-client path
+        sends them per-request instead — the owns-client path keeps the
+        original constructor-time headers to match existing collect() mocks."""
+        config = ctx.config
         url: str = config.get("url", "")
         selectors: dict[str, str] = config.get("selectors", {})
         headers: dict[str, str] = config.get("headers", {})
@@ -29,22 +54,13 @@ class WebScraperChannel(AbstractChannel):
             **headers,
         }
 
-        try:
+        if ctx.http is not None:
+            response = await self._get(ctx.http, url, timeout, headers=merged_headers)
+        else:
             async with httpx.AsyncClient(
                 headers=merged_headers, follow_redirects=True, timeout=timeout
             ) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-        except httpx.TimeoutException as exc:
-            return ChannelResult.fail(
-                f"Request to {url} timed out after {timeout}s", error_type=type(exc).__name__
-            )
-        except httpx.HTTPStatusError as exc:
-            return ChannelResult.fail(
-                f"HTTP {exc.response.status_code} from {url}", error_type=type(exc).__name__
-            )
-        except Exception as exc:
-            return ChannelResult.fail(f"Request failed: {exc}", error_type=type(exc).__name__)
+                response = await self._get(client, url, timeout)
 
         soup = BeautifulSoup(response.text, "lxml")
 
@@ -56,7 +72,28 @@ class WebScraperChannel(AbstractChannel):
         else:
             items = [self._extract_fields(soup, selectors)]
 
-        return ChannelResult.ok(items, url=url, status_code=response.status_code)
+        return FetchResult(items=items, metadata={"url": url, "status_code": response.status_code})
+
+    @staticmethod
+    async def _get(
+        client: Any, url: str, timeout: int, headers: dict[str, str] | None = None
+    ) -> httpx.Response:
+        """One GET, wrapped into ChannelFetchError. ``headers`` is only passed
+        per-request on the shared-client path (see fetch()'s docstring)."""
+        try:
+            response = (
+                await client.get(url, headers=headers, timeout=timeout)
+                if headers is not None
+                else await client.get(url)
+            )
+            response.raise_for_status()
+            return response
+        except httpx.TimeoutException as exc:
+            raise ChannelFetchError(f"Request to {url} timed out after {timeout}s") from exc
+        except httpx.HTTPStatusError as exc:
+            raise ChannelFetchError(f"HTTP {exc.response.status_code} from {url}") from exc
+        except Exception as exc:
+            raise ChannelFetchError(f"Request failed: {exc}") from exc
 
     def _extract_fields(self, node: Any, selectors: dict[str, str]) -> dict[str, Any]:
         result: dict[str, Any] = {}

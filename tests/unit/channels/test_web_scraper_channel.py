@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bs4 import BeautifulSoup
 
+from backend.channels.base import ChannelFetchError, FetchContext
 from backend.channels.web_scraper_channel import WebScraperChannel
 
 
@@ -297,3 +298,66 @@ async def test_collect_custom_headers_sent(channel):
     assert result.success is True
     assert captured_headers.get("X-My-Header") == "custom-value"
     assert "User-Agent" in captured_headers
+
+
+# ── GOAL-4 PR-D: fetch() thick contract (ctx.http path — rate limit/retry) ──────
+
+@pytest.mark.asyncio
+async def test_fetch_uses_shared_client_with_per_request_headers(channel):
+    """When ctx.http is present (the runner's RateLimitedClient), headers
+    can't be baked into a shared client's constructor — they must go on the
+    per-request .get() call instead."""
+    response = _make_mock_response()
+    shared_client = AsyncMock()
+    shared_client.get = AsyncMock(return_value=response)
+
+    ctx = FetchContext(
+        config={
+            "url": "https://example.com",
+            "selectors": {"page_title": "h1.page-title"},
+            "headers": {"X-My-Header": "v"},
+        },
+        params={},
+        http=shared_client,
+    )
+    result = await channel.fetch(ctx)
+
+    assert result.items[0]["page_title"] == "Products"
+    call_kwargs = shared_client.get.call_args.kwargs
+    assert call_kwargs["headers"]["X-My-Header"] == "v"
+    assert "User-Agent" in call_kwargs["headers"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_raises_channel_fetch_error_on_timeout():
+    """fetch()'s raise-based contract (not collect()'s return-based one)."""
+    import httpx
+
+    channel = WebScraperChannel()
+    shared_client = AsyncMock()
+    shared_client.get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
+
+    ctx = FetchContext(
+        config={"url": "https://example.com", "selectors": {"title": "h1"}},
+        params={}, http=shared_client,
+    )
+    with pytest.raises(ChannelFetchError, match="timed out"):
+        await channel.fetch(ctx)
+
+
+@pytest.mark.asyncio
+async def test_collect_still_delegates_to_fetch_without_ctx_http(channel):
+    """collect()'s thin-wrapper contract: no ctx.http, own client, same
+    behaviour as before the migration (already covered above by the full
+    old test suite passing unchanged — this just pins the delegation)."""
+    response = _make_mock_response()
+    mock_client_ctx = _make_mock_client(response)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_ctx):
+        with patch.object(channel, "fetch", wraps=channel.fetch) as spy:
+            result = await channel.collect(
+                {"url": "https://example.com", "selectors": {"page_title": "h1.page-title"}}, {}
+            )
+
+    spy.assert_called_once()
+    assert result.success is True
