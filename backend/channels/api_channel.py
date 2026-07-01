@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -80,7 +81,7 @@ class ApiChannel(AbstractChannel):
         result_path: str = config.get("result_path", "")
 
         url = base_url.rstrip("/") + "/" + endpoint.lstrip("/")
-        headers = await self._resolve_auth_headers(auth_config, ctx.source_id)
+        headers = await self._resolve_auth_headers(auth_config, ctx.source_id, base_url)
         headers.update(extra_headers)
 
         if ctx.http is not None:
@@ -135,11 +136,15 @@ class ApiChannel(AbstractChannel):
         except Exception as exc:
             raise ChannelFetchError(f"API request failed: {exc}") from exc
 
-    async def _resolve_auth_headers(self, auth: dict, source_id: str | None) -> dict[str, str]:
+    async def _resolve_auth_headers(
+        self, auth: dict, source_id: str | None, base_url: str = ""
+    ) -> dict[str, str]:
         """Prefer decrypted creds from AuthManager's encrypted store when the
         source has migrated; fall back to the legacy inline/env config unchanged
         (``_build_auth_headers``) so unmigrated sources keep working as-is."""
         auth_type = auth.get("type", "")
+        if auth_type == "cookie":
+            return await self._resolve_cookie_header(base_url)
         if source_id and auth_type in ("bearer", "api_key", "basic"):
             from backend.auth.header_builder import build_auth_header
             from backend.auth.manager import AuthManager
@@ -149,6 +154,22 @@ class ApiChannel(AbstractChannel):
             if headers:
                 return headers
         return self._build_auth_headers(auth)
+
+    @staticmethod
+    async def _resolve_cookie_header(base_url: str) -> dict[str, str]:
+        """auth.type == "cookie": borrow a real login session synced from
+        CookieCloud (``backend.auth.manager.AuthManager.resolve_cookies``),
+        keyed by ``base_url``'s domain. Empty dict (no header) when nothing is
+        synced for that domain yet — never a hard failure."""
+        from backend.auth.manager import AuthManager
+
+        domain = urlparse(base_url).hostname or ""
+        if not domain:
+            return {}
+        cookies = await AuthManager().resolve_cookies(domain)
+        if not cookies:
+            return {}
+        return {"Cookie": "; ".join(f"{c['name']}={c['value']}" for c in cookies)}
 
     def _build_auth_headers(self, auth: dict) -> dict[str, str]:
         auth_type = auth.get("type", "")
@@ -210,7 +231,7 @@ class ApiChannel(AbstractChannel):
         endpoint: str = config.get("endpoint", "")
         url = base_url.rstrip("/") + "/" + endpoint.lstrip("/") if endpoint else base_url
 
-        headers = await self._resolve_auth_headers(config.get("auth", {}), source_id)
+        headers = await self._resolve_auth_headers(config.get("auth", {}), source_id, base_url)
 
         try:
             async with httpx.AsyncClient(timeout=5) as client:

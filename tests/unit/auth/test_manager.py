@@ -171,3 +171,61 @@ async def test_delete_unknown_key_is_noop(db_engine, monkeypatch):
         await mgr.store("src-1", "token", "abc123")
         await mgr.delete("src-1", "does-not-exist")
         assert await mgr.resolve("src-1") == {"token": "abc123"}
+
+
+# ── cookie_jar (CookieCloud-synced, domain-keyed — not source-keyed) ────────────
+@pytest.mark.asyncio
+async def test_store_cookie_then_resolve_by_domain(db_engine, monkeypatch):
+    monkeypatch.setenv(crypto.ENV_KEY, KEY)
+    with patch("backend.database.AsyncSessionLocal", _sessionmaker(db_engine)):
+        mgr = AuthManager()
+        await mgr.store_cookie("example.com", "session_id", {"value": "abc", "path": "/", "secure": True})
+        cookies = await mgr.resolve_cookies("example.com")
+    assert cookies == [
+        {"name": "session_id", "domain": "example.com", "value": "abc", "path": "/", "secure": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_cookies_domain_isolation(db_engine, monkeypatch):
+    """Cookies for a different domain never leak into another domain's resolve."""
+    monkeypatch.setenv(crypto.ENV_KEY, KEY)
+    with patch("backend.database.AsyncSessionLocal", _sessionmaker(db_engine)):
+        mgr = AuthManager()
+        await mgr.store_cookie("example.com", "a", {"value": "1"})
+        await mgr.store_cookie("other.com", "b", {"value": "2"})
+        assert [c["name"] for c in await mgr.resolve_cookies("example.com")] == ["a"]
+        assert [c["name"] for c in await mgr.resolve_cookies("other.com")] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_cookies_unknown_domain_empty(db_engine, monkeypatch):
+    monkeypatch.setenv(crypto.ENV_KEY, KEY)
+    with patch("backend.database.AsyncSessionLocal", _sessionmaker(db_engine)):
+        assert await AuthManager().resolve_cookies("no-such-domain.com") == []
+
+
+@pytest.mark.asyncio
+async def test_store_cookie_is_upsert_and_ciphertext_only(db_engine, monkeypatch):
+    from sqlalchemy import select
+
+    from backend.models.cookie_jar import CookieJarEntry
+
+    monkeypatch.setenv(crypto.ENV_KEY, KEY)
+    sm = _sessionmaker(db_engine)
+    with patch("backend.database.AsyncSessionLocal", sm):
+        mgr = AuthManager()
+        await mgr.store_cookie("example.com", "session_id", {"value": "v1"})
+        await mgr.store_cookie("example.com", "session_id", {"value": "v2"})
+        cookies = await mgr.resolve_cookies("example.com")
+
+    assert cookies == [{"name": "session_id", "domain": "example.com", "value": "v2"}]
+
+    async with sm() as session:
+        rows = (
+            await session.execute(
+                select(CookieJarEntry).where(CookieJarEntry.domain == "example.com")
+            )
+        ).scalars().all()
+    assert len(rows) == 1  # upsert, not a second row
+    assert "v2" not in rows[0].ciphertext  # stored encrypted, never plaintext

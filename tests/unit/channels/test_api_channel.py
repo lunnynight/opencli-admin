@@ -722,3 +722,47 @@ async def test_health_check_sends_real_auth_headers(channel):
 
     sent_headers = mock_client.head.call_args.kwargs["headers"]
     assert sent_headers["Authorization"] == "Bearer tok123"
+
+
+# ── auth.type == "cookie" (CookieCloud-synced session) ──────────────────────────
+@pytest.mark.asyncio
+async def test_fetch_cookie_auth_sends_synced_cookies(channel):
+    response = _make_mock_response(json_data=[{"ok": True}])
+    http = _FetchHttp(response)
+    ctx = FetchContext(
+        config={
+            "base_url": "https://api.example.com",
+            "endpoint": "/secure",
+            "auth": {"type": "cookie"},
+        },
+        params={},
+        http=http,
+    )
+
+    with patch(
+        "backend.auth.manager.AuthManager.resolve_cookies",
+        AsyncMock(return_value=[{"name": "session_id", "value": "abc"}, {"name": "csrf", "value": "xyz"}]),
+    ) as resolve_cookies:
+        result = await channel.fetch(ctx)
+
+    resolve_cookies.assert_awaited_once_with("api.example.com")
+    assert result.items == [{"ok": True}]
+    headers = http.calls[0][2]["headers"]
+    assert headers["Cookie"] == "session_id=abc; csrf=xyz"
+
+
+@pytest.mark.asyncio
+async def test_fetch_cookie_auth_no_synced_cookies_sends_no_header(channel):
+    response = _make_mock_response(json_data=[{"ok": True}])
+    http = _FetchHttp(response)
+    ctx = FetchContext(
+        config={"base_url": "https://api.example.com", "endpoint": "/secure", "auth": {"type": "cookie"}},
+        params={},
+        http=http,
+    )
+
+    with patch("backend.auth.manager.AuthManager.resolve_cookies", AsyncMock(return_value=[])):
+        await channel.fetch(ctx)
+
+    headers = http.calls[0][2]["headers"]
+    assert "Cookie" not in headers

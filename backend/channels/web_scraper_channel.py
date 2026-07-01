@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -56,6 +57,10 @@ class WebScraperChannel(AbstractChannel):
             "User-Agent": "Mozilla/5.0 (compatible; opencli-admin/1.0)",
             **headers,
         }
+        if config.get("auth", {}).get("type") == "cookie":
+            cookie_header = await self._resolve_cookie_header(url)
+            if cookie_header:
+                merged_headers["Cookie"] = cookie_header
 
         if ctx.http is not None:
             response = await self._get(ctx.http, url, timeout, headers=merged_headers)
@@ -76,6 +81,21 @@ class WebScraperChannel(AbstractChannel):
             items = [self._extract_fields(soup, selectors)]
 
         return FetchResult(items=items, metadata={"url": url, "status_code": response.status_code})
+
+    @staticmethod
+    async def _resolve_cookie_header(url: str) -> str | None:
+        """auth.type == "cookie": borrow a real login session synced from
+        CookieCloud (backend.auth.manager.AuthManager.resolve_cookies), keyed
+        by url's domain. None (no header) when nothing is synced yet."""
+        from backend.auth.manager import AuthManager
+
+        domain = urlparse(url).hostname or ""
+        if not domain:
+            return None
+        cookies = await AuthManager().resolve_cookies(domain)
+        if not cookies:
+            return None
+        return "; ".join(f"{c['name']}={c['value']}" for c in cookies)
 
     @staticmethod
     async def _get(

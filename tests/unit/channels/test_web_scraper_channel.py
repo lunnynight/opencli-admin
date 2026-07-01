@@ -417,3 +417,37 @@ async def test_health_check_lxml_unavailable_returns_false(channel):
         result = await channel.health_check({"url": "https://example.com"})
 
     assert result is False
+
+
+# ── auth.type == "cookie" (CookieCloud-synced session) ──────────────────────────
+@pytest.mark.asyncio
+async def test_collect_cookie_auth_sends_synced_cookies(channel):
+    response = _make_mock_response()
+    mock_client_ctx = _make_mock_client(response)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_ctx) as ctor, patch(
+        "backend.auth.manager.AuthManager.resolve_cookies",
+        AsyncMock(return_value=[{"name": "session_id", "value": "abc"}]),
+    ) as resolve_cookies:
+        result = await channel.collect(
+            {"url": "https://example.com", "selectors": {"title": "h1"}, "auth": {"type": "cookie"}}, {}
+        )
+
+    resolve_cookies.assert_awaited_once_with("example.com")
+    assert result.success is True
+    assert ctor.call_args.kwargs["headers"]["Cookie"] == "session_id=abc"
+
+
+@pytest.mark.asyncio
+async def test_collect_no_cookie_auth_type_never_calls_resolve_cookies(channel):
+    """No auth.type == "cookie" configured — resolve_cookies must never be hit
+    (avoid a DB round trip on every plain scrape)."""
+    response = _make_mock_response()
+    mock_client_ctx = _make_mock_client(response)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_ctx), patch(
+        "backend.auth.manager.AuthManager.resolve_cookies", AsyncMock()
+    ) as resolve_cookies:
+        await channel.collect({"url": "https://example.com", "selectors": {"title": "h1"}}, {})
+
+    resolve_cookies.assert_not_awaited()

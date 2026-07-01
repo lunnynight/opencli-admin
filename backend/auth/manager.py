@@ -117,6 +117,78 @@ class AuthManager:
             ).scalars().all()
         return {r.key_name: crypto.decrypt(r.ciphertext) for r in rows}
 
+    async def store_cookie(self, domain: str, cookie_name: str, attrs: dict) -> None:
+        """Encrypt ``attrs`` (value/path/expires/httpOnly/secure/sameSite) and
+        upsert under ``(domain, cookie_name)``. Same select-then-insert /
+        IntegrityError-recovery shape as :meth:`store` (a sync that races a
+        concurrent sync of the same cookie must not 500)."""
+        import json
+
+        from sqlalchemy.exc import IntegrityError
+
+        from backend.database import AsyncSessionLocal
+        from backend.models.cookie_jar import CookieJarEntry
+
+        ciphertext = crypto.encrypt(json.dumps(attrs))
+
+        async with AsyncSessionLocal() as session:
+            row = await self._find_cookie_row(session, domain, cookie_name)
+            if row is not None:
+                row.ciphertext = ciphertext
+                await session.commit()
+                return
+
+            session.add(CookieJarEntry(domain=domain, cookie_name=cookie_name, ciphertext=ciphertext))
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                row = await self._find_cookie_row(session, domain, cookie_name)
+                if row is None:
+                    raise
+                row.ciphertext = ciphertext
+                await session.commit()
+
+    @staticmethod
+    async def _find_cookie_row(session, domain: str, cookie_name: str):
+        from sqlalchemy import select
+
+        from backend.models.cookie_jar import CookieJarEntry
+
+        return (
+            await session.execute(
+                select(CookieJarEntry).where(
+                    CookieJarEntry.domain == domain,
+                    CookieJarEntry.cookie_name == cookie_name,
+                )
+            )
+        ).scalar_one_or_none()
+
+    async def resolve_cookies(self, domain: str) -> list[dict]:
+        """Decrypt every stored cookie for ``domain`` (exact match — a caller
+        with ``sub.example.com`` should also try ``example.com`` itself if it
+        wants parent-domain cookies too; v1 doesn't guess that for you) into
+        Playwright-``add_cookies()``-shaped dicts."""
+        import json
+
+        from sqlalchemy import select
+
+        from backend.database import AsyncSessionLocal
+        from backend.models.cookie_jar import CookieJarEntry
+
+        async with AsyncSessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(CookieJarEntry).where(CookieJarEntry.domain == domain)
+                )
+            ).scalars().all()
+
+        cookies = []
+        for row in rows:
+            attrs = json.loads(crypto.decrypt(row.ciphertext))
+            cookies.append({"name": row.cookie_name, "domain": domain, **attrs})
+        return cookies
+
     async def resolve_context(self, source_id: str, auth_kind: str) -> AuthContext:
         """Build the runner's ``AuthContext`` from stored credentials.
 

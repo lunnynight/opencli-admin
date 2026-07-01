@@ -53,6 +53,8 @@ dependencies = [
     "playwright>=1.40.0",
     "cryptography>=46.0.5",
     "celery-redbeat>=2.3.3",
+    # CookieCloud sync client (auth_kind="cookie" — see backend/auth/cookiecloud_sync.py)
+    "PyCookieCloud>=0.4.0",
 ]
 
 [project.scripts]
