@@ -19,19 +19,22 @@ async def store_records(
     normalized_triples: list[tuple[dict, dict, str]],
     *,
     channel_type: str = "unknown",
+    forward_to_odp: bool = True,
 ) -> tuple[list[CollectedRecord], int]:
     """Insert new records; skip existing ones by content_hash.
 
-    When ``ODP_INGEST_URL`` is set, events are forwarded to the Rust ingest
-    service first (hot path). SQLite/ORM write remains for pipeline AI/notify
-    until those steps move to async ``record.committed`` consumers.
+    When ``ODP_INGEST_URL`` is set AND ``forward_to_odp`` is True, events are
+    forwarded to the Rust ingest service first (hot path). SQLite/ORM write
+    remains for pipeline AI/notify until those steps move to async
+    ``record.committed`` consumers. ``DualSink`` passes ``forward_to_odp=False``
+    so the legacy write does not double-send alongside ``OdpSink``.
 
     Returns (new_records, skipped_count).
     """
     if not normalized_triples:
         return [], 0
 
-    if odp_client.ingest_url():
+    if forward_to_odp and odp_client.ingest_url():
         try:
             await odp_client.forward_triples(
                 channel_type=channel_type,
@@ -56,11 +59,17 @@ async def store_records(
 
     new_records: list[CollectedRecord] = []
     skipped = 0
+    # Dedup within this batch too: two triples can share a content_hash (e.g. two
+    # CLI sub-commands that normalize to identical content). Without this, both
+    # pass the existing_hashes check, both get added, and flush() fails the whole
+    # batch atomically on the UNIQUE(source_id, content_hash) constraint.
+    seen_in_batch: set[str] = set()
 
     for raw, normalized, content_hash in normalized_triples:
-        if content_hash in existing_hashes:
+        if content_hash in existing_hashes or content_hash in seen_in_batch:
             skipped += 1
             continue
+        seen_in_batch.add(content_hash)
 
         record = CollectedRecord(
             task_id=task_id,

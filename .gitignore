@@ -21,6 +21,7 @@ env/
 htmlcov/
 *.coveragerc
 coverage.xml
+.tmp-smoke/
 
 # Database files
 *.db
@@ -37,9 +38,11 @@ coverage.xml
 # backend/migrations/versions/*.py
 
 # Node / frontend
+node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+.nx/
 
 # macOS
 .DS_Store
@@ -55,6 +58,8 @@ frontend/tsconfig.tsbuildinfo
 # Logs
 *.log
 logs/
+.omx/
+.serena/
 
 # Docker volumes / data
 data/
@@ -70,3 +75,5 @@ chrome/extension-src/store-assets/
 
 # Rust build
 odp-rs/target/
+.gstack/
+.repowise/

@@ -1,7 +1,56 @@
 # opencli-admin 项目管理
 
 > 版本: v0.1.0
-> 日期: 2026-06-19
+> 日期: 2026-06-24
+
+---
+
+## 0. 当前进度快照（2026-06-24）
+
+### 0.1 当前状态
+
+| 项 | 状态 |
+|---|---|
+| 当前工作目录 | `D:\projects\opencli-admin` |
+| 当前分支 | `codex/sources-canvas-topology-view-mode` |
+| 最近提交 | `f9e90b1 chore: add ...` |
+| 本地改动 | 前端工作区存在未提交改动，集中在拓扑、Sources、Settings、i18n、节点动作和布局 |
+| 验证结果 | `npm test`、`npm run typecheck`、`npm run lint`、`npm run build:frontend` 均通过 |
+| 构建提示 | Vite 报 chunk 大于 500 kB 的体积警告，非阻塞 |
+| code-intel | 2026-06-24 normal 模式已生成报告；hospital=red，score=66 |
+
+code-intel 的 red 不是因为当前测试失败，而是诊断链路还缺两个治理信号：
+
+- Understand graph 缺失，需要手动运行 `/understand D:\projects\opencli-admin --language zh`。
+- Sentrux baseline/rules 缺失，架构 gate 只能停在 triage，不能作为合并前治理结论。
+
+### 0.2 已完成或基本落地
+
+- `frontend/` 是唯一生产前端主线，React + Vite + Tailwind 是当前可运行产品面。
+- GitHub Actions 已拆成 frontend、extension、backend 三条真实流水线，不再依赖 Nx 聚合证明主线健康。
+- 默认 Compose 已改为从 `./frontend` 构建前端镜像，避免继续显示上游旧前端镜像。
+- `DESIGN.md` 已作为设计源，明确默认深色、操作台密度、拓扑/节点动作/Settings 的方向。
+- Topology Workbench 已降级为 `frontend/src/labs/topology/` 实验视图，需 `VITE_ENABLE_TOPOLOGY_LAB=true` 才开放。
+- Sources 页面暂不默认切换为画布工作台，后续先稳定采集源列表/详情操作闭环。
+- Settings 页面已新增，承载语言、主题、密度偏好和对话触发节点动作的实验入口。
+- zh/en i18n 字典已大幅扩展，并新增本地化审计文件用于后续清理硬编码中文。
+- `nodeActions` 与 `nodeRunService` 已新增，包含对话指令解析与节点动作执行的单元测试。
+
+### 0.3 进行中
+
+- 前端改动尚未提交，需要先做一次 diff review，必要时拆成 P0 基线、labs topology、后续 UI 三个提交。
+- 项目路线已收敛到当前 Vite 产品面；Next/Turborepo 迁移线降级为历史设想和 `experiments/next-web/` 实验。
+- i18n 审计仍显示多个页面存在硬编码中文，尤其是运行故事板、数据源、Settings、任务页等，需要分批清理。
+- Sentrux gate 缺 baseline/rules，若后续要用架构门禁，需要先创建基线和规则。
+- Understand graph 需要补跑，补齐后再看 code-intel hospital 是否能从 red 降级。
+
+### 0.4 下一步建议
+
+1. 完成 P0 diff review，确认 Docker、CI、文档都只指向 `frontend/` 主线。
+2. 对 Dashboard、Sources、Settings 做默认 smoke check；拓扑只在 `VITE_ENABLE_TOPOLOGY_LAB=true` 下检查 `/labs/topology`。
+3. 提交当前功能分支，提交信息建议围绕 `chore(frontend): establish Vite as the sole frontend mainline`。
+4. 后续再拆 SourcesPage 和设计系统，不在 P0 中继续扩大画布范围。
+5. 补齐 Sentrux baseline/rules 和 Understand graph，让 code-intel 报告可以作为后续进度门禁。
 
 ---
 
@@ -29,18 +78,18 @@
 
 | 任务 | 标签 | 优先级 | 状态 |
 |------|------|--------|------|
-| 创建 Monorepo 结构 (Turborepo) | `infrastructure` | 🔴 高 | ✅ Done |
-| 配置 Next.js App Router | `frontend` | 🔴 高 | ✅ Done |
-| 配置 Turborepo CI/CD | `infrastructure` | 🔴 高 | 🔄 In Progress |
+| 确认 Vite 前端主线 | `frontend` | 🔴 高 | ✅ Done |
+| 降级 Next.js 壳为实验目录 | `frontend` | 🟡 中 | ✅ Done |
+| 拆分 frontend / extension / backend CI | `infrastructure` | 🔴 高 | ✅ Done |
 | 添加 Docker 支持 | `infrastructure` | 🔴 高 | ✅ Done |
 | 配置 ESLint + Prettier | `infrastructure` | 🟡 中 | ⬜ To Do |
-| 配置 GitHub Actions | `infrastructure` | 🔴 高 | ⬜ To Do |
+| 配置 GitHub Actions | `infrastructure` | 🔴 高 | ✅ Done |
 
 ### 2.2 Phase 2: 前端现代化 🎨
 
 | 任务 | 标签 | 优先级 | 状态 |
 |------|------|--------|------|
-| 迁移现有组件到 Next.js | `frontend` | 🔴 高 | ⬜ To Do |
+| 拆分 Vite 页面和领域组件 | `frontend` | 🔴 高 | ⬜ To Do |
 | 添加 shadcn/ui 组件 | `frontend` | 🟡 中 | ⬜ To Do |
 | 实现 DataTable 虚拟滚动 | `frontend` `performance` | 🟡 中 | ⬜ To Do |
 | 添加 ErrorBoundary | `frontend` | 🟡 中 | ⬜ To Do |
@@ -165,9 +214,9 @@ assignees: ''
 
 ### v0.1.0 - MVP (1周)
 - [x] Monorepo 结构
-- [x] Next.js 骨架
+- [x] Vite 前端主线
 - [x] Docker 支持
-- [ ] Turborepo CI/CD
+- [x] 分离式 GitHub Actions CI
 - [ ] GitHub Actions
 - [ ] README
 

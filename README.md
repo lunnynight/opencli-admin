@@ -4,6 +4,13 @@
 
 **现代化的数据采集系统** — 可视化管理多渠道数据采集，接入 [opencli](https://github.com/jackwener/opencli) 驱动国内外主流平台，支持 AI 处理、多节点分布式调度与实时通知推送。
 
+## v0.4 前端基线
+
+- `frontend/` 是唯一生产前端主线：React + Vite。
+- `experiments/next-web/` 只是 Next.js 实验壳，不接入默认 Docker、CI 或导航。
+- 默认 `docker compose up --build` 会构建仓库内的 `frontend/`，不会拉取旧的上游前端镜像。
+- 拓扑画布属于实验能力；设置 `VITE_ENABLE_TOPOLOGY_LAB=true` 后才开放 `/labs/topology`。
+
 **OpenCLI WebUI** OpenCLI 可视化界面 [opencli-webui](https://github.com/xjh1994/opencli-webui)
 
 **仪表盘**
@@ -96,6 +103,20 @@ docker compose up -d   # 启动中心 + agent-1
 
 ## 快速开始
 
+### 方式零：前端主线（推荐）
+
+生产前端只在 `frontend/` 下开发和构建：
+
+```bash
+cd frontend
+npm ci --legacy-peer-deps
+npm run dev   # Vite dev server
+npm run test
+npm run build
+```
+
+扩展仍在 `chrome/extension-src/` 下独立构建。GitHub Actions（`.github/workflows/ci.yml`）也按 frontend、extension、backend 三条真实流水线分别验证。
+
 ### 方式一：原生 Shell
 
 直接复用本地 opencli 和 Chrome，适合开发和个人使用。
@@ -153,7 +174,7 @@ docker compose up -d
 | API 文档 | http://localhost:8031/docs |
 | Agent noVNC | http://localhost:3010 |
 
-镜像已发布至 Docker Hub（`xjh1994/opencli-admin-{api,frontend,agent}:0.3.6`），无需本地构建。从源码构建：
+默认 Compose 会从仓库内构建前端。后端和 agent 默认仍可使用已发布镜像；如需全部从源码构建：
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.build.yml up --build -d

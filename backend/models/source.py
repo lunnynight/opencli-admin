@@ -22,6 +22,14 @@ class DataSource(TimestampMixin):
     channel_type: Mapped[str] = mapped_column(String(50), nullable=False)
     channel_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
+    # Write destination strategy (strangler-fig): which sink persists collected
+    # items. legacy | odp_shadow | odp_dual_required | odp_primary | odp_only.
+    # Default 'legacy' preserves the original DB write (with its env-gated ODP
+    # shadow-forward). See backend.pipeline.sinks.strategy.select_sink.
+    write_strategy: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="legacy", server_default="legacy"
+    )
+
     # Optional AI processing config
     ai_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 

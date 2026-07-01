@@ -33,17 +33,34 @@ async def run_pipeline(
     enable_notifications: bool = True,
     agent_config: dict[str, Any] | None = None,
     run_id: str | None = None,
+    sink=None,  # ItemSink | None — write destination; defaults to LegacyDbSink
 ) -> PipelineResult:
     """Execute the full collection pipeline. Each write step uses its own
     short-lived session so no write lock is held during long-running I/O."""
     from backend.database import AsyncSessionLocal
-    from backend.pipeline import ai_processor, collector, notifier_dispatch, normalizer, storer
+    from backend.pipeline import ai_processor, collector, notifier_dispatch
 
     started = datetime.now(timezone.utc)
     params = parameters or {}
 
-    # Pre-step: auto-resolve chrome endpoint from browser binding (opencli only)
-    if source.channel_type == "opencli" and not params.get("chrome_endpoint"):
+    # Pre-step: auto-resolve chrome endpoint from a browser binding. Channels that
+    # declare capabilities.session_affinity (opencli, skill) drive a real Chrome
+    # from the shared pool, so a site-keyed binding lets them attach to a
+    # logged-in browser. Best-effort: a missing binding is not an error
+    # (browser_pool.acquire(endpoint=None) picks a default), so we only override
+    # chrome_endpoint when a binding exists. Gated by the capability rather than a
+    # hardcoded channel list, so a new session-bound channel needs no change here.
+    from backend.channels.registry import get_channel
+
+    try:
+        _affinity_channel = get_channel(source.channel_type)
+    except Exception:
+        _affinity_channel = None  # unknown channel_type surfaces in the collect step
+    if (
+        _affinity_channel is not None
+        and _affinity_channel.capabilities.session_affinity
+        and not params.get("chrome_endpoint")
+    ):
         site = source.channel_config.get("site", "")
         if site:
             from backend.services import browser_service
@@ -60,7 +77,20 @@ async def run_pipeline(
     step1_start = datetime.now(timezone.utc)
 
     if run_id:
+        # Skill channel: inject run_id into params BEFORE dispatch so the loop can
+        # emit per-step events via events.emit(run_id, ...). Scoped to "skill" —
+        # other channels don't expect a run_id param. (chrome_endpoint, if any,
+        # was already injected by the pre-step binding above.)
+        if source.channel_type == "skill":
+            params = {**params, "run_id": run_id}
         collect_detail: dict = {"channel_type": source.channel_type, "params": params}
+        if source.channel_type == "skill":
+            _skill_md = source.channel_config.get("skill_md") or ""
+            collect_detail["skill"] = {
+                "skill_chars": len(_skill_md),
+                "has_chrome_endpoint": bool(params.get("chrome_endpoint")),
+                "auto_confirm": bool(source.channel_config.get("auto_confirm", False)),
+            }
         if source.channel_type == "opencli":
             from backend.channels.opencli_channel import _get_named_options, _OPENCLI_BIN
             cfg = source.channel_config
@@ -126,40 +156,62 @@ async def run_pipeline(
             elapsed_ms=step1_elapsed,
         )
 
-    # Step 2: Normalize
-    triples = normalizer.normalize_items(channel_result.items, source.id)
-    logger.info("[task:%s] step2/normalize done | items=%d", task_id, len(triples))
-    if run_id:
-        await events.emit(
-            run_id, "normalize",
-            f"归一化完成 | {len(triples)} 条",
-            detail={"items": len(triples)},
-        )
+    # Steps 2+3: Normalize + Store, behind the write seam. The sink owns its own
+    # normalization, dedup, and persistence; the orchestrator stays
+    # destination-agnostic. An explicitly injected sink wins (tests, callers);
+    # otherwise the source's write_strategy selects it (default 'legacy' →
+    # LegacyDbSink, the original inline path).
+    from backend.pipeline.sinks.base import RunContext
+    from backend.pipeline.sinks.strategy import select_sink
 
-    # Step 3: Store
-    logger.info("[task:%s] step3/store start | items=%d", task_id, len(triples))
+    active_sink = sink or select_sink(getattr(source, "write_strategy", None))
+    sink_ctx = RunContext(
+        task_id=task_id,
+        source_id=source.id,
+        provider=source.channel_type,
+        run_id=run_id,
+    )
+    logger.info("[task:%s] step2-3/sink start | sink=%s items=%d",
+                task_id, type(active_sink).__name__, channel_result.count)
     try:
-        async with AsyncSessionLocal() as session:
-            new_records, skipped = await storer.store_records(
-                session, task_id, source.id, triples, channel_type=source.channel_type
-            )
-            await session.commit()
+        sink_result = await active_sink.write_batch(sink_ctx, channel_result.items)
     except Exception as exc:
-        logger.exception("[task:%s] step3/store exception | %s", task_id, exc)
+        logger.exception("[task:%s] step2-3/sink exception | %s", task_id, exc)
         return PipelineResult(
             success=False,
             source_id=source.id,
             collected=channel_result.count,
             error=str(exc),
         )
-    logger.info("[task:%s] step3/store done | new=%d skipped=%d",
-                task_id, len(new_records), skipped)
+    new_records = sink_result.records
+    skipped = sink_result.duplicates
+    logger.info("[task:%s] step2-3/sink done | normalized=%d new=%d skipped=%d",
+                task_id, sink_result.normalized, len(new_records), skipped)
     if run_id:
+        await events.emit(
+            run_id, "normalize",
+            f"归一化完成 | {sink_result.normalized} 条",
+            detail={"items": sink_result.normalized},
+        )
         await events.emit(
             run_id, "store",
             f"入库完成 | 新增 {len(new_records)} 条，跳过 {skipped} 条（重复）",
             detail={"new": len(new_records), "skipped": skipped},
         )
+
+    # Incremental cursor: advance the persisted cursor ONLY now that the write sink
+    # has accepted this batch. A raised/failed sink returned above, so reaching here
+    # means the data landed; committing during fetch would skip items that never got
+    # written. (Deeper ODP durability — a queued 202 that never persists — is an
+    # ODP-side guarantee, tracked separately.)
+    pending_cursor = channel_result.metadata.pop("cursor_pending", None)
+    cursor_source_id = channel_result.metadata.pop("cursor_source_id", None)
+    if pending_cursor is not None and cursor_source_id is not None:
+        from backend.pipeline.cursor_store import DBCursorStore
+
+        await DBCursorStore().save(cursor_source_id, pending_cursor)
+        logger.info("[task:%s] cursor committed post-write | source=%s",
+                    task_id, cursor_source_id)
 
     # Step 4: AI processing
     effective_ai_config = agent_config or source.ai_config

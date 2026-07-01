@@ -12,6 +12,14 @@ from backend.pipeline.pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
 
+# Generic best-effort enrichment prompt used by the auto-default agent.
+# Unfilled {{placeholders}} render to empty strings (see OpenAIProcessor._render).
+DEFAULT_ENRICH_PROMPT = (
+    "分析下面这条采集记录, 只返回一个 JSON 对象, 字段: "
+    '{"summary": "一句话摘要", "tags": ["关键词"], "category": "分类"}。\n'
+    "标题: {{title}}\n内容: {{content}}{{text}}{{description}}\n链接: {{url}}"
+)
+
 
 async def run_collection_pipeline(
     task_id: str,
@@ -105,6 +113,33 @@ async def run_collection_pipeline(
                     **provider_config,
                     **agent.processor_config,  # agent-level overrides provider
                 }
+
+        # Autonomous default (N8N-style: configure the credential once, the AI node
+        # just works). No explicit agent → auto-use the first enabled provider with a
+        # generic enrichment prompt. So configuring a provider is enough — no per-agent setup.
+        if agent_config is None:
+            from backend.models.provider import ModelProvider
+            result = await session.execute(
+                select(ModelProvider)
+                .where(ModelProvider.enabled.is_(True))
+                .order_by(ModelProvider.created_at.asc())
+            )
+            provider = result.scalars().first()
+            if provider:
+                cfg: dict = {}
+                if provider.api_key:
+                    cfg["api_key"] = provider.api_key
+                if provider.base_url:
+                    cfg["base_url"] = provider.base_url
+                agent_config = {
+                    "processor_type": "openai",  # OpenAI-compatible: covers Ollama/local/openai gateways
+                    "model": provider.default_model,
+                    "prompt_template": DEFAULT_ENRICH_PROMPT,
+                    **cfg,
+                }
+                logger.info("[task:%s] auto default agent | provider=%s model=%s",
+                            task_id, provider.name, provider.default_model)
+
         # Detach source from session so it can be used after session closes
         session.expunge(source)
     logger.info("[task:%s] phase2 done | source=%s channel=%s agent_config=%s",
@@ -112,13 +147,18 @@ async def run_collection_pipeline(
                 {k: v for k, v in (agent_config or {}).items() if k != "prompt_template"})
 
     # ── Phase 3: run pipeline (no session held during collection) ─────────────
-    pipeline_result = await run_pipeline(
-        task_id=task_id,
-        source=source,
-        parameters=merged_params,
-        agent_config=agent_config,
-        run_id=run_id,
-    )
+    # Hold a per-domain slot for the run so the fleet stays polite to a site even
+    # when many sources target it (in-process cap; cross-worker would need Redis).
+    from backend.pipeline.domain_limiter import domain_slot
+
+    async with domain_slot(source):
+        pipeline_result = await run_pipeline(
+            task_id=task_id,
+            source=source,
+            parameters=merged_params,
+            agent_config=agent_config,
+            run_id=run_id,
+        )
 
     # ── Phase 4: persist final status ────────────────────────────────────────
     async with AsyncSessionLocal() as session:
@@ -132,7 +172,19 @@ async def run_collection_pipeline(
             if pipeline_result.metadata.get("node_url"):
                 run.node_url = pipeline_result.metadata["node_url"]
 
-        if pipeline_result.success:
+        # Paused outcome (skill execute loop hit the confirm gate in headless v1):
+        # a successful pipeline run that stopped at a confirm-required action.
+        # collect/normalize/store all ran (finished_at/duration/records above are
+        # still set); the run just paused, so it is neither completed nor failed.
+        # TaskRun.status / CollectionTask.status are free-text String(50) so
+        # storing "awaiting_confirm" needs no migration (anchor is issue 04).
+        if pipeline_result.metadata.get("awaiting_confirm"):
+            if task:
+                task.status = "awaiting_confirm"
+                task.error_message = None
+            if run:
+                run.status = "awaiting_confirm"
+        elif pipeline_result.success:
             if task:
                 task.status = "completed"
                 task.error_message = None
