@@ -421,9 +421,11 @@ function APIConfig({
             { value: 'bearer', label: t('channelConfig.authBearer') },
             { value: 'basic', label: t('channelConfig.authBasic') },
             { value: 'api_key', label: t('channelConfig.authApiKey') },
+            { value: 'cookie', label: t('channelConfig.authCookie') },
           ]}
         />
       </Field>
+      {authType === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
 
       {authType === 'bearer' && (
         <>
@@ -526,6 +528,7 @@ function WebScraperConfig({
   const [selectors, setSelectors] = useState<KVPair[]>(
     objToKv(config.selectors as Record<string, unknown>),
   )
+  const auth = (config.auth as Record<string, string>) ?? {}
 
   const update = (patch: Partial<Record<string, unknown>>) => onChange({ ...config, ...patch })
 
@@ -570,6 +573,83 @@ function WebScraperConfig({
           min={1}
         />
       </Field>
+      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <input
+          type="checkbox"
+          checked={auth.type === 'cookie'}
+          onChange={(e) => update({ auth: e.target.checked ? { type: 'cookie' } : {} })}
+        />
+        {t('channelConfig.authCookie')}
+      </label>
+      {auth.type === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
+    </div>
+  )
+}
+
+function Crawl4AIConfig({
+  config,
+  onChange,
+}: {
+  config: Record<string, unknown>
+  onChange: (c: Record<string, unknown>) => void
+}) {
+  const { t } = useTranslation()
+  const [selectors, setSelectors] = useState<KVPair[]>(
+    objToKv(config.selectors as Record<string, unknown>),
+  )
+  const auth = (config.auth as Record<string, string>) ?? {}
+
+  const update = (patch: Partial<Record<string, unknown>>) => onChange({ ...config, ...patch })
+
+  const updateSelectors = (pairs: KVPair[]) => {
+    setSelectors(pairs)
+    update({ selectors: kvToObj(pairs) })
+  }
+
+  return (
+    <div className="space-y-3">
+      <Field label={t('channelConfig.url')} required>
+        <TextInput
+          value={(config.url as string) ?? ''}
+          onChange={(v) => update({ url: v })}
+          placeholder="https://example.com/js-rendered-page"
+          required
+        />
+      </Field>
+      <Field
+        label={t('channelConfig.listSelector')}
+        hint={t('channelConfig.listSelectorHint')}
+      >
+        <TextInput
+          value={(config.list_selector as string) ?? ''}
+          onChange={(v) => update({ list_selector: v })}
+          placeholder=".item"
+        />
+      </Field>
+      <Field label={t('channelConfig.fieldSelectors')} hint={t('channelConfig.fieldSelectorsHint')} required>
+        <KVList
+          pairs={selectors}
+          onChange={updateSelectors}
+          keyPlaceholder="field name"
+          valuePlaceholder="CSS selector"
+        />
+      </Field>
+      <Field label={t('channelConfig.waitFor')} hint={t('channelConfig.waitForHint')}>
+        <TextInput
+          value={(config.wait_for as string) ?? ''}
+          onChange={(v) => update({ wait_for: v || undefined })}
+          placeholder="css:.item"
+        />
+      </Field>
+      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <input
+          type="checkbox"
+          checked={auth.type === 'cookie'}
+          onChange={(e) => update({ auth: e.target.checked ? { type: 'cookie' } : {} })}
+        />
+        {t('channelConfig.authCookie')}
+      </label>
+      {auth.type === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
     </div>
   )
 }
@@ -1132,7 +1212,7 @@ export { OPENCLI_PRESETS, PRESET_DEFAULT, SITE_LABELS, COMMANDS_BY_SITE }
 
 // ── Public component ──────────────────────────────────────────────────────────
 
-export type ChannelType = 'rss' | 'api' | 'web_scraper' | 'cli' | 'opencli' | 'skill'
+export type ChannelType = 'rss' | 'api' | 'web_scraper' | 'cli' | 'opencli' | 'skill' | 'crawl4ai'
 
 interface Props {
   channelType: ChannelType
@@ -1160,6 +1240,8 @@ export default function ChannelConfigForm({ channelType, config, onChange, sourc
       return <OpenCLIConfig config={config} onChange={onChange} />
     case 'skill':
       return <SkillSourceConfig config={config} onChange={onChange} />
+    case 'crawl4ai':
+      return <Crawl4AIConfig config={config} onChange={onChange} />
   }
 }
 

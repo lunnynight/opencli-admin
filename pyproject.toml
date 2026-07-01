@@ -55,6 +55,8 @@ dependencies = [
     "celery-redbeat>=2.3.3",
     # CookieCloud sync client (auth_kind="cookie" — see backend/auth/cookiecloud_sync.py)
     "PyCookieCloud>=0.4.0",
+    # JS-rendered page scraping + anti-detection (backend/channels/crawl4ai_channel.py)
+    "crawl4ai>=0.7.0",
 ]
 
 [project.scripts]

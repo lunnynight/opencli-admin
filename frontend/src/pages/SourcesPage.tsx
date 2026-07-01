@@ -76,6 +76,7 @@ import {
   ExternalLink,
   FileInput,
   Filter,
+  Ghost,
   Globe2,
   ListChecks,
   Pencil,
@@ -103,7 +104,7 @@ function chromeNovncPort(cdpUrl: string, basePort = 3010): number {
   }
 }
 
-const CHANNEL_TYPES: ChannelType[] = ['opencli', 'rss', 'api', 'web_scraper', 'cli', 'skill']
+const CHANNEL_TYPES: ChannelType[] = ['opencli', 'rss', 'api', 'web_scraper', 'crawl4ai', 'cli', 'skill']
 type FilterType = 'all' | ChannelType
 
 type ActionState = 'loading' | 'ok' | 'err'
@@ -160,6 +161,13 @@ const CHANNEL_META: Record<ChannelType, {
     hint: '技能库执行 (record→distill→execute→correct)',
     icon: Sparkles,
     tone: 'gold',
+  },
+  crawl4ai: {
+    label: 'Crawl4AI',
+    short: 'C4AI',
+    hint: 'JS 渲染页面 + 反爬(独立管理浏览器)',
+    icon: Ghost,
+    tone: 'violet',
   },
 }
 

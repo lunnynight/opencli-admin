@@ -43,7 +43,7 @@ export interface DataSource {
   id: string
   name: string
   description?: string
-  channel_type: 'opencli' | 'web_scraper' | 'api' | 'rss' | 'cli' | 'skill'
+  channel_type: 'opencli' | 'web_scraper' | 'api' | 'rss' | 'cli' | 'skill' | 'crawl4ai'
   channel_config: Record<string, unknown>
   ai_config?: Record<string, unknown>
   enabled: boolean
