@@ -1,6 +1,6 @@
 """Integration tests for the /api/v1/sources endpoints."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from cryptography.fernet import Fernet
@@ -196,3 +196,41 @@ async def test_delete_source_credential(client, db_engine, sample_source_data, m
 
         list_resp = await client.get(f"/api/v1/sources/{source_id}/credentials")
     assert list_resp.json()["data"] == []
+
+
+# ── RSS onboarding: discover-feed + import-opml ─────────────────────────────────
+@pytest.mark.asyncio
+async def test_discover_feed_endpoint(client):
+    with patch(
+        "backend.api.v1.sources.source_service.discover_feeds",
+        AsyncMock(return_value=[{"url": "https://example.com/feed.xml", "title": "Feed"}]),
+    ):
+        response = await client.post("/api/v1/sources/discover-feed", json={"url": "https://example.com"})
+    assert response.status_code == 200
+    assert response.json()["data"] == [{"url": "https://example.com/feed.xml", "title": "Feed"}]
+
+
+@pytest.mark.asyncio
+async def test_import_opml_endpoint_creates_disabled_sources(client):
+    opml = b"""<?xml version="1.0"?><opml><body>
+    <outline title="Feed A" xmlUrl="https://a.example.com/rss" />
+    </body></opml>"""
+    response = await client.post(
+        "/api/v1/sources/import-opml",
+        files={"file": ("feeds.opml", opml, "text/x-opml")},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data["created"]) == 1
+    assert data["created"][0]["channel_type"] == "rss"
+    assert data["created"][0]["enabled"] is False
+    assert data["skipped_existing"] == []
+
+
+@pytest.mark.asyncio
+async def test_import_opml_endpoint_invalid_xml_returns_400(client):
+    response = await client.post(
+        "/api/v1/sources/import-opml",
+        files={"file": ("feeds.opml", b"<not-xml", "text/x-opml")},
+    )
+    assert response.status_code == 400

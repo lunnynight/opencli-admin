@@ -1,6 +1,7 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.manager import AuthManager
@@ -38,6 +39,52 @@ async def create_source(
 ) -> ApiResponse:
     source = await source_service.create_source(db, body)
     return ApiResponse.ok(DataSourceRead.model_validate(source))
+
+
+class FeedDiscoveryRequest(BaseModel):
+    url: str
+
+
+class FeedCandidate(BaseModel):
+    url: str
+    title: Optional[str] = None
+
+
+@router.post("/discover-feed", response_model=ApiResponse[list[FeedCandidate]])
+async def discover_feed(body: FeedDiscoveryRequest) -> ApiResponse:
+    """Given a site's homepage, find candidate RSS/Atom feeds — setup-time
+    convenience, not a scheduled channel action. Returns every candidate found
+    (never auto-picks "the main one"); empty list if none found."""
+    candidates = await source_service.discover_feeds(body.url)
+    return ApiResponse.ok([FeedCandidate(**c) for c in candidates])
+
+
+class OpmlImportResult(BaseModel):
+    created: list[DataSourceRead]
+    skipped_existing: list[str]
+
+
+@router.post("/import-opml", response_model=ApiResponse[OpmlImportResult])
+async def import_opml(
+    file: UploadFile = File(...), db: AsyncSession = Depends(get_db)
+) -> ApiResponse:
+    """Bulk-create channel_type="rss" sources from an OPML export. Created
+    rows land disabled (human reviews + enables); already-stored feed_urls and
+    duplicates within the same file are skipped, not re-created."""
+    raw = await file.read()
+    try:
+        entries = source_service.parse_opml(raw.decode("utf-8"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    created, skipped = await source_service.bulk_import_rss(db, entries)
+    await db.commit()
+    return ApiResponse.ok(
+        OpmlImportResult(
+            created=[DataSourceRead.model_validate(s) for s in created],
+            skipped_existing=skipped,
+        )
+    )
 
 
 @router.get("/{source_id}", response_model=ApiResponse[DataSourceDetail])
