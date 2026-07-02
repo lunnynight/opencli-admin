@@ -8,7 +8,15 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
+from backend.control import kill_switch
 from backend.models.control_action import ControlActionRecord
+
+
+@pytest.fixture(autouse=True)
+def _reset_kill_switch():
+    kill_switch.reset()
+    yield
+    kill_switch.reset()
 
 
 async def _seed_measurement_row(session, source_id: str, **overrides):
@@ -226,3 +234,85 @@ async def test_outcomes_evaluate_endpoint_with_no_pending_rows(client):
         "insufficient_data": 0,
         "still_pending": 0,
     }
+
+
+# ── Kill switch (issue 03 / PR-Control-4) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_kill_switch_defaults_to_config(client):
+    response = await client.get("/api/v1/control/kill-switch")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    # Shipped default: config_default is False, no runtime override set yet
+    # in this test process -> effective engaged state follows config.
+    assert data["runtime_override"] is None
+    assert data["engaged"] == data["config_default"]
+
+
+@pytest.mark.asyncio
+async def test_post_kill_switch_sets_runtime_override(client):
+    response = await client.post("/api/v1/control/kill-switch", json={"engaged": True})
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["engaged"] is True
+    assert data["runtime_override"] is True
+
+    # A subsequent GET reflects the same override.
+    get_resp = await client.get("/api/v1/control/kill-switch")
+    assert get_resp.json()["data"]["engaged"] is True
+
+    # Disengage again.
+    off_resp = await client.post("/api/v1/control/kill-switch", json={"engaged": False})
+    assert off_resp.json()["data"]["engaged"] is False
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_engaged_short_circuits_control_cycle(
+    client, db_session, sample_source_data, monkeypatch
+):
+    """Integration-level proof the runtime toggle actually blocks execution:
+    seed a source + enough evidence that every other gate would pass, engage
+    the kill switch via the API, run one cycle tick directly, and assert
+    nothing executed."""
+    _clear_odp_env(monkeypatch)
+    monkeypatch.setenv("CONTROL_MODE", "automatic")
+    from backend.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        create_resp = await client.post("/api/v1/sources", json=sample_source_data)
+        source_id = create_resp.json()["data"]["id"]
+        await _seed_measurement_row(db_session, source_id, error_kinds={"auth_failed": 1})
+
+        for action_type in ("pause", "require_review"):
+            for i in range(10):
+                db_session.add(
+                    ControlActionRecord(
+                        source_id="evidence-seed",
+                        run_id="run-x",
+                        mode="advisory",
+                        state="auth_failed",
+                        action_type=action_type,
+                        reason="seed",
+                        payload={},
+                        executed=False,
+                        measurement_before={},
+                        outcome="recovered" if i < 8 else "persisted",
+                        evaluated_at=datetime.now(timezone.utc),
+                    )
+                )
+        await db_session.commit()
+
+        toggle_resp = await client.post("/api/v1/control/kill-switch", json={"engaged": True})
+        assert toggle_resp.json()["data"]["engaged"] is True
+
+        from backend.control.cycle import run_control_cycle_once
+
+        result = await run_control_cycle_once(db_session, now=datetime.now(timezone.utc))
+        await db_session.commit()
+
+        assert result.executions == []
+        assert all(b["blocked_by"] == "kill_switch" for b in result.blocked)
+    finally:
+        get_settings.cache_clear()

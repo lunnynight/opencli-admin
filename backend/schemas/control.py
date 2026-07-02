@@ -85,6 +85,29 @@ class SuggestedActionRead(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class KillSwitchRead(BaseModel):
+    """Snapshot of the actuator's global kill switch (issue 03).
+
+    ``engaged`` is the effective state the Control Cycle actually checks:
+    the in-memory runtime override when one has been set via
+    ``POST /control/kill-switch``, else ``Settings.control_kill_switch``.
+    ``runtime_override`` is null when no runtime toggle has been set this
+    process lifetime (i.e. purely following config).
+    """
+
+    engaged: bool
+    runtime_override: Optional[bool] = None
+    config_default: bool
+
+
+class KillSwitchUpdate(BaseModel):
+    """Body for ``POST /control/kill-switch``: set the in-memory runtime
+    override explicitly. Resets to ``Settings.control_kill_switch`` on
+    process restart — a single-operator fleet does not need this persisted."""
+
+    engaged: bool
+
+
 class OutcomeEvaluationRead(BaseModel):
     """Counts from one ``backend.control.outcomes.evaluate_pending_outcomes``
     pass — how many pending ledger rows were judged, and to which verdict.

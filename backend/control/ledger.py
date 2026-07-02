@@ -111,3 +111,48 @@ async def record_advisory_actions(
     if written:
         await session.flush()
     return written
+
+
+async def record_executed_action(
+    session: AsyncSession,
+    *,
+    source_id: str,
+    state: SourceControlState,
+    action_type: str,
+    reason: str,
+    payload: dict,
+    measurement: SourceMeasurement,
+    measurement_row_id: Optional[str],
+    run_id: Optional[str],
+) -> ControlActionRecord:
+    """Write one ``control_actions`` row for an action the actuator ACTUALLY
+    performed (issue 03 / PR-Control-4) — ``mode="automatic"``,
+    ``executed=True``. Same table as :func:`record_advisory_actions`;
+    outcome judgment (``backend.control.outcomes``) applies to these rows
+    identically since it has no ``mode``/``executed`` filter.
+
+    Unlike the advisory recorder, this never dedups: an executed action is
+    itself the record of a real mutation, not a repeatable suggestion, so
+    every execution gets its own row. Callers (the Control Cycle) are
+    responsible for their OWN idempotency check (an unresolved identical
+    executed row for the same (source, action_type, state)) before calling
+    this — see ``backend.control.gate``.
+
+    Never commits — flushes into the caller's session, same as the advisory
+    recorder.
+    """
+    row = ControlActionRecord(
+        source_id=source_id,
+        run_id=run_id,
+        measurement_id=measurement_row_id,
+        mode="automatic",
+        state=state.value,
+        action_type=action_type,
+        reason=reason,
+        payload=dict(payload),
+        executed=True,
+        measurement_before=measurement.model_dump(mode="json"),
+    )
+    session.add(row)
+    await session.flush()
+    return row

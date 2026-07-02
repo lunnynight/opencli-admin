@@ -8,15 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth.manager import AuthManager
 from backend.config import get_settings
 from backend.control import aggregation
-from backend.control.objectives import SourceObjective, resolve_objective
+from backend.control.objectives import resolve_objective
 from backend.control.service import decide_for_source
+from backend.control.system_context import build_system_context
 from backend.database import get_db
 from backend.schemas.common import ApiResponse, PaginationMeta
 from backend.schemas.control import (
     FallbackTrendRead,
     SourceControlStateRead,
     SuggestedActionRead,
-    SystemContextRead,
     TrendRead,
 )
 from backend.schemas.credential import CredentialCreate, CredentialKeyRead
@@ -217,42 +217,6 @@ async def delete_source_credential(
     return ApiResponse.ok(None)
 
 
-async def _build_system_context(objective: SourceObjective) -> SystemContextRead:
-    """Collect the shared ODP system_context, degrading gracefully.
-
-    Reuses C2's read-only collector (backend.control.collectors.odp_metrics) —
-    never queries Redis/ODP-Postgres/odp-ingest directly. Any collector
-    failure (or a section reporting itself unavailable) yields
-    ``available=False`` / ``odp_backpressured=False`` rather than raising —
-    this endpoint must return 200 even when ODP is fully down (see
-    docs/CONTROL_THEORY_ARCHITECTURE.md §0).
-    """
-    try:
-        from backend.control.collectors import odp_metrics
-
-        snapshot = await odp_metrics.collect()
-    except Exception as exc:  # pragma: no cover - collect() already degrades
-        # internally; this is a last-resort guard so a collector import/
-        # crash bug can never turn this endpoint into a 500.
-        logger.warning("control-state: odp_metrics.collect failed: %s", exc)
-        return SystemContextRead(odp_backpressured=False, available=False)
-
-    stream_available = snapshot.stream.available
-    pending = snapshot.stream.pending
-    lag = snapshot.stream.lag
-
-    odp_backpressured = (
-        stream_available and pending is not None and pending > objective.max_pending
-    )
-
-    return SystemContextRead(
-        odp_backpressured=odp_backpressured,
-        stream_lag=lag if stream_available else None,
-        pending=pending if stream_available else None,
-        available=stream_available,
-    )
-
-
 @router.get(
     "/{source_id}/control-state",
     response_model=ApiResponse[SourceControlStateRead],
@@ -292,7 +256,7 @@ async def get_source_control_state(
 
     settings = get_settings()
     objective = resolve_objective(source.objective_override)
-    system_context = await _build_system_context(objective)
+    system_context = await build_system_context(objective)
 
     decision = await decide_for_source(
         db,

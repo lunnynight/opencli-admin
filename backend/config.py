@@ -143,6 +143,37 @@ class Settings(BaseSettings):
     # rather than a verdict.
     control_outcome_stale_seconds: int = 86400
 
+    # Issue 03 (Control Cycle + Actuator, ADR-0007). Background cycle period —
+    # deliberately NOT tied to the collection scheduler's own cadence.
+    control_cycle_period_seconds: int = 60
+
+    # Global kill switch (config half; the other half is the in-memory
+    # runtime toggle under backend.control.kill_switch, POST/GET
+    # /api/v1/control/kill-switch — resets to THIS value on restart). Off by
+    # default: shipped configuration must execute nothing.
+    control_kill_switch: bool = False
+
+    # Execution gate (docs/CONTROL_THEORY_ARCHITECTURE.md, ADR-0007): a
+    # (state, action_type) advisory-report bucket must clear BOTH a minimum
+    # sample size and a minimum recovery rate before the actuator may execute
+    # that suggestion automatically.
+    control_gate_min_samples: int = 10
+    control_gate_min_recovery_rate: float = 0.6
+
+    # Anti-oscillation guards. Cooldown is per (source_id, action_type);
+    # the hourly cap is global across every executed action.
+    control_action_cooldown_seconds: int = 3600
+    control_max_actions_per_hour: int = 20
+
+    # increase_interval actuator (bounded multiplicative backoff on a
+    # source's CronSchedule step interval, e.g. "*/5 * * * *" -> "*/10 * * * *").
+    control_increase_interval_factor: float = 2.0
+    control_increase_interval_max_minutes: int = 1440
+
+    # pause actuator TTL — how long an executed pause disables a source
+    # before the Control Cycle auto-resumes it.
+    control_pause_ttl_seconds: int = 3600
+
     @property
     def is_sqlite(self) -> bool:
         return "sqlite" in self.database_url

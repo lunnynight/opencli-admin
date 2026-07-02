@@ -158,6 +158,15 @@ async def lifespan(app: FastAPI):
             await populate_all()
         except Exception as exc:
             logger.warning("redbeat populate_all failed at startup: %s", exc)
+    # Control Cycle (issue 03 / PR-Control-4, ADR-0007): a dedicated
+    # background task, deliberately NOT hung on the collection scheduler
+    # above — the controller and the plant it supervises must not share a
+    # scheduling domain. Always started; the cycle itself is a no-op mutator
+    # in Advisory Mode (the shipped default) and stays a no-op mutator
+    # whenever the kill switch is engaged.
+    from backend.control import cycle_task
+    cycle_task.start()
+
     logger.info(
         "OpenCLI Admin started (env=%s, executor=%s, orchestrator=%s)",
         settings.app_env,
@@ -166,6 +175,7 @@ async def lifespan(app: FastAPI):
     )
     yield
     # Shutdown
+    await cycle_task.stop()
     if use_admin_scheduler:
         from backend.scheduler import stop_scheduler
         stop_scheduler()

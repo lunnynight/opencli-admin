@@ -27,6 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.control.collectors import odp_metrics
 from backend.control.outcomes import evaluate_pending_outcomes
+from backend.control import kill_switch
+from backend.control.report import bucket_by_state_action, mode_breakdown, tally
 from backend.database import get_db
 from backend.models.control_action import ControlActionRecord
 from backend.schemas.common import ApiResponse, PaginationMeta
@@ -35,6 +37,8 @@ from backend.schemas.control import (
     AdvisoryReportRead,
     AdvisoryReportTotalsRead,
     ControlActionRecordRead,
+    KillSwitchRead,
+    KillSwitchUpdate,
     OutcomeEvaluationRead,
 )
 from backend.schemas.odp_state import (
@@ -89,26 +93,6 @@ async def get_odp_state() -> ApiResponse:
     return ApiResponse.ok(state)
 
 
-def _tally(rows: list[ControlActionRecord]) -> dict:
-    """Fold a set of ledger rows into the shared totals shape (pure)."""
-    recovered = sum(1 for r in rows if r.outcome == "recovered")
-    persisted = sum(1 for r in rows if r.outcome == "persisted")
-    insufficient = sum(1 for r in rows if r.outcome == "insufficient_data")
-    evaluated = sum(1 for r in rows if r.evaluated_at is not None)
-    denominator = recovered + persisted
-    return {
-        "total": len(rows),
-        "pending": len(rows) - evaluated,
-        "evaluated": evaluated,
-        "recovered": recovered,
-        "persisted": persisted,
-        "insufficient_data": insufficient,
-        # null (not 0.0) when nothing has a recovered/persisted verdict yet —
-        # a 0-of-0 rate would be a fabricated signal, not a measurement.
-        "recovery_rate": recovered / denominator if denominator else None,
-    }
-
-
 @router.get("/advisory-report", response_model=ApiResponse[AdvisoryReportRead])
 async def get_advisory_report(db: AsyncSession = Depends(get_db)) -> ApiResponse:
     """Agreement/recovery report over the control_actions evidence ledger
@@ -138,20 +122,16 @@ async def get_advisory_report(db: AsyncSession = Depends(get_db)) -> ApiResponse
         .scalars()
         .all()
     )
-    buckets: dict[tuple[str, str], list[ControlActionRecord]] = {}
-    modes: dict[str, int] = {}
-    for row in rows:
-        buckets.setdefault((row.state, row.action_type), []).append(row)
-        modes[row.mode] = modes.get(row.mode, 0) + 1
+    buckets = bucket_by_state_action(rows)
 
     return ApiResponse.ok(
         AdvisoryReportRead(
             buckets=[
-                AdvisoryReportBucketRead(state=state, action_type=action_type, **_tally(group))
+                AdvisoryReportBucketRead(state=state, action_type=action_type, **tally(group))
                 for (state, action_type), group in sorted(buckets.items())
             ],
-            totals=AdvisoryReportTotalsRead(**_tally(list(rows))),
-            mode_breakdown=modes,
+            totals=AdvisoryReportTotalsRead(**tally(list(rows))),
+            mode_breakdown=mode_breakdown(rows),
             evaluation=OutcomeEvaluationRead(**counts),
         )
     )
@@ -204,3 +184,29 @@ async def list_control_actions(
             total=total, page=page, limit=limit, pages=max(1, -(-total // limit))
         ),
     )
+
+
+@router.get("/kill-switch", response_model=ApiResponse[KillSwitchRead])
+async def get_kill_switch() -> ApiResponse:
+    """Read the actuator's global kill switch (issue 03).
+
+    Pure read: never itself engages/disengages the switch. See
+    ``backend.control.kill_switch`` for the config-vs-runtime-override
+    precedence this reflects.
+    """
+    return ApiResponse.ok(KillSwitchRead(**kill_switch.current_state()))
+
+
+@router.post("/kill-switch", response_model=ApiResponse[KillSwitchRead])
+async def set_kill_switch(body: KillSwitchUpdate) -> ApiResponse:
+    """Set the in-memory runtime kill-switch override (issue 03).
+
+    ``engaged=True`` short-circuits ALL Control Cycle execution on the very
+    next tick, unconditionally, before any other gate is evaluated.
+    ``engaged=False`` explicitly disengages it (still requires
+    ``CONTROL_MODE=automatic`` and every other gate to pass before anything
+    executes — this alone does not open Automatic Mode). The override resets
+    to ``Settings.control_kill_switch`` on process restart.
+    """
+    kill_switch.set_override(body.engaged)
+    return ApiResponse.ok(KillSwitchRead(**kill_switch.current_state()))

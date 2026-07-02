@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import JSON, Boolean, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.models.base import TimestampMixin
@@ -42,6 +43,15 @@ class DataSource(TimestampMixin):
 
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    # Issue 03 (Control Cycle + Actuator). review_required: set by an
+    # executed require_review action (including the Require-Review
+    # Downgrade); a human clears it, the Control Cycle never does.
+    # paused_until: set alongside enabled=False by an executed pause action;
+    # the Control Cycle auto-resumes (re-enables, clears this) once the TTL
+    # expires and records the inverse action in the Evidence Ledger.
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    paused_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     tasks: Mapped[list["CollectionTask"]] = relationship(

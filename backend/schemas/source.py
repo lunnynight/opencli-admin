@@ -41,6 +41,12 @@ class DataSourceRead(UTCModel):
     #: backend.schemas.control.SourceControlStateRead.objective for what
     #: classification actually uses (resolved over defaults).
     objective_override: Optional[dict[str, Any]] = None
+    #: Issue 03 (Control Cycle + Actuator): set by an executed require_review
+    #: action; a human clears it, the Control Cycle never does.
+    review_required: bool = False
+    #: Issue 03: set alongside enabled=False by an executed pause action;
+    #: null once resumed (manually or by the Control Cycle's TTL auto-resume).
+    paused_until: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
