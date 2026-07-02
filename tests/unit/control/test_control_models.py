@@ -31,6 +31,7 @@ class TestSourceControlState:
             "PAUSED",
             "DEAD",
             "UNKNOWN",
+            "BLOCKED_BY_ODP",
         }
         assert {m.name for m in SourceControlState} == expected
 

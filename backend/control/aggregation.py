@@ -1,23 +1,36 @@
 """Aggregate existing run evidence into a SourceMeasurement (read-only).
 
-PR-Control-2: turn the run evidence a source already produced (TaskRun +
-TaskRunEvent rows) into a single :class:`SourceMeasurement` sensor reading,
-without changing how collection/pipeline/runner behaves and without adding any
-new table. Every query here is a SELECT — this module never writes.
+PR-Control-3: prefer the rich, truthful per-run rows C1's
+``backend.control.recorder.record_run_measurement`` now persists to the
+``source_measurements`` TABLE (``backend.models.source_measurement.
+SourceMeasurement`` — accepted/duplicates/rejected/error_rate/duplicate_rate/
+error_kinds/cursor_advanced/freshness_lag_seconds/source_ts_quality/...).
+That table is the truthful sensor history; this module's job is to read its
+latest row for a source and map it onto the pure
+:class:`backend.control.measurements.SourceMeasurement` contract.
+
+Falls back to the PR-Control-2 path (deriving a measurement from
+TaskRun/TaskRunEvent evidence) only when the source has never had a
+``source_measurements`` row recorded yet — e.g. a source that ran before C1
+landed, or in a test that seeds TaskRun/TaskRunEvent directly without going
+through the real pipeline/recorder. Every query here is a SELECT — this
+module never writes, and it does not change collection/pipeline/runner
+behavior.
 
 See docs/CONTROL_THEORY_ARCHITECTURE.md §4-5. The measurement contract and the
 safe rate derivation live in PR-Control-1
 (:class:`backend.control.measurements.SourceMeasurement`) and are reused, not
 redefined.
 
-Where the numbers come from
----------------------------
+Where the TaskRunEvent-fallback numbers come from
+--------------------------------------------------
 A run's per-sink breakdown (accepted/duplicates/rejected) is NOT persisted to
-its own columns anywhere — ``SinkResult`` flows transiently through the
-pipeline and only its aggregate lands in the ``complete`` TaskRunEvent's
+its own columns anywhere on TaskRun — ``SinkResult`` flows transiently through
+the pipeline and only its aggregate lands in the ``complete`` TaskRunEvent's
 ``detail`` JSON as ``{"collected", "stored", "skipped", "duration_ms"}`` (see
 backend/pipeline/pipeline.py). So the ``complete`` event detail is the single
-durable place a collected/stored/skipped breakdown survives, and we map:
+durable place a collected/stored/skipped breakdown survives in that fallback
+path, and we map:
 
     accepted   := stored   (new records the sink committed)
     duplicates := skipped  (items recognized as already-seen)
@@ -35,17 +48,138 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.control.measurements import SourceMeasurement
+from backend.models.source_measurement import SourceMeasurement as SourceMeasurementRow
 from backend.models.task import CollectionTask, TaskRun, TaskRunEvent
+
+
+class SourceTrend:
+    """A small rolling-window summary over a source's recent
+    ``source_measurements`` rows — PR-Control-3's evaluator input.
+
+    Not a Pydantic model (kept internal to control/): the API-facing shape is
+    ``backend.schemas.control.TrendRead``, built from this by the endpoint.
+    """
+
+    def __init__(
+        self,
+        *,
+        window: int,
+        zero_accepted_streak: int,
+        avg_error_rate: float,
+        rate_limited_runs: int,
+    ) -> None:
+        self.window = window
+        self.zero_accepted_streak = zero_accepted_streak
+        self.avg_error_rate = avg_error_rate
+        self.rate_limited_runs = rate_limited_runs
+
+
+def _row_to_measurement(row: SourceMeasurementRow) -> SourceMeasurement:
+    """Map a persisted ``source_measurements`` row onto the pure contract."""
+    return SourceMeasurement.derive(
+        source_id=row.source_id,
+        run_id=row.run_id,
+        accepted=row.accepted,
+        duplicates=row.duplicates,
+        rejected=row.rejected,
+        fetch_latency_ms=row.fetch_latency_ms or 0,
+        observed_at=row.measured_at,
+        cursor_advanced=row.cursor_advanced,
+        ingest_latency_ms=row.ingest_latency_ms,
+        store_latency_ms=row.store_latency_ms,
+        freshness_lag_seconds=row.freshness_lag_seconds,
+        # ODP metrics are system-level (see backend.control.collectors.
+        # odp_metrics), not per-run — source_measurements rows never carry
+        # them, so this contract field stays unpopulated from the DB row.
+        # The endpoint fills system_context separately.
+        odp_stream_lag=None,
+        odp_pending=None,
+        dlq_count=0,
+        error_kinds=dict(row.error_kinds or {}),
+        source_ts_quality=row.source_ts_quality,
+    )
 
 
 async def build_measurement(
     session: AsyncSession, source_id: str
 ) -> Optional[SourceMeasurement]:
-    """Build a :class:`SourceMeasurement` from the source's latest run evidence.
+    """Build a :class:`SourceMeasurement` for a source, preferring the latest
+    persisted ``source_measurements`` row (rich C1 signals) and falling back
+    to the TaskRun/TaskRunEvent-derived path only when no such row exists yet.
 
-    Read-only. Returns ``None`` if the source has never run (no TaskRun rows).
-    Reuses :meth:`SourceMeasurement.derive` for the safe rate computation.
+    Read-only. Returns ``None`` if the source has never run at all (neither a
+    ``source_measurements`` row nor a TaskRun row).
     """
+    latest_row = (
+        await session.execute(
+            select(SourceMeasurementRow)
+            .where(SourceMeasurementRow.source_id == source_id)
+            .order_by(SourceMeasurementRow.measured_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if latest_row is not None:
+        return _row_to_measurement(latest_row)
+
+    return await _build_measurement_from_task_events(session, source_id)
+
+
+async def build_trend(
+    session: AsyncSession, source_id: str, *, window: int = 5
+) -> Optional[SourceTrend]:
+    """Summarize the last ``window`` ``source_measurements`` rows for a source.
+
+    Returns ``None`` when there is no persisted row at all for this source
+    (nothing to trend over — a fully pre-C1 source using only the
+    TaskRunEvent fallback has no trend, since that path never populates this
+    table). Deterministic: same rows in -> same summary out.
+
+    * ``zero_accepted_streak`` — how many of the most-recent rows (starting
+      from the newest) have ``accepted == 0``, stopping at the first non-zero
+      one. Capped at ``window``.
+    * ``avg_error_rate`` — mean of ``error_rate`` across the window rows.
+    * ``rate_limited_runs`` — how many of the window rows recorded a
+      ``rate_limited`` entry in ``error_kinds`` (reuses the same taxonomy
+      backend.control.error_kinds already assigns — no new classification).
+    """
+    rows = (
+        await session.execute(
+            select(SourceMeasurementRow)
+            .where(SourceMeasurementRow.source_id == source_id)
+            .order_by(SourceMeasurementRow.measured_at.desc())
+            .limit(window)
+        )
+    ).scalars().all()
+
+    if not rows:
+        return None
+
+    zero_accepted_streak = 0
+    for row in rows:
+        if (row.accepted or 0) == 0:
+            zero_accepted_streak += 1
+        else:
+            break
+
+    avg_error_rate = sum(row.error_rate or 0.0 for row in rows) / len(rows)
+    rate_limited_runs = sum(
+        1 for row in rows if (row.error_kinds or {}).get("rate_limited", 0) > 0
+    )
+
+    return SourceTrend(
+        window=len(rows),
+        zero_accepted_streak=zero_accepted_streak,
+        avg_error_rate=avg_error_rate,
+        rate_limited_runs=rate_limited_runs,
+    )
+
+
+async def _build_measurement_from_task_events(
+    session: AsyncSession, source_id: str
+) -> Optional[SourceMeasurement]:
+    """PR-Control-2 fallback path: derive a measurement from TaskRun +
+    TaskRunEvent evidence when no ``source_measurements`` row exists yet."""
     # Latest run for this source: TaskRun -> task_id -> CollectionTask.source_id.
     # TaskRun has no direct source_id column, so we join through the task.
     latest_run = (

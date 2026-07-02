@@ -26,6 +26,14 @@ class SourceControlState(str, Enum):
     SCHEMA_DRIFT = "schema_drift"
     PAUSED = "paused"
     DEAD = "dead"
+    # PR-Control-3: the source itself may be fine, but the shared ODP data
+    # plane (Redis stream lag / pending, per backend.control.collectors.
+    # odp_metrics) is backpressured beyond the source's objective — the
+    # bottleneck is downstream/system-wide, not the source's own error rate.
+    # Distinct from BACKPRESSURED (per-measurement odp_pending signal, kept
+    # for backward compat) so a UI can tell "this source is struggling" apart
+    # from "the whole ODP pipe is struggling and this source is just waiting".
+    BLOCKED_BY_ODP = "blocked_by_odp"
     # C0 (Control Room v0, docs/CONTROL_THEORY_ARCHITECTURE.md §0): reported
     # instead of HEALTHY when sensor_coverage is incomplete enough that a
     # confident "healthy" would be a lie. See backend.control.evaluator for the

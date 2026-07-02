@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -5,15 +6,24 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.manager import AuthManager
+from backend.config import get_settings
 from backend.control import aggregation, evaluator
 from backend.control.coverage import compute_sensor_coverage, derive_confidence, missing_signals
 from backend.control.objectives import SourceObjective
+from backend.control.policies import suggest_actions
 from backend.database import get_db
 from backend.schemas.common import ApiResponse, PaginationMeta
-from backend.schemas.control import SourceControlStateRead
+from backend.schemas.control import (
+    SourceControlStateRead,
+    SuggestedActionRead,
+    SystemContextRead,
+    TrendRead,
+)
 from backend.schemas.credential import CredentialCreate, CredentialKeyRead
 from backend.schemas.source import DataSourceCreate, DataSourceDetail, DataSourceRead, DataSourceUpdate
 from backend.services import source_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -174,6 +184,42 @@ async def delete_source_credential(
     return ApiResponse.ok(None)
 
 
+async def _build_system_context(objective: SourceObjective) -> SystemContextRead:
+    """Collect the shared ODP system_context, degrading gracefully.
+
+    Reuses C2's read-only collector (backend.control.collectors.odp_metrics) —
+    never queries Redis/ODP-Postgres/odp-ingest directly. Any collector
+    failure (or a section reporting itself unavailable) yields
+    ``available=False`` / ``odp_backpressured=False`` rather than raising —
+    this endpoint must return 200 even when ODP is fully down (see
+    docs/CONTROL_THEORY_ARCHITECTURE.md §0).
+    """
+    try:
+        from backend.control.collectors import odp_metrics
+
+        snapshot = await odp_metrics.collect()
+    except Exception as exc:  # pragma: no cover - collect() already degrades
+        # internally; this is a last-resort guard so a collector import/
+        # crash bug can never turn this endpoint into a 500.
+        logger.warning("control-state: odp_metrics.collect failed: %s", exc)
+        return SystemContextRead(odp_backpressured=False, available=False)
+
+    stream_available = snapshot.stream.available
+    pending = snapshot.stream.pending
+    lag = snapshot.stream.lag
+
+    odp_backpressured = (
+        stream_available and pending is not None and pending > objective.max_pending
+    )
+
+    return SystemContextRead(
+        odp_backpressured=odp_backpressured,
+        stream_lag=lag if stream_available else None,
+        pending=pending if stream_available else None,
+        available=stream_available,
+    )
+
+
 @router.get(
     "/{source_id}/control-state",
     response_model=ApiResponse[SourceControlStateRead],
@@ -181,51 +227,121 @@ async def delete_source_credential(
 async def get_source_control_state(
     source_id: str, db: AsyncSession = Depends(get_db)
 ) -> ApiResponse:
-    """Read-only control view of a source (PR-Control-2 + C0 Control Room v0).
+    """Read-only, ADVISORY control view of a source (PR-Control-3).
 
-    Aggregates the source's latest run evidence into a ``SourceMeasurement`` and
-    derives a provisional ``SourceControlState`` from it (see
-    ``backend.control.evaluator`` — PR-Control-3 replaces that with the real
-    evaluator/policies engine). This endpoint exposes sensor readings only; it
-    performs no writes and does not affect collection/pipeline/runner behavior.
+    Aggregates the source's latest sensor reading (preferring the persisted
+    ``source_measurements`` table — see ``backend.control.aggregation``),
+    computes a rolling trend, collects the shared ODP system_context, derives
+    a full ``SourceControlState`` (``backend.control.evaluator``), and maps
+    that state onto advisory ``ControlAction`` suggestions
+    (``backend.control.policies``).
 
-    ``measurement``/``control_state``/``confidence``/``sensor_coverage`` are
-    null when the source has never run — there is no measurement to derive
-    coverage from. The ``objective`` is the ``SourceObjective`` defaults for
-    now — per-source objective overrides are not stored yet (future work).
+    ADVISORY ONLY: this endpoint performs no writes anywhere. It never
+    mutates the source's ``DataSource`` row (no pause/resume, no interval
+    change, no config write), never calls the scheduler, and does not create
+    any control_actions audit row — there is no such table in this PR. It
+    only classifies and suggests; a human (or a future PR-Control-4 actuator,
+    gated by ``Settings.control_mode``) decides whether to act.
 
-    C0: ``confidence`` + ``sensor_coverage`` + ``missing_signals`` make the
-    sensor gaps behind ``control_state`` visible (see
-    ``backend.control.coverage``), and ``evaluator.evaluate`` never returns a
-    confident HEALTHY when coverage confidence is "low" — it returns UNKNOWN
-    instead. This endpoint adds no new sensors; it only classifies the same
-    measurement it already aggregates.
+    404 if the source itself doesn't exist. Every other failure mode (no run
+    evidence yet, ODP fully down) degrades gracefully to nulls/False fields —
+    this endpoint never 500s because a downstream signal is unavailable.
     """
     source = await source_service.get_source(db, source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
+    settings = get_settings()
     objective = SourceObjective()
     measurement = await aggregation.build_measurement(db, source_id)
+    trend_summary = await aggregation.build_trend(db, source_id)
+    system_context = await _build_system_context(objective)
 
     control_state = None
     confidence = None
     coverage = None
     missing: list[str] = []
+    trend_read: Optional[TrendRead] = None
+    suggestions: list[SuggestedActionRead] = []
+
     if measurement is not None:
-        control_state = evaluator.evaluate(measurement, objective)
+        if trend_summary is not None:
+            trend_read = TrendRead(
+                window=trend_summary.window,
+                zero_accepted_streak=trend_summary.zero_accepted_streak,
+                avg_error_rate=trend_summary.avg_error_rate,
+                rate_limited_runs=trend_summary.rate_limited_runs,
+            )
+
+        control_state = evaluator.evaluate(
+            measurement,
+            objective,
+            trend=(
+                {
+                    "window": trend_summary.window,
+                    "zero_accepted_streak": trend_summary.zero_accepted_streak,
+                    "avg_error_rate": trend_summary.avg_error_rate,
+                    "rate_limited_runs": trend_summary.rate_limited_runs,
+                }
+                if trend_summary is not None
+                else None
+            ),
+            system_context={
+                "odp_backpressured": system_context.odp_backpressured,
+                "available": system_context.available,
+            },
+        )
         coverage = compute_sensor_coverage(measurement)
         confidence = derive_confidence(coverage)
         missing = missing_signals(coverage)
 
+        actions = suggest_actions(control_state, measurement, objective)
+        suggestions = [
+            SuggestedActionRead(
+                action_type=a.action_type, reason=a.reason, payload=a.payload
+            )
+            for a in actions
+        ]
+
+        if suggestions:
+            # Advisory activity is observable (docs §2 principle 8:
+            # "自动化必须可解释") — emit a TaskRunEvent-shaped audit trail via
+            # the existing pipeline event sink. Best-effort: events.emit()
+            # already swallows its own errors and never raises, and emitting
+            # is not required for the response to be correct.
+            from backend.pipeline import events
+
+            await events.emit(
+                run_id=measurement.run_id,
+                step="control_advisory",
+                message=(
+                    f"advisory: {control_state.value} -> "
+                    f"{[a.action_type for a in actions]}"
+                ),
+                level="info",
+                detail={
+                    "source_id": source_id,
+                    "control_state": control_state.value,
+                    "suggested_actions": [
+                        {"action_type": a.action_type, "reason": a.reason, "payload": a.payload}
+                        for a in actions
+                    ],
+                    "control_mode": settings.control_mode,
+                },
+            )
+
     return ApiResponse.ok(
         SourceControlStateRead(
             source_id=source_id,
-            measurement=measurement,
             control_state=control_state,
-            objective=objective,
             confidence=confidence,
             sensor_coverage=coverage,
             missing_signals=missing,
+            measurement=measurement,
+            objective=objective,
+            trend=trend_read,
+            system_context=system_context,
+            suggested_actions=suggestions,
+            control_mode=settings.control_mode,
         )
     )

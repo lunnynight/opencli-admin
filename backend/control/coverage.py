@@ -8,33 +8,46 @@ evaluator/policies engine can be trusted, the system must be honest about
 This module adds NO sensors and reads NO new data. It only inspects a
 :class:`backend.control.measurements.SourceMeasurement` that
 ``backend.control.aggregation.build_measurement`` already produced, and reports
-which of the five signals that PR-Control-3+ will depend on are real:
+which of the five signals that PR-Control-3+ depends on are real:
 
     run          — do we have run evidence at all? (always True here: this
                    module is only called once a measurement exists — a `None`
                    measurement is a separate "never ran" case the endpoint
                    already handles.)
     cursor       — is cursor advancement a real observed signal, or the
-                   ``cursor_advanced=False`` placeholder aggregation.py hardcodes
-                   (see aggregation.py's own comment: "no boolean is persisted
-                   per-run today ... report a conservative False")?
-    freshness    — is ``freshness_lag_seconds`` populated, or is it the
-                   unconditional ``None`` aggregation.py leaves it as?
-    error_kinds  — has any failure been classified into a taxonomy (transient /
-                   permanent / auth / rate_limit / schema_drift / backpressure /
-                   poison_message per docs §2 principle 6)? Not recorded on
-                   SourceMeasurement at all yet, so always False today.
+                   ``cursor_advanced=False`` placeholder the TaskRunEvent
+                   fallback path in aggregation.py hardcodes (a source with a
+                   real ``source_measurements`` row carries the actual C1
+                   ``CommitResult.advanced`` outcome, which can legitimately
+                   be True or False — so for rows sourced from that table,
+                   ``cursor`` coverage is real regardless of the boolean's
+                   value; only the pre-C1 fallback path is a structural gap)?
+    freshness    — is ``freshness_lag_seconds`` populated?
+    error_kinds  — is ``error_kinds`` non-empty, OR did the reading come from
+                   a real ``source_measurements`` row where an EMPTY dict
+                   legitimately means "no terminal error" (a fully successful
+                   run) rather than "never recorded"? PR-Control-3: now a real
+                   :class:`SourceMeasurement` field (see
+                   backend.control.error_kinds / backend.control.recorder),
+                   populated from the persisted row in aggregation.py. Only
+                   the pre-C1 TaskRunEvent-fallback path leaves it structurally
+                   empty with no way to tell "no error" from "never measured".
     odp          — are the ODP metrics (odp_stream_lag / odp_pending / dlq_count
                    beyond its int default) populated, or the ``None`` /
-                   zero-default aggregation.py leaves them as (cross-service
-                   call out of scope for PR-Control-2)?
+                   zero-default aggregation.py leaves them as (system-level ODP
+                   metrics are supplied by the endpoint's system_context, not
+                   by a per-run SourceMeasurement — see backend.control.
+                   collectors.odp_metrics)?
 
-Because ``cursor_advanced`` is a required non-Optional bool (always `False` or
-`True`), and every existing call site sets it to a hardcoded `False` rather
-than a real observation, we cannot ask "is it None" as the honesty check for
-that one field. Instead cursor coverage is a structural constant today
-(``False``) — flip it only once a caller threads a genuinely observed value
-through (tracked as PR-Control-3+ work in aggregation.py's own comment).
+Because ``error_kinds`` being an empty dict is ambiguous on its own (it could
+mean "no error" or "never recorded"), and ``cursor_advanced`` is a required
+non-Optional bool, this module distinguishes the two aggregation.py code paths
+via ``source_ts_quality``: the TaskRunEvent fallback path never sets it (always
+``None``), while both real recording paths (C1's recorder, and this module's
+own persisted-row mapping) always set it to one of the five valid quality
+strings. That is therefore the one field reliably present only on "real
+signal" measurements, and doubles as the discriminator for cursor/error_kinds
+coverage without adding a new field to the contract.
 """
 
 from typing import TypedDict
@@ -42,8 +55,6 @@ from typing import TypedDict
 from backend.control.measurements import SourceMeasurement
 
 # Signals PR-Control-3+ needs to trust an automatic (non-advisory) decision.
-# error_kinds isn't a SourceMeasurement field yet (not recorded anywhere) —
-# treated as a structural gap, not a per-measurement check.
 _CRITICAL_SIGNALS = ("odp", "error_kinds")
 
 
@@ -64,17 +75,18 @@ def compute_sensor_coverage(measurement: SourceMeasurement) -> SensorCoverage:
     always True in this function's contract; the "never ran" case is handled
     by the endpoint returning ``measurement=None`` before this is called.
     """
+    # source_ts_quality is only ever set by a real source_measurements row
+    # (either C1's recorder, or aggregation.py's own row->contract mapping) —
+    # the pre-C1 TaskRunEvent fallback path leaves it None. Use it as the
+    # discriminator for whether cursor_advanced/error_kinds are genuinely
+    # observed signals versus that fallback's structural placeholders.
+    has_rich_row = measurement.source_ts_quality is not None
+
     return SensorCoverage(
         run=True,
-        # aggregation.py hardcodes cursor_advanced=False as a "no real signal
-        # exists yet" placeholder (its own comment) — until a caller threads a
-        # genuinely observed value through, cursor coverage is structurally
-        # absent regardless of the field's boolean value.
-        cursor=False,
+        cursor=has_rich_row,
         freshness=measurement.freshness_lag_seconds is not None,
-        # Not a SourceMeasurement field yet — no failure taxonomy is recorded
-        # anywhere in the pipeline today (docs §2 principle 6 is future work).
-        error_kinds=False,
+        error_kinds=has_rich_row,
         odp=measurement.odp_stream_lag is not None or measurement.odp_pending is not None,
     )
 

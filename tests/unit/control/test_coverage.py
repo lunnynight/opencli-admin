@@ -1,9 +1,16 @@
-"""Unit tests for backend.control.coverage (C0 — Control Room v0).
+"""Unit tests for backend.control.coverage (C0 — Control Room v0, extended by
+PR-Control-3).
 
 Pure function tests, no DB. See docs/CONTROL_THEORY_ARCHITECTURE.md §0: the
 whole point of this module is that an incomplete-sensor system must never be
 reported as a confident HEALTHY — these tests pin exactly which signals are
 "present" today and how missing signals roll up into a confidence level.
+
+PR-Control-3: cursor/error_kinds coverage is now driven by whether the
+measurement came from a real ``source_measurements`` row (signaled by
+``source_ts_quality`` being set) rather than being permanently False/False —
+see coverage.py's module docstring for why ``source_ts_quality`` is the
+discriminator.
 """
 
 from datetime import datetime, timezone
@@ -39,11 +46,21 @@ class TestComputeSensorCoverage:
         cov = compute_sensor_coverage(_measurement())
         assert cov["run"] is True
 
-    def test_cursor_is_always_false_today(self):
-        # aggregation.py hardcodes cursor_advanced=False as a placeholder; even
-        # a measurement claiming cursor_advanced=True is not a real signal yet.
+    def test_cursor_false_for_taskevent_fallback_measurement(self):
+        # A measurement with no source_ts_quality came from the pre-C1
+        # TaskRunEvent fallback path (aggregation.py hardcodes
+        # cursor_advanced=False there) — even if some caller sets
+        # cursor_advanced=True by hand without a real quality signal, coverage
+        # treats it as not-yet-real.
         cov = compute_sensor_coverage(_measurement(cursor_advanced=True))
         assert cov["cursor"] is False
+
+    def test_cursor_true_when_source_ts_quality_present(self):
+        # A measurement built from a real source_measurements row (C1) always
+        # carries a source_ts_quality string — that's the signal cursor
+        # coverage is genuinely observed, regardless of the boolean's value.
+        cov = compute_sensor_coverage(_measurement(cursor_advanced=False, source_ts_quality="missing"))
+        assert cov["cursor"] is True
 
     def test_freshness_true_when_populated(self):
         cov = compute_sensor_coverage(_measurement(freshness_lag_seconds=42))
@@ -53,10 +70,18 @@ class TestComputeSensorCoverage:
         cov = compute_sensor_coverage(_measurement(freshness_lag_seconds=None))
         assert cov["freshness"] is False
 
-    def test_error_kinds_always_false(self):
-        # Not a SourceMeasurement field at all — always unrecorded today.
+    def test_error_kinds_false_for_taskevent_fallback_measurement(self):
+        # No source_ts_quality -> pre-C1 fallback path -> error_kinds coverage
+        # absent even if the dict happens to be empty (ambiguous: could mean
+        # "no error" or "never recorded").
         cov = compute_sensor_coverage(_measurement())
         assert cov["error_kinds"] is False
+
+    def test_error_kinds_true_when_source_ts_quality_present_even_if_empty(self):
+        # A real source_measurements row with an EMPTY error_kinds dict means
+        # "no terminal error this run" — a genuine signal, not a gap.
+        cov = compute_sensor_coverage(_measurement(source_ts_quality="source", error_kinds={}))
+        assert cov["error_kinds"] is True
 
     def test_odp_true_when_either_odp_field_populated(self):
         assert compute_sensor_coverage(_measurement(odp_pending=0))["odp"] is True

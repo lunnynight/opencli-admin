@@ -3,14 +3,19 @@
 Uses the in-memory sqlite db_session fixture from tests/conftest.py. These tests
 construct DataSource / CollectionTask / TaskRun / TaskRunEvent rows directly and
 assert the aggregated SourceMeasurement — no pipeline/runner is invoked.
+
+PR-Control-3 adds: build_measurement now PREFERS the latest persisted
+``source_measurements`` row (rich C1 signals) over the TaskRunEvent-derived
+fallback, and a new ``build_trend`` rolling-window query.
 """
 
 from datetime import datetime, timezone
 
 import pytest
 
-from backend.control.aggregation import build_measurement
+from backend.control.aggregation import build_measurement, build_trend
 from backend.models.source import DataSource
+from backend.models.source_measurement import SourceMeasurement as SourceMeasurementRow
 from backend.models.task import CollectionTask, TaskRun, TaskRunEvent
 
 
@@ -177,3 +182,229 @@ async def test_picks_most_recent_run(db_session):
     assert m.run_id == new.id
     assert m.accepted == 5
     assert m.duplicates == 2
+
+
+# ---------------------------------------------------------------------------
+# PR-Control-3: prefer the persisted source_measurements row
+# ---------------------------------------------------------------------------
+
+
+async def _make_measurement_row(session, source_id: str, **overrides) -> SourceMeasurementRow:
+    kwargs = dict(
+        source_id=source_id,
+        run_id=overrides.pop("run_id", "run-row-1"),
+        measured_at=datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc),
+        accepted=5,
+        duplicates=1,
+        rejected=0,
+        error_rate=0.0,
+        duplicate_rate=1 / 6,
+        error_kinds={},
+        fetch_latency_ms=42,
+        ingest_latency_ms=None,
+        store_latency_ms=None,
+        cursor_advanced=True,
+        freshness_lag_seconds=10,
+        source_ts_quality="source",
+        raw={},
+    )
+    kwargs.update(overrides)
+    row = SourceMeasurementRow(**kwargs)
+    session.add(row)
+    await session.flush()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_build_measurement_prefers_source_measurements_row_over_task_events(db_session):
+    source = await _make_source(db_session)
+    task = await _make_task(db_session, source.id)
+
+    # A completed TaskRun/TaskRunEvent exists too — build_measurement must
+    # prefer the richer persisted row instead.
+    run = TaskRun(
+        task_id=task.id,
+        status="completed",
+        finished_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        duration_ms=1000,
+        records_collected=1,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        TaskRunEvent(
+            run_id=run.id, level="info", step="complete", message="done",
+            detail={"collected": 1, "stored": 1, "skipped": 0},
+        )
+    )
+    await db_session.flush()
+
+    await _make_measurement_row(
+        db_session, source.id, run_id="row-run-1", accepted=99, error_kinds={"rate_limited": 1},
+    )
+
+    m = await build_measurement(db_session, source.id)
+    assert m is not None
+    assert m.run_id == "row-run-1"
+    assert m.accepted == 99  # from the row, not the TaskRunEvent (1)
+    assert m.error_kinds == {"rate_limited": 1}
+    assert m.source_ts_quality == "source"
+    assert m.cursor_advanced is True
+
+
+@pytest.mark.asyncio
+async def test_build_measurement_falls_back_to_task_events_when_no_row(db_session):
+    source = await _make_source(db_session)
+    task = await _make_task(db_session, source.id)
+    run = TaskRun(
+        task_id=task.id,
+        status="completed",
+        finished_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        duration_ms=1000,
+        records_collected=4,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        TaskRunEvent(
+            run_id=run.id, level="info", step="complete", message="done",
+            detail={"collected": 4, "stored": 4, "skipped": 0},
+        )
+    )
+    await db_session.flush()
+
+    m = await build_measurement(db_session, source.id)
+    assert m is not None
+    assert m.run_id == run.id
+    assert m.accepted == 4
+    # fallback path never sets these — distinguishes it from a real row
+    assert m.source_ts_quality is None
+    assert m.error_kinds == {}
+
+
+@pytest.mark.asyncio
+async def test_build_measurement_picks_latest_row_by_measured_at(db_session):
+    source = await _make_source(db_session)
+    await _make_measurement_row(
+        db_session, source.id, run_id="old-row",
+        measured_at=datetime(2026, 7, 1, tzinfo=timezone.utc), accepted=1,
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="new-row",
+        measured_at=datetime(2026, 7, 2, tzinfo=timezone.utc), accepted=9,
+    )
+
+    m = await build_measurement(db_session, source.id)
+    assert m is not None
+    assert m.run_id == "new-row"
+    assert m.accepted == 9
+
+
+# ---------------------------------------------------------------------------
+# PR-Control-3: build_trend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_trend_none_when_no_rows(db_session):
+    source = await _make_source(db_session)
+    trend = await build_trend(db_session, source.id)
+    assert trend is None
+
+
+@pytest.mark.asyncio
+async def test_build_trend_zero_accepted_streak_from_newest(db_session):
+    source = await _make_source(db_session)
+    # oldest -> newest: accepted=5 (not zero), then two zero-accepted rows.
+    await _make_measurement_row(
+        db_session, source.id, run_id="r1",
+        measured_at=datetime(2026, 7, 1, tzinfo=timezone.utc), accepted=5,
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="r2",
+        measured_at=datetime(2026, 7, 2, tzinfo=timezone.utc), accepted=0,
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="r3",
+        measured_at=datetime(2026, 7, 3, tzinfo=timezone.utc), accepted=0,
+    )
+
+    trend = await build_trend(db_session, source.id, window=5)
+    assert trend is not None
+    assert trend.window == 3
+    assert trend.zero_accepted_streak == 2  # stops at the first non-zero (r1)
+
+
+@pytest.mark.asyncio
+async def test_build_trend_streak_stops_at_first_nonzero_going_backwards(db_session):
+    source = await _make_source(db_session)
+    # newest is zero, then a non-zero, then zero again further back — streak
+    # must stop counting at the first non-zero encountered from the newest.
+    await _make_measurement_row(
+        db_session, source.id, run_id="r1",
+        measured_at=datetime(2026, 7, 1, tzinfo=timezone.utc), accepted=0,
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="r2",
+        measured_at=datetime(2026, 7, 2, tzinfo=timezone.utc), accepted=3,
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="r3",
+        measured_at=datetime(2026, 7, 3, tzinfo=timezone.utc), accepted=0,
+    )
+
+    trend = await build_trend(db_session, source.id, window=5)
+    assert trend is not None
+    assert trend.zero_accepted_streak == 1  # only r3 (newest); r2 breaks it
+
+
+@pytest.mark.asyncio
+async def test_build_trend_avg_error_rate(db_session):
+    source = await _make_source(db_session)
+    await _make_measurement_row(
+        db_session, source.id, run_id="r1",
+        measured_at=datetime(2026, 7, 1, tzinfo=timezone.utc), error_rate=0.2,
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="r2",
+        measured_at=datetime(2026, 7, 2, tzinfo=timezone.utc), error_rate=0.4,
+    )
+
+    trend = await build_trend(db_session, source.id, window=5)
+    assert trend is not None
+    assert trend.avg_error_rate == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_build_trend_rate_limited_runs_count(db_session):
+    source = await _make_source(db_session)
+    await _make_measurement_row(
+        db_session, source.id, run_id="r1",
+        measured_at=datetime(2026, 7, 1, tzinfo=timezone.utc), error_kinds={"rate_limited": 1},
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="r2",
+        measured_at=datetime(2026, 7, 2, tzinfo=timezone.utc), error_kinds={},
+    )
+    await _make_measurement_row(
+        db_session, source.id, run_id="r3",
+        measured_at=datetime(2026, 7, 3, tzinfo=timezone.utc), error_kinds={"rate_limited": 1},
+    )
+
+    trend = await build_trend(db_session, source.id, window=5)
+    assert trend is not None
+    assert trend.rate_limited_runs == 2
+
+
+@pytest.mark.asyncio
+async def test_build_trend_respects_window_size(db_session):
+    source = await _make_source(db_session)
+    for i in range(10):
+        await _make_measurement_row(
+            db_session, source.id, run_id=f"r{i}",
+            measured_at=datetime(2026, 7, 1 + i, tzinfo=timezone.utc), accepted=1,
+        )
+
+    trend = await build_trend(db_session, source.id, window=5)
+    assert trend is not None
+    assert trend.window == 5

@@ -1,66 +1,179 @@
-"""Provisional control-state derivation (PR-Control-2 placeholder + C0 honesty gate).
+"""Full rule-based control-state evaluator (PR-Control-3).
 
-⚠️ MINIMAL BY DESIGN. This is NOT the real evaluator. PR-Control-3 replaces this
-with the full rule-based ``evaluator`` + ``policies`` engine described in
-docs/CONTROL_THEORY_ARCHITECTURE.md §4-5 (rich state detection —
-RATE_LIMITED / AUTH_FAILED / SCHEMA_DRIFT / DEAD — plus ControlActions).
+Replaces C0/PR-Control-2's minimal placeholder. See
+docs/CONTROL_THEORY_ARCHITECTURE.md §4-5 for the vocabulary and §0 for the
+non-negotiable honesty gate this module preserves from C0:
 
-For PR-Control-2 we only need the endpoint to be able to return *a*
-:class:`SourceControlState` for the obvious cases, so it compares one
-:class:`SourceMeasurement` against one :class:`SourceObjective` and maps:
+    * Positive-evidence states (an observed problem — DEGRADED, RATE_LIMITED,
+      AUTH_FAILED, SCHEMA_DRIFT, BLOCKED_BY_ODP, DEAD) are NEVER gated by
+      sensor-coverage confidence. Hiding a real, observed problem behind a
+      "low confidence" flag would be strictly worse than reporting it.
+    * Only the "nothing looks wrong" verdict is untrustworthy when sensor
+      coverage is incomplete — low confidence remaps a would-be HEALTHY to
+      UNKNOWN, never the reverse.
 
-    error_rate  > objective.max_error_rate  -> DEGRADED
-    odp_pending > objective.max_pending      -> BACKPRESSURED
-    otherwise                                -> HEALTHY (gated — see below)
+Rule order (first match wins; see ``evaluate()`` body for the exact
+precedence chosen and documented inline):
 
-C0 (Control Room v0) adds one hard rule on top, per docs §0 ("先让系统诚实" — a
-controller built on lying sensors is worse than none): **this evaluator must
-never return a confident HEALTHY when the sensors behind that verdict are
-incomplete.** Concretely:
+    1. error_kinds.auth_failed > 0                          -> AUTH_FAILED
+    2. error_kinds.rate_limited dominant / trend rate-limited-> RATE_LIMITED
+    3. error_kinds.schema_drift > 0                          -> SCHEMA_DRIFT
+    4. system_context.odp_backpressured (available+over)    -> BLOCKED_BY_ODP
+    5. error_rate > objective.max_error_rate                 -> DEGRADED
+    5b. measurement.odp_pending > objective.max_pending      -> BACKPRESSURED
+        (legacy PR-Control-2 per-measurement signal, kept for callers that
+        don't populate system_context; checked after DEGRADED — precedence
+        preserved unchanged from PR-Control-2)
+    6. trend.zero_accepted_streak >= N (and not a clean
+       not-modified run)                                     -> DEAD
+    7. else                                                   -> HEALTHY
+       (gated to UNKNOWN when sensor-coverage confidence is "low")
 
-    confidence == "low"  -> HEALTHY is remapped to UNKNOWN
-    confidence in {"medium", "high"} -> HEALTHY passes through unchanged
-
-DEGRADED/BACKPRESSURED are never remapped — those are *positive* evidence of a
-problem (an observed error_rate or odp_pending crossing a setpoint), and
-downgrading a real problem to UNKNOWN would hide it, which is the opposite of
-the honesty goal. Only the "everything looks fine" verdict is untrustworthy
-when the sensors that would have caught a problem (odp / error_kinds / cursor /
-freshness) are not actually wired up — so only HEALTHY is gated.
-
-confidence/coverage come from :mod:`backend.control.coverage`, which classifies
-the *same* measurement this function already receives — it adds no new sensor
-reads. See that module for the exact "high"/"medium"/"low" derivation.
+Deterministic: the same ``(measurement, objective, trend, system_context)``
+input always produces the same output — no randomness, no wall-clock reads
+beyond what the caller already baked into ``measurement``/``trend``.
 """
+
+from __future__ import annotations
+
+from typing import Optional, TypedDict
 
 from backend.control.coverage import compute_sensor_coverage, derive_confidence
 from backend.control.measurements import SourceMeasurement
 from backend.control.models import SourceControlState
 from backend.control.objectives import SourceObjective
 
+#: How many consecutive zero-accepted runs (from the trend window) count as
+#: DEAD. Chosen (not derived) — documented here rather than buried in a magic
+#: number: 3 consecutive empty runs is enough to distinguish "genuinely
+#: nothing new to fetch" (which for polling sources is normal and transient)
+#: from "this source stopped producing anything", without flagging DEAD on a
+#: single quiet cycle.
+DEAD_ZERO_STREAK_THRESHOLD = 3
+
+#: A row whose sole terminal error is a clean "not modified" signal (304 / no
+#: new content) is not evidence of the source being dead — it means the
+#: cache/etag path is working correctly and there was nothing new to fetch.
+#: We must not confuse "polite no-op" with "broken". There is no dedicated
+#: ErrorKind for this yet (docs' error_kinds vocabulary doesn't have a 304
+#: entry — the closest positive signal available on SourceMeasurement is an
+#: empty error_kinds dict, i.e. no terminal error was recorded at all), so the
+#: DEAD rule only fires when the streak of zero-accepted runs is ALSO
+#: accompanied by at least one non-empty error_kinds entry somewhere in the
+#: trend window; a source with zero_accepted_streak driven purely by empty,
+#: error-free runs is left to fall through instead (documented decision, see
+#: module docstring rule 6).
+
+
+class SystemContext(TypedDict, total=False):
+    """The shared-infrastructure signals the evaluator needs, distinct from a
+    per-source measurement. Built by the endpoint from
+    ``backend.control.collectors.odp_metrics`` — see
+    ``backend.api.v1.sources.get_source_control_state``.
+
+    ``odp_backpressured`` is already the boolean comparison result (stream lag
+    / pending over the source's objective.max_pending) — the evaluator does
+    not re-derive it from raw lag/pending numbers, since "what counts as too
+    much backpressure" is an objective-level decision the endpoint already
+    made once.
+    """
+
+    odp_backpressured: bool
+    available: bool
+
+
+class Trend(TypedDict, total=False):
+    """Rolling-window summary from ``backend.control.aggregation.build_trend``."""
+
+    window: int
+    zero_accepted_streak: int
+    avg_error_rate: float
+    rate_limited_runs: int
+
 
 def evaluate(
-    measurement: SourceMeasurement, objective: SourceObjective
+    measurement: SourceMeasurement,
+    objective: SourceObjective,
+    *,
+    trend: Optional[Trend] = None,
+    system_context: Optional[SystemContext] = None,
 ) -> SourceControlState:
-    """Derive a provisional :class:`SourceControlState` (PR-Control-2 placeholder).
+    """Derive a :class:`SourceControlState` from multi-signal evidence.
 
-    PR-Control-3 will replace this with the real rule-based evaluator/policies.
-    C0 adds the honesty gate documented at module level: HEALTHY only survives
-    when sensor coverage is not "low" confidence.
+    ``trend`` and ``system_context`` are optional so existing call sites (and
+    tests) that only have a measurement+objective keep working — every branch
+    that depends on them treats "not supplied" the same as "signal absent",
+    never as "signal present but zero".
     """
-    # DEGRADED: rejects exceed the allowed error setpoint. This is a real,
-    # positive signal (we observed rejects) — never gated by coverage.
+    trend = trend or {}
+    system_context = system_context or {}
+    error_kinds = measurement.error_kinds or {}
+
+    # 1. AUTH_FAILED: highest precedence — an invalid credential means every
+    # other signal on this run is suspect (a source can't even talk to fetch
+    # data to be rate-limited/drift-classified). Positive evidence -> never
+    # gated by coverage.
+    if error_kinds.get("auth_failed", 0) > 0:
+        return SourceControlState.AUTH_FAILED
+
+    # 2. RATE_LIMITED: either this run's terminal error was a rate limit, or
+    # the trend shows a pattern of rate-limited runs even if this particular
+    # run's terminal error_kind was something else (e.g. it eventually failed
+    # for a different reason after retries against a limit). Positive
+    # evidence -> never gated by coverage.
+    trend_rate_limited = trend.get("rate_limited_runs", 0)
+    trend_window = trend.get("window", 0)
+    rate_limited_dominant_in_trend = (
+        trend_window > 0 and trend_rate_limited * 2 > trend_window
+    )
+    if error_kinds.get("rate_limited", 0) > 0 or rate_limited_dominant_in_trend:
+        return SourceControlState.RATE_LIMITED
+
+    # 3. SCHEMA_DRIFT: the source's shape changed underneath it (feed/DOM/API
+    # format). Positive evidence -> never gated by coverage.
+    if error_kinds.get("schema_drift", 0) > 0:
+        return SourceControlState.SCHEMA_DRIFT
+
+    # 4. BLOCKED_BY_ODP: the shared downstream pipe is backpressured beyond
+    # this source's objective — a system-level constraint, not a source
+    # defect. Positive evidence (an observed system_context flag) -> never
+    # gated by coverage. Only fires when the system context actually reports
+    # ODP as available and over threshold; an unavailable ODP collector must
+    # never be conflated with "backpressured" (see backend.control.
+    # collectors.odp_metrics — degrade to unavailable, not a fabricated True).
+    if system_context.get("available", True) and system_context.get(
+        "odp_backpressured", False
+    ):
+        return SourceControlState.BLOCKED_BY_ODP
+
+    # 5. DEGRADED: reject rate exceeds the allowed error setpoint. Positive
+    # evidence -> never gated by coverage. Checked BEFORE the legacy
+    # BACKPRESSURED rule below — this precedence is preserved unchanged from
+    # PR-Control-2's evaluator (see test_degraded_takes_precedence_over_backpressure).
     if measurement.error_rate > objective.max_error_rate:
         return SourceControlState.DEGRADED
 
-    # BACKPRESSURED: too many items pending downstream. Guarded on odp_pending
-    # being present — PR-Control-2 leaves it None (no ODP-side source), so in
-    # practice this branch can only fire once ODP metrics are wired in later.
-    if (
-        measurement.odp_pending is not None
-        and measurement.odp_pending > objective.max_pending
-    ):
+    # 5b. BACKPRESSURED (legacy, PR-Control-2): a per-measurement odp_pending
+    # reading exceeding the objective, kept for backward compatibility with
+    # callers that populate SourceMeasurement.odp_pending directly without
+    # going through the system_context path above. Distinct from
+    # BLOCKED_BY_ODP: this is a per-source measurement signal, that one is
+    # the shared-infrastructure system_context signal. Positive evidence ->
+    # never gated by coverage.
+    if measurement.odp_pending is not None and measurement.odp_pending > objective.max_pending:
         return SourceControlState.BACKPRESSURED
+
+    # 6. DEAD: a sustained streak of zero-accepted runs that is NOT explained
+    # by a clean not-modified/no-op pattern. We approximate "not a clean
+    # no-op" as "at least one terminal error was recorded on this latest
+    # reading" — a source silently producing nothing with no errors at all
+    # falls through to the HEALTHY/UNKNOWN branch instead (documented
+    # decision: see module-level comment above `SystemContext`). This keeps
+    # DEAD a genuine "something is broken" signal rather than flagging every
+    # low-traffic-but-fine polling source.
+    zero_streak = trend.get("zero_accepted_streak", 0)
+    if zero_streak >= DEAD_ZERO_STREAK_THRESHOLD and bool(error_kinds):
+        return SourceControlState.DEAD
 
     # Nothing looked wrong — but "nothing looked wrong" is only meaningful if
     # the sensors that would have caught a problem are actually present. If

@@ -244,7 +244,15 @@ async def test_control_state_not_found(client):
 
 
 @pytest.mark.asyncio
-async def test_control_state_source_never_ran(client, sample_source_data):
+async def test_control_state_source_never_ran(client, sample_source_data, monkeypatch):
+    # No ODP_* env vars configured in this test session by default -> the ODP
+    # collector degrades every section to unavailable without any real I/O
+    # (see backend.control.collectors.odp_metrics's early-return guards).
+    monkeypatch.delenv("ODP_REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("ODP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ODP_INGEST_URL", raising=False)
+
     create_resp = await client.post("/api/v1/sources", json=sample_source_data)
     source_id = create_resp.json()["data"]["id"]
 
@@ -258,21 +266,34 @@ async def test_control_state_source_never_ran(client, sample_source_data):
     assert data["confidence"] is None
     assert data["sensor_coverage"] is None
     assert data["missing_signals"] == []
+    assert data["trend"] is None
     # objective defaults are always present
     assert data["objective"]["max_error_rate"] == 0.05
     assert data["objective"]["max_pending"] == 1000
+    # PINNED CONTRACT: system_context/suggested_actions/control_mode are
+    # always present, even when the source has never run.
+    assert data["system_context"]["available"] is False
+    assert data["system_context"]["odp_backpressured"] is False
+    assert data["suggested_actions"] == []
+    assert data["control_mode"] == "advisory"
 
 
 @pytest.mark.asyncio
-async def test_control_state_with_run_evidence(client, db_session, sample_source_data):
+async def test_control_state_with_run_evidence(client, db_session, sample_source_data, monkeypatch):
     """A clean completed run yields a populated measurement — but C0 (Control
-    Room v0) means it must NOT render as a confident HEALTHY: odp/error_kinds
-    are not wired up yet (aggregation.py leaves them None/unrecorded), so
-    coverage confidence is "low" and control_state is UNKNOWN, not healthy.
+    Room v0) means it must NOT render as a confident HEALTHY: this test seeds
+    only TaskRun/TaskRunEvent (the pre-C1 fallback path, no source_measurements
+    row), so odp/error_kinds/cursor coverage is missing -> confidence "low" ->
+    control_state is UNKNOWN, not healthy.
 
     The client fixture and db_session share the same injected session, so
     evidence inserted here is visible to the endpoint's aggregation query.
     """
+    monkeypatch.delenv("ODP_REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("ODP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ODP_INGEST_URL", raising=False)
+
     from datetime import datetime, timezone
 
     from backend.models.task import CollectionTask, TaskRun, TaskRunEvent
@@ -320,10 +341,20 @@ async def test_control_state_with_run_evidence(client, db_session, sample_source
         "odp": False,
     }
     assert set(data["missing_signals"]) == {"cursor", "freshness", "error_kinds", "odp"}
+    # UNKNOWN has no first-version policy -> no suggestions.
+    assert data["suggested_actions"] == []
+    assert data["control_mode"] == "advisory"
+    # No source_measurements row for this source -> nothing to trend over.
+    assert data["trend"] is None
 
 
 @pytest.mark.asyncio
-async def test_control_state_degraded_when_errors(client, db_session, sample_source_data):
+async def test_control_state_degraded_when_errors(client, db_session, sample_source_data, monkeypatch):
+    monkeypatch.delenv("ODP_REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("ODP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ODP_INGEST_URL", raising=False)
+
     from datetime import datetime, timezone
 
     from backend.models.task import CollectionTask, TaskRun, TaskRunEvent
@@ -362,3 +393,230 @@ async def test_control_state_degraded_when_errors(client, db_session, sample_sou
     assert data["control_state"] == "degraded"
     assert data["confidence"] == "low"
     assert "odp" in data["missing_signals"]
+    # DEGRADED has a first-version policy: require_review, advisory only.
+    assert len(data["suggested_actions"]) == 1
+    assert data["suggested_actions"][0]["action_type"] == "require_review"
+    assert data["suggested_actions"][0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# PR-Control-3: pinned contract, rich source_measurements row, advisory-only
+# guarantee, ODP-unavailable degrade
+# ---------------------------------------------------------------------------
+
+
+async def _seed_measurement_row(session, source_id: str, **overrides):
+    from datetime import datetime, timezone
+
+    from backend.models.source_measurement import SourceMeasurement as SourceMeasurementRow
+
+    kwargs = dict(
+        source_id=source_id,
+        run_id="row-run-1",
+        measured_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+        accepted=5,
+        duplicates=0,
+        rejected=0,
+        error_rate=0.0,
+        duplicate_rate=0.0,
+        error_kinds={},
+        fetch_latency_ms=10,
+        cursor_advanced=True,
+        freshness_lag_seconds=3,
+        source_ts_quality="source",
+        raw={},
+    )
+    kwargs.update(overrides)
+    row = SourceMeasurementRow(**kwargs)
+    session.add(row)
+    await session.flush()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_control_state_pinned_contract_shape(client, db_session, sample_source_data, monkeypatch):
+    """Assert the exact top-level JSON shape the frontend agent builds
+    against in parallel — every pinned key must be present."""
+    monkeypatch.delenv("ODP_REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("ODP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ODP_INGEST_URL", raising=False)
+
+    create_resp = await client.post("/api/v1/sources", json=sample_source_data)
+    source_id = create_resp.json()["data"]["id"]
+    await _seed_measurement_row(db_session, source_id, error_kinds={"rate_limited": 1})
+
+    response = await client.get(f"/api/v1/sources/{source_id}/control-state")
+    assert response.status_code == 200
+    data = response.json()["data"]
+
+    assert set(data.keys()) == {
+        "source_id",
+        "control_state",
+        "confidence",
+        "sensor_coverage",
+        "missing_signals",
+        "measurement",
+        "objective",
+        "trend",
+        "system_context",
+        "suggested_actions",
+        "control_mode",
+    }
+    assert data["source_id"] == source_id
+    assert data["control_state"] == "rate_limited"
+    assert data["trend"] == {
+        "window": 1,
+        "zero_accepted_streak": 0,
+        "avg_error_rate": 0.0,
+        "rate_limited_runs": 1,
+    }
+    assert data["system_context"] == {
+        "odp_backpressured": False,
+        "stream_lag": None,
+        "pending": None,
+        "available": False,
+    }
+    assert data["suggested_actions"] == [
+        {
+            "action_type": "increase_interval",
+            "reason": data["suggested_actions"][0]["reason"],
+            "payload": {"error_rate": 0.0},
+        }
+    ]
+    assert data["control_mode"] == "advisory"
+
+
+@pytest.mark.asyncio
+async def test_control_state_reads_rich_signals_from_source_measurements_row(
+    client, db_session, sample_source_data, monkeypatch
+):
+    """The aggregation bridge must prefer the persisted source_measurements
+    row (rich C1 signals) over the TaskRunEvent fallback."""
+    monkeypatch.delenv("ODP_REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("ODP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ODP_INGEST_URL", raising=False)
+
+    create_resp = await client.post("/api/v1/sources", json=sample_source_data)
+    source_id = create_resp.json()["data"]["id"]
+    await _seed_measurement_row(
+        db_session, source_id, error_kinds={"auth_failed": 1}, source_ts_quality="observed_fallback"
+    )
+
+    response = await client.get(f"/api/v1/sources/{source_id}/control-state")
+    data = response.json()["data"]
+    assert data["measurement"]["error_kinds"] == {"auth_failed": 1}
+    assert data["measurement"]["source_ts_quality"] == "observed_fallback"
+    assert data["control_state"] == "auth_failed"
+    # C0 coverage: a real row makes cursor/error_kinds genuinely observed.
+    assert data["sensor_coverage"]["cursor"] is True
+    assert data["sensor_coverage"]["error_kinds"] is True
+    action_types = {a["action_type"] for a in data["suggested_actions"]}
+    assert action_types == {"pause_source", "require_auth_review"}
+
+
+@pytest.mark.asyncio
+async def test_control_state_odp_unavailable_degrades_gracefully(
+    client, db_session, sample_source_data, monkeypatch
+):
+    """Even when the ODP collector itself raises unexpectedly, the endpoint
+    must still return 200 with system_context.available=False — never a 500."""
+    monkeypatch.setenv("ODP_REDIS_URL", "redis://unreachable-host-for-test:6399/0")
+    monkeypatch.delenv("ODP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ODP_INGEST_URL", raising=False)
+
+    create_resp = await client.post("/api/v1/sources", json=sample_source_data)
+    source_id = create_resp.json()["data"]["id"]
+
+    response = await client.get(f"/api/v1/sources/{source_id}/control-state")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["system_context"]["available"] is False
+    assert data["system_context"]["odp_backpressured"] is False
+
+
+@pytest.mark.asyncio
+async def test_control_state_odp_collector_exception_never_500s(
+    client, sample_source_data, monkeypatch
+):
+    """A hard crash inside the ODP collector import/call path must degrade to
+    unavailable, not bubble into a 500 — see _build_system_context's
+    last-resort except clause."""
+    from backend.control.collectors import odp_metrics
+
+    async def _raise_collect(*args, **kwargs):
+        raise RuntimeError("collector exploded")
+
+    monkeypatch.setattr(odp_metrics, "collect", _raise_collect)
+
+    create_resp = await client.post("/api/v1/sources", json=sample_source_data)
+    source_id = create_resp.json()["data"]["id"]
+
+    response = await client.get(f"/api/v1/sources/{source_id}/control-state")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["system_context"]["available"] is False
+
+
+@pytest.mark.asyncio
+async def test_control_state_blocked_by_odp_when_backpressured(
+    client, db_session, sample_source_data, monkeypatch
+):
+    from backend.control.collectors import odp_metrics
+
+    async def _fake_collect():
+        from datetime import UTC, datetime
+
+        return odp_metrics.OdpMetricsSnapshot(
+            stream=odp_metrics.StreamState(
+                available=True, name="odp.ingest.raw", group="odp-store", lag=10, pending=5000,
+            ),
+            dlq=odp_metrics.DlqState(available=True, total=0, last_24h=0),
+            ingest=odp_metrics.IngestHealthState(available=True, healthy=True),
+            collected_at=datetime(2026, 7, 2, tzinfo=UTC),
+        )
+
+    monkeypatch.setattr(odp_metrics, "collect", _fake_collect)
+
+    create_resp = await client.post("/api/v1/sources", json=sample_source_data)
+    source_id = create_resp.json()["data"]["id"]
+    await _seed_measurement_row(db_session, source_id)
+
+    response = await client.get(f"/api/v1/sources/{source_id}/control-state")
+    data = response.json()["data"]
+    assert data["system_context"]["odp_backpressured"] is True
+    assert data["system_context"]["pending"] == 5000
+    assert data["control_state"] == "blocked_by_odp"
+    assert data["suggested_actions"][0]["action_type"] == "pause_low_priority"
+
+
+@pytest.mark.asyncio
+async def test_control_state_never_mutates_the_data_source(
+    client, db_session, sample_source_data, monkeypatch
+):
+    """HARD RULE: this endpoint is advisory-only. Even for a source in a
+    "should pause" state, the DataSource row itself (enabled/schedule fields)
+    must be byte-for-byte unchanged after calling the endpoint."""
+    monkeypatch.delenv("ODP_REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("ODP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ODP_INGEST_URL", raising=False)
+
+    create_resp = await client.post("/api/v1/sources", json=sample_source_data)
+    source_id = create_resp.json()["data"]["id"]
+    before = (await client.get(f"/api/v1/sources/{source_id}")).json()["data"]
+
+    await _seed_measurement_row(db_session, source_id, error_kinds={"auth_failed": 1})
+
+    response = await client.get(f"/api/v1/sources/{source_id}/control-state")
+    assert response.status_code == 200
+    assert response.json()["data"]["control_state"] == "auth_failed"
+    assert response.json()["data"]["suggested_actions"]  # pause_source suggested
+
+    after = (await client.get(f"/api/v1/sources/{source_id}")).json()["data"]
+    # Nothing executed: enabled/channel_config/name are untouched despite an
+    # AUTH_FAILED verdict that suggests pausing.
+    assert before["enabled"] == after["enabled"] == sample_source_data["enabled"]
+    assert before["channel_config"] == after["channel_config"]
+    assert before == after

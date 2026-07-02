@@ -97,6 +97,14 @@ class Settings(BaseSettings):
     default_page_size: int = 20
     max_page_size: int = 100
 
+    # Control layer (docs/CONTROL_THEORY_ARCHITECTURE.md §4-5): "advisory"
+    # means backend.control only classifies state and suggests ControlActions
+    # — nothing executes. "automatic" is surfaced here for the frontend and a
+    # FUTURE PR (PR-Control-4, actuators.py) to read; this PR does NOT wire up
+    # any execution path even when control_mode="automatic" is set — there is
+    # no actuator yet. Changing this setting alone has no runtime effect today.
+    control_mode: Literal["advisory", "automatic"] = "advisory"
+
     @property
     def is_sqlite(self) -> bool:
         return "sqlite" in self.database_url

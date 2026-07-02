@@ -35,6 +35,18 @@ class SourceMeasurement(BaseModel):
     odp_pending: Optional[int] = None
     dlq_count: int = 0
 
+    #: {ErrorKind.value: count} — PR-Control-3. Reuses the SAME taxonomy the
+    #: persisted backend.models.source_measurement.SourceMeasurement.error_kinds
+    #: column already records (backend.control.error_kinds). Empty dict means
+    #: "no terminal error recorded for this reading", not "unknown" — see
+    #: backend.control.recorder for how the persisted row distinguishes the two.
+    error_kinds: dict[str, int] = Field(default_factory=dict)
+    #: source | observed_fallback | missing | invalid | synthetic — mirrors
+    #: backend.models.source_measurement.SourceMeasurement.source_ts_quality.
+    #: None when this measurement was built from the pre-C1 TaskRunEvent
+    #: fallback path, which has no freshness quality signal at all.
+    source_ts_quality: Optional[str] = None
+
     observed_at: datetime
 
     @classmethod
@@ -55,6 +67,8 @@ class SourceMeasurement(BaseModel):
         odp_stream_lag: Optional[int] = None,
         odp_pending: Optional[int] = None,
         dlq_count: int = 0,
+        error_kinds: Optional[dict[str, int]] = None,
+        source_ts_quality: Optional[str] = None,
     ) -> "SourceMeasurement":
         """Construct a SourceMeasurement, safely deriving error/duplicate rates.
 
@@ -90,5 +104,7 @@ class SourceMeasurement(BaseModel):
             odp_stream_lag=odp_stream_lag,
             odp_pending=odp_pending,
             dlq_count=dlq_count,
+            error_kinds=dict(error_kinds) if error_kinds else {},
+            source_ts_quality=source_ts_quality,
             observed_at=observed_at,
         )
