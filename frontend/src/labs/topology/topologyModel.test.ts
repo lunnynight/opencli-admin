@@ -144,7 +144,9 @@ describe('topology model', () => {
 
     const edgeIds = graph.edges.map((edge) => edge.id)
     assert.ok(edgeIds.includes(`${nodeId('source', source.id)}->${nodeId('schedule', schedule.id)}:plans`))
-    assert.ok(edgeIds.includes(`${nodeId('source', source.id)}->${nodeId('task', task.id)}:triggers`))
+    // Since d157881, only scheduled tasks get a schedule->task:triggers edge;
+    // manual tasks (this fixture) get a direct source->task:manual edge.
+    assert.ok(edgeIds.includes(`${nodeId('source', source.id)}->${nodeId('task', task.id)}:manual`))
     assert.ok(edgeIds.includes(`${nodeId('task', task.id)}->${nodeId('agent', agent.id)}:enriches`))
     assert.ok(edgeIds.includes(`${nodeId('task', task.id)}->${nodeId('record', record.id)}:writes`))
     assert.ok(edgeIds.includes(`${nodeId('record', record.id)}->${nodeId('notification', rule.id)}:sent`))
