@@ -1,4 +1,5 @@
-"""Unit tests for backend/agent_server.py fleet-auth header attachment (ADR-0005).
+"""Unit tests for backend/agent_server.py fleet-auth header attachment (ADR-0005)
+and streaming agent-task dispatch (`_handle_ws_agent_task`, GOAL-agent-runtimes.md §4).
 
 Covers `_auth_headers()`, the Authorization header on `_register_with_center`'s
 httpx POST calls, and the `additional_headers` -> `extra_headers` fallback in
@@ -6,10 +7,12 @@ httpx POST calls, and the `additional_headers` -> `extra_headers` fallback in
 """
 
 import asyncio
+import json
 
 import pytest
 
 from backend import agent_server
+from backend.agent_runtimes.base import RuntimeInvocationError
 
 
 # ── _auth_headers ────────────────────────────────────────────────────────────
@@ -163,3 +166,152 @@ async def test_register_via_ws_no_headers_kwarg_without_token(monkeypatch):
     assert len(fake_ws.calls) == 1
     assert "additional_headers" not in fake_ws.calls[0]
     assert "extra_headers" not in fake_ws.calls[0]
+
+
+# ── _handle_ws_agent_task ────────────────────────────────────────────────────
+
+
+class _FakeWs:
+    """Minimal stand-in for the `websockets` connection: captures every
+    `.send()` call as a parsed dict (mirrors real usage: agent_server always
+    sends `json.dumps(...)`)."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, raw: str) -> None:
+        self.sent.append(json.loads(raw))
+
+
+class _StubAdapter:
+    """Fake RuntimeAdapter whose invoke() yields a fixed event sequence."""
+
+    def __init__(self, events: list[dict] | None = None, raise_exc: Exception | None = None) -> None:
+        self._events = events or []
+        self._raise_exc = raise_exc
+
+    async def invoke(self, task):
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        for event in self._events:
+            yield event
+
+
+def _agent_task_msg(**overrides) -> dict:
+    msg = {
+        "type": "agent_task",
+        "request_id": "req-1",
+        "runtime": "stub",
+        "workflow": "w",
+        "input": {"message": "hi"},
+        "config": {},
+        "session_id": None,
+    }
+    msg.update(overrides)
+    return msg
+
+
+@pytest.mark.asyncio
+async def test_handle_ws_agent_task_happy_path_events_then_result(monkeypatch):
+    started = {"type": "started", "task_id": "req-1"}
+    text = {"type": "text", "task_id": "req-1", "text": "hello"}
+    done = {"type": "done", "task_id": "req-1", "result": {"text": "hello"}}
+    adapter = _StubAdapter(events=[started, text, done])
+    monkeypatch.setattr(agent_server, "get_runtime", lambda rt: adapter)
+
+    ws = _FakeWs()
+    await agent_server._handle_ws_agent_task(ws, _agent_task_msg())
+
+    assert len(ws.sent) == 4
+    assert ws.sent[0] == {"type": "agent_event", "request_id": "req-1", "event": started}
+    assert ws.sent[1] == {"type": "agent_event", "request_id": "req-1", "event": text}
+    assert ws.sent[2] == {"type": "agent_event", "request_id": "req-1", "event": done}
+    # Final frame is the agent_result carrying the terminal (done) event.
+    assert ws.sent[3] == {"type": "agent_result", "request_id": "req-1", "result": done}
+
+
+@pytest.mark.asyncio
+async def test_handle_ws_agent_task_unknown_runtime_sends_error_result(monkeypatch):
+    def _raise_unknown(rt):
+        raise ValueError(f"Unknown runtime type: {rt!r}. Available: []")
+
+    monkeypatch.setattr(agent_server, "get_runtime", _raise_unknown)
+
+    ws = _FakeWs()
+    await agent_server._handle_ws_agent_task(ws, _agent_task_msg(runtime="nope"))
+
+    assert len(ws.sent) == 1
+    frame = ws.sent[0]
+    assert frame["type"] == "agent_result"
+    assert frame["request_id"] == "req-1"
+    assert frame["result"]["type"] == "error"
+    assert frame["result"]["error_type"] == "ValueError"
+    assert "nope" in frame["result"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_handle_ws_agent_task_adapter_raises_sends_error_result(monkeypatch):
+    adapter = _StubAdapter(raise_exc=RuntimeError("boom"))
+    monkeypatch.setattr(agent_server, "get_runtime", lambda rt: adapter)
+
+    ws = _FakeWs()
+    await agent_server._handle_ws_agent_task(ws, _agent_task_msg())
+
+    assert len(ws.sent) == 1
+    frame = ws.sent[0]
+    assert frame["type"] == "agent_result"
+    assert frame["result"]["type"] == "error"
+    assert frame["result"]["error_type"] == "RuntimeError"
+    assert "boom" in frame["result"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_handle_ws_agent_task_runtime_invocation_error_preserves_error_type(monkeypatch):
+    adapter = _StubAdapter(raise_exc=RuntimeInvocationError("bad config", error_type="ConfigError"))
+    monkeypatch.setattr(agent_server, "get_runtime", lambda rt: adapter)
+
+    ws = _FakeWs()
+    await agent_server._handle_ws_agent_task(ws, _agent_task_msg())
+
+    assert len(ws.sent) == 1
+    frame = ws.sent[0]
+    assert frame["result"]["error_type"] == "ConfigError"
+    assert "bad config" in frame["result"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_handle_ws_agent_task_no_events_yielded_still_resolves(monkeypatch):
+    """A well-behaved adapter always yields a terminal event, but a buggy one
+    that yields nothing must not hang the center's pending future forever."""
+    adapter = _StubAdapter(events=[])
+    monkeypatch.setattr(agent_server, "get_runtime", lambda rt: adapter)
+
+    ws = _FakeWs()
+    await agent_server._handle_ws_agent_task(ws, _agent_task_msg())
+
+    assert len(ws.sent) == 1
+    frame = ws.sent[0]
+    assert frame["type"] == "agent_result"
+    assert frame["result"]["type"] == "error"
+    assert frame["result"]["error_type"] == "RuntimeInvocationError"
+
+
+@pytest.mark.asyncio
+async def test_handle_ws_agent_task_one_task_crash_does_not_raise(monkeypatch):
+    """Never raises out of the function — verified directly (the receive loop
+    fires this via asyncio.create_task, so an uncaught exception here would
+    otherwise surface only as a silently-logged task exception, never crashing
+    the loop, but the contract is that _handle_ws_agent_task itself is safe)."""
+    def _raise_get_runtime(rt):
+        raise KeyError("totally unexpected")
+
+    monkeypatch.setattr(agent_server, "get_runtime", _raise_get_runtime)
+
+    ws = _FakeWs()
+    # get_runtime raising something other than ValueError is not caught by the
+    # explicit `except ValueError` — it propagates into the outer try/except
+    # Exception block only if the call is inside that block. Assert it does
+    # NOT raise out of _handle_ws_agent_task.
+    await agent_server._handle_ws_agent_task(ws, _agent_task_msg())
+    assert len(ws.sent) == 1
+    assert ws.sent[0]["result"]["error_type"] == "KeyError"

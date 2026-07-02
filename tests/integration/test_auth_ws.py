@@ -122,3 +122,49 @@ def test_nodes_ws_query_token_accepted(test_client, auth_enabled):
         ws.send_json(REGISTER_MSG_NODES)
         reply = ws.receive_json()
         assert reply["type"] == "registered"
+
+
+# ── runtime advertisement (P0 work package B, GOAL-agent-runtimes.md §4) ───
+#
+# nodes.py's node_ws_endpoint opens its own backend.database.AsyncSessionLocal
+# session per-call (not the `get_db` dependency TestClient normally overrides
+# for the async httpx client fixture elsewhere in this suite). Repointing that
+# module-level sessionmaker at a throwaway engine while driving TestClient's
+# background-threaded event loop from a sync test proved flaky (hangs) rather
+# than reliably deterministic, so the actual EdgeNode.runtimes persistence
+# (the _upsert_node(..., runtimes=...) write path) is covered at the unit
+# level instead — see tests/unit/api/test_nodes_upsert.py — and these
+# handshake-level tests stick to what TestClient can assert reliably: the
+# 'registered' reply and validation-rejection behavior.
+
+
+def test_nodes_ws_register_with_runtimes_accepted(test_client, auth_enabled):
+    msg = {**REGISTER_MSG_NODES, "runtimes": ["pi", "stub"]}
+    with test_client.websocket_connect(
+        "/api/v1/nodes/ws", headers={"Authorization": f"Bearer {TOKEN}"}
+    ) as ws:
+        ws.send_json(msg)
+        reply = ws.receive_json()
+        assert reply["type"] == "registered"
+
+
+def test_nodes_ws_register_invalid_runtimes_type_rejected(test_client, auth_enabled):
+    msg = {**REGISTER_MSG_NODES, "runtimes": "not-a-list"}
+    with pytest.raises(WebSocketDisconnect):
+        with test_client.websocket_connect(
+            "/api/v1/nodes/ws", headers={"Authorization": f"Bearer {TOKEN}"}
+        ) as ws:
+            ws.send_json(msg)
+            ws.receive_json()
+
+
+def test_browsers_ws_register_tolerates_extra_runtimes_key(test_client, auth_enabled):
+    """browsers.py's agent_ws_endpoint never declared a runtimes field, but
+    must tolerate an extra key in the register payload without error."""
+    msg = {**REGISTER_MSG_BROWSERS, "runtimes": ["pi"]}
+    with test_client.websocket_connect(
+        "/api/v1/browsers/agents/ws", headers={"Authorization": f"Bearer {TOKEN}"}
+    ) as ws:
+        ws.send_json(msg)
+        reply = ws.receive_json()
+        assert reply["type"] == "registered"

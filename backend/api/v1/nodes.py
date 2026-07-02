@@ -39,6 +39,7 @@ async def _upsert_node(
     mode: str = "bridge",
     ip: str | None = None,
     node_type: str = "chrome",
+    runtimes: list[str] | None = None,
 ) -> "EdgeNode":  # type: ignore[name-defined]
     from backend.models.edge_node import EdgeNode
 
@@ -55,6 +56,8 @@ async def _upsert_node(
             node.label = label
         if ip:
             node.ip = ip
+        if runtimes is not None:
+            node.runtimes = runtimes
     else:
         node = EdgeNode(
             url=url,
@@ -65,6 +68,7 @@ async def _upsert_node(
             status="online",
             last_seen_at=now,
             ip=ip,
+            runtimes=runtimes,
         )
         db.add(node)
     await db.flush()
@@ -459,6 +463,7 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
         mode = data.get("mode", "bridge")
         node_type = data.get("node_type", "chrome")
         label = data.get("label", "")
+        runtimes = data.get("runtimes")
 
         if not agent_url.startswith("http"):
             await ws.close(code=1008, reason="agent_url must be an http/https URL")
@@ -469,11 +474,17 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
         if node_type not in ("docker", "shell"):
             await ws.close(code=1008, reason="node_type must be 'docker' or 'shell'")
             return
+        if runtimes is not None and (
+            not isinstance(runtimes, list) or not all(isinstance(r, str) for r in runtimes)
+        ):
+            await ws.close(code=1008, reason="runtimes must be a list of strings")
+            return
 
         # ── 2. Upsert node + write event ──────────────────────────────────
         try:
             async with AsyncSessionLocal() as db:
-                node = await _upsert_node(db, agent_url, label, "ws", mode, node_type=node_type)
+                node = await _upsert_node(db, agent_url, label, "ws", mode, node_type=node_type,
+                                          runtimes=runtimes)
                 await _write_event(db, node.id, "online",
                                    event_meta={"mode": mode, "node_type": node_type, "protocol": "ws"})
                 # BrowserInstance compat
@@ -508,6 +519,10 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
             msg_type = msg.get("type")
             if msg_type == "result":
                 ws_agent_manager.resolve_response(msg.get("request_id", ""), msg)
+            elif msg_type == "agent_event":
+                await ws_agent_manager.resolve_agent_event(msg.get("request_id", ""), msg)
+            elif msg_type == "agent_result":
+                ws_agent_manager.resolve_agent_result(msg.get("request_id", ""), msg)
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
             else:
