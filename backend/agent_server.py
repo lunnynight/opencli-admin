@@ -30,6 +30,12 @@ Environment variables:
                             Leave empty to skip auto-registration.
     HTTP_PROXY              HTTP proxy for outbound requests (agent → center)
     HTTPS_PROXY             HTTPS proxy for outbound requests (agent → center)
+    AGENT_API_TOKEN         Fleet auth bearer token (ADR-0005) attached to both the
+                            HTTP register call and the WS reverse-channel handshake.
+                            Preferred name for this process; takes priority.
+    API_AUTH_TOKEN          Fallback token env var — a node sharing the center's
+                            process environment (e.g. same .env) just works without
+                            a separate AGENT_API_TOKEN. Ignored if AGENT_API_TOKEN is set.
     OPENCLI_BRIDGE_BIN      Path to opencli 1.0 binary (default: /opt/opencli-bridge/bin/opencli)
     OPENCLI_CDP_BIN         Path to opencli 0.9 binary (default: /opt/opencli-cdp/bin/opencli)
     OPENCLI_CDP_ENDPOINT    Default Chrome CDP endpoint (default: http://localhost:19222)
@@ -84,6 +90,20 @@ _OPENCLI_TIMEOUT = int(os.environ.get("OPENCLI_TIMEOUT", "120"))
 # Outbound proxy for agent → center communication (optional)
 _HTTP_PROXY = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
 _HTTPS_PROXY = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+# Fleet auth token (ADR-0005): AGENT_API_TOKEN preferred, API_AUTH_TOKEN accepted
+# as a fallback for nodes that share the center's environment.
+_AGENT_API_TOKEN = os.environ.get("AGENT_API_TOKEN") or os.environ.get("API_AUTH_TOKEN") or ""
+
+
+def _auth_headers() -> dict[str, str]:
+    """Bearer-auth header for center requests, or {} when no token is configured.
+
+    Reads the module global at call time (rather than closing over it) so
+    tests can monkeypatch backend.agent_server._AGENT_API_TOKEN directly.
+    """
+    if not _AGENT_API_TOKEN:
+        return {}
+    return {"Authorization": f"Bearer {_AGENT_API_TOKEN}"}
 
 
 def _detect_advertise_url() -> str:
@@ -125,23 +145,24 @@ async def _register_with_center(advertise_url: str) -> None:
         try:
             # httpx >= 0.28 removed 'proxies'; use 'proxy' (single URL) or mounts
             client_kwargs: dict = {"timeout": 10}
+            headers = _auth_headers()
             if proxies:
                 proxy_url = proxies.get("https://") or proxies.get("http://")
                 try:
                     client_kwargs["proxy"] = proxy_url
                     async with httpx.AsyncClient(**client_kwargs) as client:
-                        resp = await client.post(url, json=payload)
+                        resp = await client.post(url, json=payload, headers=headers)
                         resp.raise_for_status()
                 except TypeError:
                     # Older httpx: fall back to 'proxies'
                     client_kwargs.pop("proxy", None)
                     client_kwargs["proxies"] = proxies
                     async with httpx.AsyncClient(**client_kwargs) as client:
-                        resp = await client.post(url, json=payload)
+                        resp = await client.post(url, json=payload, headers=headers)
                         resp.raise_for_status()
             else:
                 async with httpx.AsyncClient(**client_kwargs) as client:
-                    resp = await client.post(url, json=payload)
+                    resp = await client.post(url, json=payload, headers=headers)
                     resp.raise_for_status()
             logger.info("Registered with center %s as %s", _CENTRAL_API_URL, advertise_url)
             return
@@ -208,7 +229,20 @@ async def _register_via_ws(advertise_url: str) -> None:
             connect_kwargs: dict = {"ping_interval": 30, "ping_timeout": 10}
             if _proxy:
                 connect_kwargs["proxy"] = _proxy
-            async with websockets.connect(ws_url, **connect_kwargs) as ws:
+            headers = _auth_headers()
+            if headers:
+                try:
+                    # websockets >= 14 renamed extra_headers -> additional_headers.
+                    connector = websockets.connect(
+                        ws_url, additional_headers=headers, **connect_kwargs
+                    )
+                except TypeError:
+                    connector = websockets.connect(
+                        ws_url, extra_headers=headers, **connect_kwargs
+                    )
+            else:
+                connector = websockets.connect(ws_url, **connect_kwargs)
+            async with connector as ws:
                 attempt = 0  # reset on successful connect
                 await ws.send(register_payload)
 

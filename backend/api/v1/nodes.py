@@ -361,13 +361,14 @@ def _install_script_template(central_url: str, image_tag: str = "latest") -> str
     return f'''#!/usr/bin/env bash
 # OpenCLI Agent — one-line install
 # Usage: curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | bash
-# Or:    curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | AGENT_REGISTER=ws bash
+# Or:    curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | AGENT_API_TOKEN=... AGENT_REGISTER=ws bash
 
 set -euo pipefail
 CENTRAL_API_URL="${{CENTRAL_API_URL:-{central_url}}}"
 AGENT_REGISTER="${{AGENT_REGISTER:-ws}}"
 AGENT_PORT="${{AGENT_PORT:-19823}}"
 AGENT_LABEL="${{AGENT_LABEL:-$(hostname)}}"
+AGENT_API_TOKEN="${{AGENT_API_TOKEN:-}}"
 IMAGE_TAG="${{IMAGE_TAG:-{image_tag}}}"
 INSTALL_MODE="${{1:-docker}}"
 
@@ -399,6 +400,7 @@ install_docker() {{
     --add-host=host.docker.internal:host-gateway \\
     -e CENTRAL_API_URL="$DOCKER_CENTRAL_URL" -e AGENT_REGISTER="$AGENT_REGISTER" \\
     -e AGENT_PORT="$AGENT_PORT" -e AGENT_LABEL="$AGENT_LABEL" -e AGENT_MODE="cdp" \\
+    -e AGENT_API_TOKEN="$AGENT_API_TOKEN" \\
     $PROXY_ARGS -p "${{AGENT_PORT}}:${{AGENT_PORT}}" \\
     "xjh1994/opencli-admin-agent:${{IMAGE_TAG}}"
   info "Agent container started!"
@@ -416,6 +418,7 @@ install_python() {{
   fi
   CENTRAL_API_URL="$CENTRAL_API_URL" AGENT_REGISTER="$AGENT_REGISTER" \\
   AGENT_PORT="$AGENT_PORT" AGENT_LABEL="$AGENT_LABEL" AGENT_MODE="cdp" \\
+  AGENT_API_TOKEN="$AGENT_API_TOKEN" \\
   nohup "$PYTHON_BIN" -m backend.agent_server > /tmp/opencli-agent.log 2>&1 &
   info "Agent started (PID=$!). Logs: /tmp/opencli-agent.log"
 }}

@@ -20,12 +20,36 @@ Exemptions (deliberate — issue 04: "exempt if and only if they leak nothing"):
   They disclose the API *schema* but no data; issue 04's scope is "every
   /api route". Tighten separately if schema disclosure becomes a concern.
 
-Known gap (documented, not silently ignored): websocket endpoints under
-``/api`` (the agent reverse channel in api/v1/nodes.py and browser/noVNC
-streams in api/v1/browsers.py) are NOT guarded here — remote fleet agents
-establish those connections without a token today, so guarding them in this
-middleware would sever the fleet's own agents. That belongs to a follow-up on
-the agent protocol.
+Websocket endpoints under ``/api`` (the agent reverse channel in
+api/v1/nodes.py and api/v1/browsers.py) are guarded by this same middleware.
+A connecting agent may present the token through either channel:
+
+- ``Authorization: Bearer <token>`` header — the primary path, set by
+  agent_server.py's ``_auth_headers()`` when ``AGENT_API_TOKEN`` /
+  ``API_AUTH_TOKEN`` is present in the agent's environment.
+- ``?token=<token>`` query parameter — a fallback for clients that cannot
+  set a WebSocket handshake header (browser ``WebSocket`` API, ``wscat``
+  debugging, etc.).
+
+A handshake that fails either check is rejected *before* ``ws.accept()`` is
+ever reached: the middleware sends a raw ``websocket.close`` ASGI event with
+code ``4401`` (the conventional "auth failure" websocket close code, chosen
+to mirror HTTP 401) and never calls the wrapped app, so no endpoint code
+runs against an unauthenticated socket.
+
+Migration path (rollout is two independent, order-tolerant steps):
+
+1. Deploy the updated agent_server.py to fleet nodes first. With no
+   ``AGENT_API_TOKEN``/``API_AUTH_TOKEN`` set in the agent's environment,
+   ``_auth_headers()`` returns ``{}`` and the connect call is byte-for-byte
+   what it was before — a no-op rollout.
+2. Once ready, set ``API_AUTH_TOKEN`` on the center. Any agent that hasn't
+   picked up the env var yet gets its handshake closed with 4401 instead of
+   accepted. That is not a crash: ``_register_via_ws``'s reconnect loop
+   catches the close, backs off, and retries indefinitely (see
+   agent_server.py). The fleet self-heals the moment an operator sets
+   ``AGENT_API_TOKEN`` on that node's environment and restarts/redeploys it
+   — no center-side action required beyond having set the token.
 
 The MCP server (backend/mcp_server.py) and CLI (backend/cli.py) are HTTP
 *clients* of this API running as separate processes; they read
@@ -37,10 +61,12 @@ from __future__ import annotations
 import secrets
 import sys
 from collections.abc import Sequence
+from urllib.parse import parse_qs
 
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.websockets import WebSocketClose
 
 from backend.config import get_settings
 
@@ -91,18 +117,39 @@ def enforce_bind_guard(host: str, token: str) -> None:
     )
 
 
+def _token_matches(candidate: str, token: str) -> bool:
+    """Constant-time comparison of a caller-supplied credential against *token*."""
+    return secrets.compare_digest(candidate.strip().encode("utf-8"), token.encode("utf-8"))
+
+
+def _bearer_credential(headers: Headers) -> str:
+    """Extract the credential from an ``Authorization: Bearer <token>`` header, or ''."""
+    auth = headers.get("authorization", "")
+    scheme, _, credential = auth.partition(" ")
+    return credential if scheme.lower() == "bearer" else ""
+
+
+def _query_token(query_string: bytes) -> str:
+    """Extract ``?token=`` from a raw ASGI query string, or ''."""
+    values = parse_qs(query_string.decode("utf-8", errors="ignore")).get("token")
+    return values[0] if values else ""
+
+
 class FleetAuthMiddleware:
     """Pure-ASGI middleware validating a static bearer token on /api routes.
 
-    Guards ``http`` scopes only — see module docstring for the documented
-    websocket gap and the /health exemption rationale.
+    Guards both ``http`` and ``websocket`` scopes — see module docstring for
+    the websocket credential channels, the 4401 close code, and the
+    /health exemption rationale.
     """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope["path"].startswith(PROTECTED_PREFIX):
+        if scope["type"] not in ("http", "websocket") or not scope["path"].startswith(
+            PROTECTED_PREFIX
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -116,11 +163,19 @@ class FleetAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        auth = Headers(scope=scope).get("authorization", "")
-        scheme, _, credential = auth.partition(" ")
-        if scheme.lower() == "bearer" and secrets.compare_digest(
-            credential.strip().encode("utf-8"), token.encode("utf-8")
-        ):
+        if scope["type"] == "websocket":
+            headers = Headers(scope=scope)
+            credential = _bearer_credential(headers) or _query_token(scope.get("query_string", b""))
+            if credential and _token_matches(credential, token):
+                await self.app(scope, receive, send)
+                return
+            await WebSocketClose(code=4401, reason="Invalid or missing API token")(
+                scope, receive, send
+            )
+            return
+
+        credential = _bearer_credential(Headers(scope=scope))
+        if credential and _token_matches(credential, token):
             await self.app(scope, receive, send)
             return
 

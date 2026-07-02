@@ -1,8 +1,11 @@
-"""Unit tests for the fleet-auth bind guard and host resolution (ADR-0005)."""
+"""Unit tests for the fleet-auth bind guard, host resolution, and the
+websocket branch of FleetAuthMiddleware (ADR-0005)."""
 
 import pytest
 
+from backend.config import get_settings
 from backend.security.fleet_auth import (
+    FleetAuthMiddleware,
     enforce_bind_guard,
     is_localhost_host,
     resolve_uvicorn_host,
@@ -77,3 +80,126 @@ def test_whitespace_token_counts_as_unset():
 @pytest.mark.parametrize("host", ["localhost", "::1", "127.0.0.1"])
 def test_all_loopback_spellings_allowed_without_token(host):
     enforce_bind_guard(host, "")
+
+
+# ── FleetAuthMiddleware — websocket scope (pure ASGI, no FastAPI) ──────────────
+
+TOKEN = "fleet-ws-test-token"
+
+
+@pytest.fixture
+def auth_enabled(monkeypatch):
+    monkeypatch.setattr(get_settings(), "api_auth_token", TOKEN)
+
+
+@pytest.fixture
+def auth_disabled(monkeypatch):
+    monkeypatch.setattr(get_settings(), "api_auth_token", "")
+
+
+def _ws_scope(path: str, *, headers: list[tuple[bytes, bytes]] | None = None,
+              query_string: bytes = b"") -> dict:
+    return {
+        "type": "websocket",
+        "path": path,
+        "headers": headers or [],
+        "query_string": query_string,
+    }
+
+
+class _Recorder:
+    """Captures ASGI messages passed to `send` and whether the inner app ran."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+        self.app_called = False
+
+    async def receive(self) -> dict:
+        return {"type": "websocket.connect"}
+
+    async def send(self, message: dict) -> None:
+        self.sent.append(message)
+
+
+async def _inner_app(scope, receive, send) -> None:
+    recorder: _Recorder = scope["_recorder"]
+    recorder.app_called = True
+
+
+def _wrapped(recorder: _Recorder) -> FleetAuthMiddleware:
+    async def app(scope, receive, send):
+        scope["_recorder"] = recorder
+        await _inner_app(scope, receive, send)
+
+    return FleetAuthMiddleware(app)
+
+
+@pytest.mark.asyncio
+async def test_non_api_ws_path_passes_through_even_with_token(auth_enabled):
+    recorder = _Recorder()
+    scope = _ws_scope("/ws/not-api")
+    await _wrapped(recorder)(scope, recorder.receive, recorder.send)
+    assert recorder.app_called is True
+    assert recorder.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ws_no_token_configured_passes_through(auth_disabled):
+    recorder = _Recorder()
+    scope = _ws_scope("/api/v1/nodes/ws")
+    await _wrapped(recorder)(scope, recorder.receive, recorder.send)
+    assert recorder.app_called is True
+    assert recorder.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ws_token_set_no_credential_is_rejected_4401(auth_enabled):
+    recorder = _Recorder()
+    scope = _ws_scope("/api/v1/nodes/ws")
+    await _wrapped(recorder)(scope, recorder.receive, recorder.send)
+    assert recorder.app_called is False
+    assert recorder.sent == [
+        {"type": "websocket.close", "code": 4401, "reason": "Invalid or missing API token"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ws_correct_bearer_header_passes_through(auth_enabled):
+    recorder = _Recorder()
+    scope = _ws_scope(
+        "/api/v1/nodes/ws",
+        headers=[(b"authorization", f"Bearer {TOKEN}".encode())],
+    )
+    await _wrapped(recorder)(scope, recorder.receive, recorder.send)
+    assert recorder.app_called is True
+    assert recorder.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ws_wrong_bearer_header_is_rejected_4401(auth_enabled):
+    recorder = _Recorder()
+    scope = _ws_scope(
+        "/api/v1/nodes/ws",
+        headers=[(b"authorization", b"Bearer wrong-token")],
+    )
+    await _wrapped(recorder)(scope, recorder.receive, recorder.send)
+    assert recorder.app_called is False
+    assert recorder.sent[0]["code"] == 4401
+
+
+@pytest.mark.asyncio
+async def test_ws_correct_query_token_passes_through(auth_enabled):
+    recorder = _Recorder()
+    scope = _ws_scope("/api/v1/nodes/ws", query_string=f"token={TOKEN}".encode())
+    await _wrapped(recorder)(scope, recorder.receive, recorder.send)
+    assert recorder.app_called is True
+    assert recorder.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ws_wrong_query_token_is_rejected_4401(auth_enabled):
+    recorder = _Recorder()
+    scope = _ws_scope("/api/v1/nodes/ws", query_string=b"token=wrong-token")
+    await _wrapped(recorder)(scope, recorder.receive, recorder.send)
+    assert recorder.app_called is False
+    assert recorder.sent[0]["code"] == 4401
