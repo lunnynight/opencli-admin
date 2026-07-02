@@ -160,7 +160,12 @@ async def list_records(
 
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    try:
+        mcp.run(transport="stdio")
+    except KeyboardInterrupt:
+        # Clean-interrupt contract (issue 05): the stdio server holds no
+        # remote state; just exit non-zero without a traceback.
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":

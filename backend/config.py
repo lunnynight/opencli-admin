@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     api_key_enabled: bool = False
     api_key: str = ""
 
+    # CLI channel binary allowlist (ADR-0005, audit P0-4). The cli channel is
+    # an arbitrary-binary-execution surface, so it only runs binaries the
+    # operator explicitly listed here. Comma-separated binary paths/names,
+    # e.g. "/usr/bin/mycli,C:\\tools\\other.exe". Empty (default) = deny all.
+    # Deliberately orthogonal to API auth: a stolen token must not grant
+    # arbitrary code execution.
+    cli_channel_allowed_binaries: str = ""
+
+    @property
+    def cli_allowed_binaries(self) -> list[str]:
+        return [b.strip() for b in self.cli_channel_allowed_binaries.split(",") if b.strip()]
+
     # Email
     smtp_host: str = ""
     smtp_port: int = 587

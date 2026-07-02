@@ -36,6 +36,9 @@ _PERMANENT = frozenset({
     "JSONDecodeError",
     "ValidationError",
     "PermanentHTTPStatus",
+    # cli_channel allowlist rejection (ADR-0005 / issue 05): the binary isn't
+    # on CLI_CHANNEL_ALLOWED_BINARIES; retrying can't change configuration.
+    "BinaryNotAllowedError",
 })
 
 

@@ -120,10 +120,14 @@ def cmd_record(args: argparse.Namespace) -> None:
         print(f"recording started (session={session_id}, chrome={session['cdp_endpoint']})")
         print("go demo the task in that Chrome window now.")
 
-        # /start holds the pool's per-endpoint mutex for the session's lifetime,
-        # released only by /stop. Ctrl+C (or EOF) on either prompt below must
-        # still reach /stop, or that Chrome endpoint stays locked until the
-        # backend process restarts.
+        # /start holds the pool's per-endpoint mutex for the session's
+        # lifetime, released only by /stop. ANY exit path from here on —
+        # Ctrl+C, EOF, an unexpected exception — must still reach /stop, or
+        # that Chrome endpoint stays locked until the backend process
+        # restarts (PR #4 review finding, closed out by issue 05).
+        interrupted = False
+        status = "failed"
+        stop_result = None
         try:
             input("press Enter here when done recording... ")
             status = "success"
@@ -131,11 +135,19 @@ def cmd_record(args: argparse.Namespace) -> None:
                 status = "failed"
         except (KeyboardInterrupt, EOFError):
             print()
-            status = "failed"
+            status = "failed"  # even if the first prompt already marked success
+            interrupted = True
+        finally:
+            stop_result = _unwrap(
+                c.post(f"/skills/record/{session_id}/stop", json={"status": status}, timeout=30.0)
+            )
 
-        stop_result = _unwrap(
-            c.post(f"/skills/record/{session_id}/stop", json={"status": status}, timeout=30.0)
-        )
+        if interrupted:
+            # Session released above; exit non-zero without offering distill —
+            # an interrupted demo is not a trace worth keeping.
+            print("interrupted — recording session stopped (marked failed).", file=sys.stderr)
+            raise SystemExit(130)
+
         trace = stop_result["trace"]
         _print_trace_steps(trace)
 
@@ -198,7 +210,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        # Clean-interrupt contract (issue 05): no traceback, non-zero exit.
+        # Handlers that hold remote resources release them on their own exit
+        # paths (see cmd_record's finally) before this propagates.
+        print("\ninterrupted", file=sys.stderr)
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":
