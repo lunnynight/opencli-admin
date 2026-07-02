@@ -21,3 +21,26 @@ _Avoid_: Clock shop, always-on dashboard wall
 
 **Run Inbox**: The operator-facing queue of collection runs that need observation, review, retry, acknowledgement, or dismissal. It treats a run as work to triage and close, not as a passive row in a log table.
 _Avoid_: Recent tasks table, static run history
+
+### Control
+
+**Advisory Mode**: The control-loop operating mode in which suggested actions are surfaced to the operator and recorded as evidence, but never executed.
+_Avoid_: dry-run mode, suggestion mode
+
+**Automatic Mode**: The control-loop operating mode in which the Actuator may execute suggestions itself, opened per state class only when accumulated evidence justifies it.
+_Avoid_: autopilot, self-healing mode
+
+**Actuator**: The component that carries out control actions against the collection system. It executes only whitelisted safe actions; everything else it downgrades.
+_Avoid_: executor, auto-fixer
+
+**Evidence Ledger**: The durable record of every control suggestion and execution, together with the outcome later judged from post-decision measurements.
+_Avoid_: action log, audit trail
+
+**Recovery Rate**: The share of judged suggestions whose triggering state later cleared. It is the quantified basis for opening Automatic Mode.
+_Avoid_: success rate, fix rate
+
+**Require-Review Downgrade**: The policy that suggestions too dangerous to automate are executed only as "flag the source for human review", never as the suggested action itself.
+_Avoid_: blocked action, action rejection
+
+**Control Cycle**: The background loop that periodically measures every source, decides, and — in Automatic Mode — acts. It runs regardless of whether any UI is open.
+_Avoid_: polling-driven control, frontend-triggered control
