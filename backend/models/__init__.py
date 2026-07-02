@@ -7,6 +7,7 @@ from backend.models.edge_node import EdgeNode, EdgeNodeEvent
 from backend.models.notification import NotificationLog, NotificationRule
 from backend.models.odp_system_measurement import OdpSystemMeasurement
 from backend.models.plan import Plan
+from backend.models.plan_health import PlanHealthRecord
 from backend.models.provider import ModelProvider
 from backend.models.record import CollectedRecord
 from backend.models.schedule import CronSchedule
@@ -28,6 +29,7 @@ __all__ = [
     "EdgeNodeEvent",
     "ModelProvider",
     "Plan",
+    "PlanHealthRecord",
     "DataSource",
     "SourceCredential",
     "SourceCursor",

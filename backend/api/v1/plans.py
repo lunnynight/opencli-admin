@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.plan_ir.executor import PlanExecutionError, run_plan_once
 from backend.schemas.common import ApiResponse, PaginationMeta
-from backend.schemas.plan import PlanCreate, PlanRead, PlanRunRead, PlanUpdate
-from backend.services import plan_service
+from backend.schemas.plan import PlanCreate, PlanHealthRead, PlanRead, PlanRunRead, PlanUpdate
+from backend.services import plan_health_service, plan_service
 
 logger = logging.getLogger(__name__)
 
@@ -105,14 +105,21 @@ async def run_plan(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
     """Manual whole-plan run (issue 03, PRD story 13 — "run whole plan" for
-    debugging). v1 scope: degenerate (single-source) Plans only, invoking
-    the existing channel/runner machinery synchronously
-    (``backend.plan_ir.executor.run_plan_once``) so the response already
-    reflects the completed run (or its failure) — no polling required.
+    debugging). Invokes ``backend.plan_ir.executor.run_plan_once``
+    synchronously so the response already reflects the completed run (or
+    its failure) — no polling required. Degenerate (single-source) Plans
+    (issue 03) and multi-source Plans with shared segments (issue 04) both
+    go through this one endpoint; the response shape's
+    ``source_results``/``shared_segment`` fields are empty/null for a
+    degenerate Plan, populated for a multi-source one.
 
-    404 if the Plan doesn't exist. Draft Plans, non-runnable Plans, and
-    multi-source Plans (issue 04's scope) are all refused with 400 and a
-    clear message rather than silently no-op'ing or partially executing.
+    404 if the Plan doesn't exist. Draft Plans and non-runnable Plans are
+    refused with 400 and a clear message. An individual source segment
+    failing inside a multi-source Plan does NOT 400 the whole request — that
+    is the "partial failure" acceptance criterion (PRD story 15): the
+    response is still 202 with ``success=False`` and the failing source's
+    detail in ``source_results``, so a caller can see exactly which source
+    (or shared node) failed without the request itself erroring.
     """
     plan = await plan_service.get_plan(db, plan_id)
     if not plan:
@@ -124,3 +131,35 @@ async def run_plan(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return ApiResponse.ok(PlanRunRead.model_validate(result))
+
+
+@router.get("/{plan_id}/health", response_model=ApiResponse[list[PlanHealthRead]])
+async def get_plan_health(
+    plan_id: str,
+    run_key: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse:
+    """Plan Health: per-shared-node success/failure/duration, readable over
+    HTTP (issue 04, PRD story 16). Read-only — nothing here writes a Plan
+    Health row (that is ``run_plan_once``'s job, on every shared-segment
+    run). ``run_key`` narrows to a single run; omitted, every recorded run's
+    rows for this Plan are returned, newest first.
+
+    404 if the Plan doesn't exist, matching every other ``/plans/{plan_id}``
+    sub-resource in this router.
+    """
+    plan = await plan_service.get_plan(db, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    rows, total = await plan_health_service.list_plan_health(
+        db, plan_id, run_key=run_key, page=page, limit=limit
+    )
+    return ApiResponse.ok(
+        data=[PlanHealthRead.model_validate(r) for r in rows],
+        meta=PaginationMeta(
+            total=total, page=page, limit=limit, pages=max(1, -(-total // limit))
+        ),
+    )

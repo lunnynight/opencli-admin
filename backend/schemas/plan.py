@@ -49,10 +49,48 @@ class PlanRead(UTCModel):
     model_config = {"from_attributes": True}
 
 
+class SourceSegmentRead(BaseModel):
+    """One source node's dispatch outcome within a multi-source Plan run
+    (issue 04). Mirrors ``backend.plan_ir.executor.SourceSegmentResult``
+    field-for-field."""
+
+    node_id: str
+    source_id: Optional[str] = None
+    task_id: Optional[str] = None
+    run_id: Optional[str] = None
+    success: bool
+    collected: int
+    stored: int
+    skipped: int
+    error: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class SharedSegmentRead(BaseModel):
+    """The shared segment's run-scoped outcome (issue 04). Mirrors
+    ``backend.plan_ir.executor.SharedSegmentResult`` field-for-field;
+    node-level detail is Plan Health (``GET /plans/{plan_id}/health``), not
+    this summary."""
+
+    run_key: str
+    success: bool
+    failed_node_id: Optional[str] = None
+    error: Optional[str] = None
+    items_in: int
+    stored: int
+    skipped: int
+
+    model_config = {"from_attributes": True}
+
+
 class PlanRunRead(BaseModel):
-    """Response body for ``POST /plans/{plan_id}/run`` (issue 03). Mirrors
-    ``backend.plan_ir.executor.PlanRunResult`` field-for-field — the executor
-    body's return value IS the HTTP response shape, no separate projection."""
+    """Response body for ``POST /plans/{plan_id}/run`` (issue 03 degenerate,
+    issue 04 multi-source). Mirrors ``backend.plan_ir.executor.PlanRunResult``
+    field-for-field — the executor body's return value IS the HTTP response
+    shape, no separate projection. ``source_results``/``shared_segment`` are
+    empty/``None`` for a degenerate (single-source) Plan run, unchanged from
+    issue 03's response shape in that case."""
 
     plan_id: str
     source_id: str
@@ -63,5 +101,28 @@ class PlanRunRead(BaseModel):
     stored: int
     skipped: int
     error: Optional[str] = None
+    source_results: list[SourceSegmentRead] = Field(default_factory=list)
+    shared_segment: Optional[SharedSegmentRead] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PlanHealthRead(BaseModel):
+    """One recorded Plan Health row (issue 04, ADR-0009 Two-Tier
+    Attribution) — read-only projection of
+    ``backend.models.plan_health.PlanHealthRecord``."""
+
+    id: str
+    plan_id: str
+    run_key: str
+    node_id: str
+    node_type: str
+    success: bool
+    duration_ms: int
+    items_in: int
+    items_out: int
+    error_message: Optional[str] = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+    recorded_at: datetime
 
     model_config = {"from_attributes": True}
