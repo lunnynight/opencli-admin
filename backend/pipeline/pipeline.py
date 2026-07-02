@@ -226,6 +226,28 @@ async def run_pipeline(
             detail={"new": len(new_records), "skipped": skipped},
         )
 
+    # Shadow-sink errors (e.g. DualSink's best-effort ODP forward failing while
+    # the legacy write still succeeded) are non-blocking by design — the run
+    # must still complete — but must not vanish silently either. Surface them
+    # as a warning event and onto PipelineResult.metadata so a source with ODP
+    # down consistently shows a signal, not just a worker-log line (P1-7).
+    shadow_errors = list(sink_result.errors)
+    if shadow_errors:
+        logger.warning(
+            "[task:%s] step2-3/sink shadow errors | count=%d errors=%s",
+            task_id, len(shadow_errors), shadow_errors,
+        )
+        if run_id:
+            await events.emit(
+                run_id, "store",
+                f"影子写入出现 {len(shadow_errors)} 个错误（不影响本次任务结果）",
+                level="warning",
+                detail={
+                    "shadow_errors": shadow_errors,
+                    "shadow_meta": sink_result.shadow_meta,
+                },
+            )
+
     # Incremental cursor: advance the persisted cursor ONLY now that the write sink
     # has accepted this batch. A raised/failed sink returned above, so reaching here
     # means the data landed; committing during fetch would skip items that never got
@@ -308,6 +330,15 @@ async def run_pipeline(
                 )
 
     duration_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+
+    if shadow_errors:
+        # Non-blocking signal onto the result too (in addition to the emitted
+        # event above), so a caller with no run_id (or one that persists
+        # PipelineResult.metadata onto TaskRun, see runner.py) still observes
+        # the shadow failure instead of it only living in a worker log line.
+        channel_result.metadata["shadow_errors"] = shadow_errors
+        if sink_result.shadow_meta is not None:
+            channel_result.metadata["shadow_meta"] = sink_result.shadow_meta
 
     if run_id:
         await events.emit(

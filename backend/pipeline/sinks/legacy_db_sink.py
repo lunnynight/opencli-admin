@@ -7,10 +7,11 @@ existed. Extracting it changes no behavior: it still calls
 short-lived session.
 
 Two things stay where they were on purpose, to keep this slice behavior-only:
-  * The ODP forward still lives inside ``storer.store_records`` (fires when
-    ``ODP_INGEST_URL`` is set), now behind a ``forward_to_odp`` gate so DualSink
-    can suppress it on the legacy leg. The dedicated ``OdpSink`` owns the forward
-    going forward; ``write_strategy`` picks the destination in a later slice.
+  * The ODP forward still lives inside ``storer.store_records`` (fires only
+    when ``ODP_INGEST_URL`` is set AND ``forward_to_odp`` is True), now behind
+    a ``forward_to_odp`` gate so DualSink can suppress it on the legacy leg.
+    The dedicated ``OdpSink`` owns the forward going forward; ``write_strategy``
+    (``backend/pipeline/sinks/strategy.py``) picks the destination explicitly.
   * Dedup here remains ``content_hash`` (title|url|content|source_id). The ODP
     path keys on ``(source_id, event_id)`` instead; the two will disagree, and
     surfacing that disagreement under shadow is the point of the migration.
@@ -27,12 +28,19 @@ class LegacyDbSink:
     """Persist collected items to the legacy ``collected_records`` table.
 
     ``forward_to_odp`` gates the ODP shadow-forward that lives inside
-    ``storer.store_records``. Defaults to True (behavior unchanged); ``DualSink``
-    constructs this with False so the legacy write does not double-send to ODP
-    alongside ``OdpSink``.
+    ``storer.store_records``. Defaults to False: the ``legacy`` write_strategy
+    (this sink's default construction in ``select_sink``) must NOT forward to
+    ODP just because a bare ``ODP_INGEST_URL`` env var happens to be set
+    elsewhere in the deployment — that was the P1-1 strangler-collapse bug
+    (an unmigrated source silently leaking into ODP, bypassing the
+    write_strategy state machine entirely). Only a sink built for an explicit
+    ODP-aware strategy (``odp_shadow`` / ``odp_dual_required`` / ``odp_primary``,
+    via ``DualSink``) opts a source into the forward now, and DualSink already
+    constructs its legacy leg with ``forward_to_odp=False`` regardless (so
+    ``OdpSink`` is the single sender, avoiding a double-send).
     """
 
-    def __init__(self, forward_to_odp: bool = True) -> None:
+    def __init__(self, forward_to_odp: bool = False) -> None:
         self.forward_to_odp = forward_to_odp
 
     async def write_batch(self, ctx: RunContext, items: Sequence[dict]) -> SinkResult:

@@ -58,6 +58,13 @@ class SinkResult:
         Forward-only sinks (``OdpSink``) leave it empty and those steps no-op,
         because on the ODP path enrichment happens off the ``record.committed``
         stream.
+      * ``shadow_meta`` — set only by ``DualSink``: the best-effort shadow
+        leg's OWN ``accepted``/``duplicates``/``rejected`` counts (the top-level
+        fields above stay the legacy/authoritative leg's numbers so existing
+        callers are unaffected). ``None`` when there is no shadow leg, or when
+        the shadow write raised before producing a result. Previously these
+        counts were only logged (P1-7); this lets a caller (pipeline.py)
+        surface them without changing what "accepted"/"duplicates" mean.
     """
 
     accepted: int = 0
@@ -66,6 +73,7 @@ class SinkResult:
     normalized: int = 0
     records: list[Any] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    shadow_meta: dict[str, int] | None = None
 
 
 class ItemSink(Protocol):

@@ -192,6 +192,16 @@ async def run_collection_pipeline(
             run.records_collected = pipeline_result.stored
             if pipeline_result.metadata.get("node_url"):
                 run.node_url = pipeline_result.metadata["node_url"]
+            # Shadow-sink errors (P1-7): best-effort ODP forward failures never
+            # fail the run, but must not vanish either — record them on the
+            # existing error_detail JSON column (no migration: the column
+            # already exists and is otherwise unused on a successful run).
+            shadow_errors = pipeline_result.metadata.get("shadow_errors")
+            if shadow_errors:
+                run.error_detail = {
+                    "shadow_errors": shadow_errors,
+                    "shadow_meta": pipeline_result.metadata.get("shadow_meta"),
+                }
 
         # Paused outcome (skill execute loop hit the confirm gate in headless v1):
         # a successful pipeline run that stopped at a confirm-required action.

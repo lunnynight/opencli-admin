@@ -20,15 +20,21 @@ async def store_records(
     normalized_triples: list[tuple[dict, dict, str]],
     *,
     channel_type: str = "unknown",
-    forward_to_odp: bool = True,
+    forward_to_odp: bool = False,
 ) -> tuple[list[CollectedRecord], int]:
     """Insert new records; skip existing ones by content_hash.
 
-    When ``ODP_INGEST_URL`` is set AND ``forward_to_odp`` is True, events are
-    forwarded to the Rust ingest service first (hot path). SQLite/ORM write
-    remains for pipeline AI/notify until those steps move to async
-    ``record.committed`` consumers. ``DualSink`` passes ``forward_to_odp=False``
-    so the legacy write does not double-send alongside ``OdpSink``.
+    ``forward_to_odp`` gates a forward to the Rust ODP ingest hot path (fires
+    only when ``ODP_INGEST_URL`` is ALSO set). Defaults to False: the ODP
+    forward is opt-in, chosen explicitly by the write-seam layer under a
+    source's ``write_strategy`` (``OdpSink`` / ``DualSink``, see
+    ``backend/pipeline/sinks/strategy.py``), not an implicit side effect of a
+    bare env var being present (P1-1). Previously this defaulted to True, so
+    setting ``ODP_INGEST_URL`` anywhere forwarded every ``legacy``-strategy
+    source's data into ODP too — bypassing the write_strategy state machine
+    entirely and silently enrolling sources that were never migrated.
+    ``LegacyDbSink`` (the ``legacy`` strategy's sink) now passes this
+    explicitly; nothing should rely on the old implicit-True default.
 
     Returns (new_records, skipped_count).
     """

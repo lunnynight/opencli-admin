@@ -105,11 +105,15 @@ async def test_legacy_sink_forward_flag_passthrough():
 
 
 @pytest.mark.asyncio
-async def test_legacy_sink_forward_flag_defaults_true():
+async def test_legacy_sink_forward_flag_defaults_false():
+    # P1-1 strangler collapse: the legacy write_strategy's sink must NOT
+    # forward to ODP by default — that was the bare-env-var backdoor that let
+    # an unmigrated source leak into ODP just because ODP_INGEST_URL happened
+    # to be set somewhere in the deployment, bypassing write_strategy entirely.
     store_mock = AsyncMock(return_value=([], 0))
     with (
         patch("backend.pipeline.storer.store_records", new=store_mock),
         patch("backend.database.AsyncSessionLocal", return_value=_session_cm()),
     ):
         await LegacyDbSink().write_batch(_ctx(), [{"title": "A"}])
-    assert store_mock.call_args.kwargs["forward_to_odp"] is True
+    assert store_mock.call_args.kwargs["forward_to_odp"] is False

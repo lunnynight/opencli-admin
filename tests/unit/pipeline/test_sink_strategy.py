@@ -1,7 +1,8 @@
 """write_strategy -> sink selection. The state machine that routes the write.
 
-Default/unknown collapses to legacy (behavior-preserving); the odp_* states pick
-DualSink/OdpSink with the right require_odp posture and no double-send.
+Default/unknown collapses to legacy (DB-only, no ODP forward — P1-1); the
+odp_* states pick DualSink/OdpSink with the right require_odp posture and no
+double-send.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,11 +13,13 @@ from backend.pipeline.sinks import DualSink, LegacyDbSink, OdpSink, SinkResult
 from backend.pipeline.sinks.strategy import select_sink
 
 
-def test_legacy_keeps_env_shadow():
+def test_legacy_does_not_forward_to_odp():
+    # P1-1 strangler collapse: legacy must NOT forward to ODP just because a
+    # bare ODP_INGEST_URL env var happens to be set — that was the backdoor
+    # that let an unmigrated source leak into ODP, bypassing write_strategy.
     s = select_sink("legacy")
     assert isinstance(s, LegacyDbSink)
-    # legacy preserves the original env-gated forward (forward_to_odp=True).
-    assert s.forward_to_odp is True
+    assert s.forward_to_odp is False
 
 
 def test_none_falls_back_to_legacy():
@@ -51,6 +54,38 @@ def test_odp_primary_requires_odp():
 
 def test_odp_only_is_forward_only():
     assert isinstance(select_sink("odp_only"), OdpSink)
+
+
+@pytest.mark.asyncio
+async def test_legacy_strategy_does_not_forward_even_with_env_url_set(monkeypatch):
+    """End-to-end characterization of the P1-1 fix: a source on the (default)
+    ``legacy`` write_strategy must not forward to ODP even when
+    ODP_INGEST_URL is set in the environment — closing the bare-env-var
+    backdoor that bypassed the write_strategy state machine."""
+    monkeypatch.setenv("ODP_INGEST_URL", "http://odp:8040")
+
+    store_mock = AsyncMock(return_value=([], 0))
+    sess = AsyncMock()
+    sess.commit = AsyncMock()
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=sess)
+    cm.__aexit__ = AsyncMock(return_value=False)
+
+    sink = select_sink("legacy")
+    from backend.pipeline.sinks.base import RunContext
+
+    with (
+        patch("backend.pipeline.storer.store_records", new=store_mock),
+        patch("backend.database.AsyncSessionLocal", return_value=cm),
+    ):
+        await sink.write_batch(
+            RunContext(task_id="t1", source_id="s1", provider="rss"),
+            [{"title": "A", "url": "https://x/a"}],
+        )
+
+    # The legacy sink still called store_records, but with forward_to_odp
+    # explicitly False — ODP_INGEST_URL being set must not matter here.
+    assert store_mock.call_args.kwargs["forward_to_odp"] is False
 
 
 @pytest.mark.asyncio
