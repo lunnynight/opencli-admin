@@ -7,13 +7,16 @@
 // Lives at frontend/src/node-kit/nodes/ (incubating); promoted with the rest of
 // node-kit once stable. `.tsx` because the spec `render()` bodies use JSX.
 import type { ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { defineNode } from '../define'
 import type { NodeRenderContext, NodeSpec } from '../spec'
 import { NodeBadge, NodeField } from '../render/atoms'
 import { SourceControlStrip } from '../render/controlState'
+import { odpNodeFacts, odpNodeHealth } from '../../labs/topology/odpNode'
 import {
   deleteRecord,
+  getOdpState,
   testSourceConnectivity,
   triggerTask,
   updateAgent,
@@ -297,6 +300,54 @@ const worker = defineNode({
   },
 })
 
+// ── ODP system node (issue 07) ────────────────────────────────────────────────
+// The shared ODP data plane rendered as a SINGLETON system node on the
+// topology canvas — GET /control/odp-state has no source_id, so this node is
+// not per-entity like the stages above; the host always plants exactly one
+// instance at ODP_NODE_ID. Health/badges come from odpNode.ts's pure mapping
+// (the node --test seam); this component only polls + projects that mapping,
+// same C0 "never a fake healthy" discipline as SourceControlStrip.
+const ODP_POLL_MS = 15_000
+
+function OdpSystemBody(): ReactNode {
+  const query = useQuery({
+    queryKey: ['odp-state'],
+    queryFn: getOdpState,
+    refetchInterval: ODP_POLL_MS,
+  })
+
+  if (query.isLoading) {
+    return <div className="text-[10px] text-zinc-600">odp: loading…</div>
+  }
+  if (query.isError) {
+    // Fetch failure must read as "unknown", not silently as "no badges shown"
+    // (which would read as calm/healthy) — see odpNode.odpNodeHealth(null).
+    return <div className="text-[10px] text-red-300">odp: fetch failed</div>
+  }
+
+  const facts = odpNodeFacts(query.data ?? null)
+  return (
+    <div className="grid gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        {facts.badges.map((badge) => (
+          <NodeBadge key={badge}>{badge}</NodeBadge>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const odpSystem = defineNode({
+  type: 'collection.odp-system',
+  category: 'control',
+  title: 'ODP 数据平面',
+  subtitle: 'shared plane',
+  icon: 'waves',
+  // System-wide plane, not wired into any per-entity edge — no ports.
+  ports: { inputs: [], outputs: [] },
+  render: OdpSystemBody,
+})
+
 export const COLLECTION_NODES: NodeSpec<any>[] = [
   source,
   schedule,
@@ -306,4 +357,5 @@ export const COLLECTION_NODES: NodeSpec<any>[] = [
   notification,
   edgeNode,
   worker,
+  odpSystem,
 ]

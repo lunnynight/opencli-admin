@@ -9,6 +9,7 @@ authoritative JSON shape.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
@@ -184,3 +185,37 @@ class SourceControlStateRead(BaseModel):
     system_context: SystemContextRead
     suggested_actions: list[SuggestedActionRead] = Field(default_factory=list)
     control_mode: str
+
+
+class ControlActionRecordRead(BaseModel):
+    """One Evidence Ledger row (issue 07 — read-only action history listing).
+
+    Mirrors ``backend.models.control_action.ControlActionRecord`` field for
+    field; see that module's docstring for the column-group breakdown. This
+    is deliberately row-level (unlike ``AdvisoryReportRead``'s folded
+    buckets) — the action history view's job is to let an operator inspect
+    individual suggestion/execution rows, not just aggregate rates.
+
+    ``outcome`` is null until ``backend.control.outcomes`` judges the row
+    (the "pending" verdict shown in the UI is the absence of this field, not
+    a stored value — see ``control_ledger_service.list_control_actions``'s
+    ``outcome=pending`` filter for the matching query-side convention).
+    """
+
+    id: str
+    source_id: str
+    run_id: Optional[str] = None
+    measurement_id: Optional[str] = None
+    mode: str
+    state: str
+    action_type: str
+    reason: Optional[str] = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    executed: bool
+    evaluated_at: Optional[datetime] = None
+    outcome: Optional[str] = None
+    outcome_detail: Optional[dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -30,6 +30,7 @@ import Card from '../../components/Card'
 import ErrorAlert from '../../components/ErrorAlert'
 import { cn } from '../../lib/utils'
 import { AgentDock, type DockContextNode } from './AgentDock'
+import { ODP_NODE_ID, odpSystemGraphNode } from './odpNode'
 import { ReactFlowTopologyCanvas } from './ReactFlowTopologyCanvas'
 import { ALL_NODES, NodeWorkbench, hasNode, registerNodes, registerSavedMacros, type WorkbenchSeed } from '../../node-kit'
 
@@ -155,7 +156,13 @@ export default function NetworkPage() {
   }
 
   const handleDoubleClick = (id: string) => {
-    // L0: dive into the project; L1: leaf, just operate it
+    // L0: dive into the project; L1: leaf, just operate it. The ODP system
+    // node (issue 07) is a singleton leaf like an L1 node even at L0 — it has
+    // no per-source subnet to dive into, so double-click just selects it.
+    if (id === ODP_NODE_ID) {
+      handleSelect(id)
+      return
+    }
     if (!divedSourceId) {
       setDivePath([id])
       setSelectedNodeId(null)
@@ -402,9 +409,12 @@ function NodeInspector({
   )
 }
 
-// ── L0: one project node per source, laid in a grid ─────────────────────────
+// ── L0: one project node per source, laid in a grid, plus the singleton ODP
+// system node (issue 07) — the shared data plane isn't a source, so it is
+// planted at a fixed slot after the source grid rather than folded into the
+// per-source loop. Always exactly one instance regardless of source count.
 function projectFlowNodes(input: TopologyInput): TopologyFlowNode[] {
-  return input.sources.map((source, index) => {
+  const sourceNodes = input.sources.map((source, index): TopologyFlowNode => {
     const schedules = (input.schedules ?? []).filter((s) => s.source_id === source.id)
     const tasks = input.tasks.filter((t) => t.source_id === source.id)
     const records = input.records.filter((r) => r.source_id === source.id)
@@ -441,6 +451,17 @@ function projectFlowNodes(input: TopologyInput): TopologyFlowNode[] {
       },
     }
   })
+
+  const rowsUsed = Math.ceil(input.sources.length / PROJECT_COLS) || 1
+  const odpNode = odpSystemGraphNode(0)
+  const odpFlowNode: TopologyFlowNode = {
+    id: odpNode.id,
+    type: 'topologyNode',
+    position: { x: 0, y: rowsUsed * PROJECT_ROW_GAP },
+    data: odpNode.data,
+  }
+
+  return [...sourceNodes, odpFlowNode]
 }
 
 function projectHealth(enabled: boolean, tasks: CollectionTask[]): TopologyHealth {

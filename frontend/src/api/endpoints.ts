@@ -7,6 +7,7 @@ import type {
   ChromeEndpoint,
   CollectedRecord,
   CollectionTask,
+  ControlActionRecord,
   CronSchedule,
   DataSource,
   DashboardActivity,
@@ -16,6 +17,7 @@ import type {
   NodeStats,
   NotificationLog,
   NotificationRule,
+  OdpSystemState,
   Skill,
   SourceControlState,
   SystemConfig,
@@ -69,6 +71,24 @@ export const deleteSourceCredential = (id: string, keyName: string) =>
 // "healthy". No websocket in v0 — TanStack Query refetchInterval only.
 export const getSourceControlState = (id: string) =>
   apiClient.get<ApiResponse<SourceControlState>>(`/sources/${id}/control-state`).then((r) => r.data.data)
+
+// ── Control (issue 07 — topology ODP node + action history) ────────────────────
+// System-level ODP data-plane snapshot: no source_id, singleton. Same
+// "never fake healthy" contract as control-state — each section degrades to
+// `available: false` independently rather than the whole endpoint erroring.
+export const getOdpState = () =>
+  apiClient.get<ApiResponse<OdpSystemState>>('/control/odp-state').then((r) => r.data.data)
+
+// Row-level Evidence Ledger listing (control_actions) — the operator's audit
+// surface over every suggestion/execution the controller has ever produced.
+// Read-only; paginated like every other list endpoint.
+export const listControlActions = (params?: {
+  source_id?: string
+  mode?: string
+  outcome?: string
+  page?: number
+  limit?: number
+}) => apiClient.get<ApiResponse<ControlActionRecord[]>>('/control/actions', { params }).then((r) => r.data)
 
 // ── Tasks ──────────────────────────────────────────────────────────────────────
 export const listTasks = (params?: {

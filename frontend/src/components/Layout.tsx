@@ -23,6 +23,7 @@ import {
   SlidersHorizontal,
   Blocks,
   Sparkles,
+  History,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { getDashboardStats } from '../api/endpoints'
@@ -47,6 +48,7 @@ const ROUTE_LABEL_KEYS: Record<string, string> = {
   '/providers': 'nav.providers',
   '/agents': 'nav.agents',
   '/skills': 'nav.skills',
+  '/control/actions': 'nav.actionHistory',
   '/settings': 'nav.settings',
 }
 
@@ -140,9 +142,10 @@ export default function Layout() {
   const INFRA_GROUP: NavGroup = {
     label: '基础设施',
     items: [
-      { to: '/nodes',     label: t('nav.browsers'),  icon: Chrome },
-      { to: '/workers',   label: t('nav.workers'),   icon: Server },
-      { to: '/providers', label: t('nav.providers'), icon: KeyRound },
+      { to: '/nodes',           label: t('nav.browsers'),      icon: Chrome },
+      { to: '/workers',         label: t('nav.workers'),       icon: Server },
+      { to: '/providers',       label: t('nav.providers'),     icon: KeyRound },
+      { to: '/control/actions', label: t('nav.actionHistory'), icon: History },
     ],
   }
 

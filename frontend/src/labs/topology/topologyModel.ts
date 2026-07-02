@@ -21,6 +21,8 @@ export type TopologyKind =
   | 'notification'
   | 'edge-node'
   | 'worker'
+  // Singleton system node (issue 07) — the shared ODP data plane, not per-entity.
+  | 'odp-system'
 
 export type TopologyHealth =
   | 'healthy'
@@ -141,6 +143,10 @@ const KIND_COLUMN: Record<TopologyKind, number> = {
   notification: 5,
   'edge-node': 6,
   worker: 6,
+  // buildTopologyGraph never emits this kind itself (NetworkPage plants the
+  // singleton ODP node directly in its L0 grid) — column value is unused but
+  // required for Record<TopologyKind, number> exhaustiveness.
+  'odp-system': 7,
 }
 
 function t(key: string, defaultValue: string, options: Record<string, unknown> = {}) {

@@ -17,6 +17,7 @@ const en: Translations = {
   notifications: 'Notifications',
   workers: 'Workers',
   browsers: 'Nodes',
+  actionHistory: 'Action History',
   settings: 'Settings',
   collapse: 'Collapse',
   dark: 'Dark',

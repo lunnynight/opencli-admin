@@ -15,6 +15,7 @@ const zh = {
   notifications: '通知',
   workers: '工作节点',
   browsers: '采集节点',
+  actionHistory: '操作历史',
   settings: '设置',
   collapse: '收起',
   dark: '深色',

@@ -17,6 +17,7 @@ const SkillsPage = lazy(() => import('./pages/SkillsPage'))
 const SkillDetailPage = lazy(() => import('./pages/SkillDetailPage'))
 const ProvidersPage = lazy(() => import('./pages/ProvidersPage'))
 const NodesPage = lazy(() => import('./pages/NodesPage'))
+const ActionHistoryPage = lazy(() => import('./pages/ActionHistoryPage'))
 const TopologyPage = lazy(() => import('./labs/topology/TopologyPage'))
 const NetworkPage = lazy(() => import('./labs/topology/NetworkPage'))
 const NodeKitPage = lazy(() => import('./labs/topology/NodeKitPage'))
@@ -96,6 +97,7 @@ export default function App() {
           <Route path="providers" element={<LazyRoute><ProvidersPage /></LazyRoute>} />
           <Route path="browsers" element={<Navigate to="/nodes" replace />} />
           <Route path="nodes" element={<LazyRoute><NodesPage /></LazyRoute>} />
+          <Route path="control/actions" element={<LazyRoute><ActionHistoryPage /></LazyRoute>} />
         </Route>
       </Routes>
     </BrowserRouter>

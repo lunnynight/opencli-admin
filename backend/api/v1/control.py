@@ -19,7 +19,9 @@ the thing it's monitoring is unhealthy defeats the point of having it.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,11 +29,12 @@ from backend.control.collectors import odp_metrics
 from backend.control.outcomes import evaluate_pending_outcomes
 from backend.database import get_db
 from backend.models.control_action import ControlActionRecord
-from backend.schemas.common import ApiResponse
+from backend.schemas.common import ApiResponse, PaginationMeta
 from backend.schemas.control import (
     AdvisoryReportBucketRead,
     AdvisoryReportRead,
     AdvisoryReportTotalsRead,
+    ControlActionRecordRead,
     OutcomeEvaluationRead,
 )
 from backend.schemas.odp_state import (
@@ -42,6 +45,7 @@ from backend.schemas.odp_state import (
     StoreHealth,
     StreamGroupState,
 )
+from backend.services import control_ledger_service
 
 router = APIRouter(prefix="/control", tags=["control"])
 
@@ -167,3 +171,36 @@ async def trigger_outcome_evaluation(db: AsyncSession = Depends(get_db)) -> ApiR
     """
     counts = await evaluate_pending_outcomes(db)
     return ApiResponse.ok(OutcomeEvaluationRead(**counts))
+
+
+@router.get("/actions", response_model=ApiResponse[list[ControlActionRecordRead]])
+async def list_control_actions(
+    source_id: Optional[str] = None,
+    mode: Optional[str] = None,
+    outcome: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse:
+    """Row-level Evidence Ledger listing (issue 07 — action history view).
+
+    The operator's audit surface over everything the controller has ever
+    suggested or done: filter by source/mode/outcome, paginate like every
+    other list endpoint (see backend/services/record_service.py). Read-only
+    — nothing here writes to control_actions or evaluates pending outcomes
+    (that stays the advisory-report's and outcomes/evaluate's job so this
+    endpoint's GET semantics stay a pure read, matching the control-state
+    zero-mutation guarantee).
+
+    ``outcome=pending`` selects rows not yet judged (``evaluated_at is
+    null``) since "pending" is never a stored ``outcome`` value.
+    """
+    rows, total = await control_ledger_service.list_control_actions(
+        db, source_id=source_id, mode=mode, outcome=outcome, page=page, limit=limit
+    )
+    return ApiResponse.ok(
+        data=[ControlActionRecordRead.model_validate(r) for r in rows],
+        meta=PaginationMeta(
+            total=total, page=page, limit=limit, pages=max(1, -(-total // limit))
+        ),
+    )

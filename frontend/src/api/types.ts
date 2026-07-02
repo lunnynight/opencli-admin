@@ -391,3 +391,79 @@ export interface SourceControlState {
   suggested_actions?: SuggestedControlAction[]
   control_mode?: ControlMode | null
 }
+
+// ── ODP system-level state (issue 07 — GET /control/odp-state) ───────────────
+// Distinct from SourceSystemContext (the evaluator's folded-in per-source
+// view): this is the raw system snapshot the topology ODP node renders.
+// Every section carries its own `available` flag (+ optional `error`) so a
+// down Redis/odp-ingest degrades that section to unavailable, never a
+// fabricated healthy zero — mirrors backend/schemas/odp_state.py exactly.
+export interface OdpIngestHealth {
+  available: boolean
+  healthy: boolean | null
+  error?: string | null
+}
+
+export interface OdpStreamGroupState {
+  available: boolean
+  name: string
+  group: string
+  lag: number | null
+  pending: number | null
+  oldest_pending_idle_ms: number | null
+  error?: string | null
+}
+
+export interface OdpDlqSummary {
+  available: boolean
+  total: number | null
+  last_24h: number | null
+  error?: string | null
+}
+
+export interface OdpStoreHealth {
+  available: boolean
+  healthy: boolean | null
+  heartbeat_age_seconds: number | null
+  note: string
+}
+
+export interface OdpOutboxState {
+  available: boolean
+  unpublished: number | null
+  note: string
+}
+
+export interface OdpSystemState {
+  ingest: OdpIngestHealth
+  stream: OdpStreamGroupState
+  dlq: OdpDlqSummary
+  store: OdpStoreHealth
+  outbox: OdpOutboxState
+  collected_at: string
+}
+
+// ── Evidence Ledger row (issue 07 — GET /control/actions) ────────────────────
+// Row-level control_actions listing — mirrors backend/schemas/control.py's
+// ControlActionRecordRead. `outcome`/`evaluated_at` are null until
+// backend.control.outcomes judges the row ("pending" is the absence of a
+// value, not a stored verdict — see the ?outcome=pending query convention).
+export type ControlActionOutcome = 'recovered' | 'persisted' | 'insufficient_data'
+
+export interface ControlActionRecord {
+  id: string
+  source_id: string
+  run_id: string | null
+  measurement_id: string | null
+  mode: ControlMode
+  state: string
+  action_type: string
+  reason: string | null
+  payload: Record<string, unknown>
+  executed: boolean
+  evaluated_at: string | null
+  outcome: ControlActionOutcome | null
+  outcome_detail: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
