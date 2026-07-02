@@ -270,3 +270,71 @@ export interface DailyActivity {
 export interface DashboardActivity {
   daily: DailyActivity[]
 }
+
+// ── Control-state (C0 Control Room v0 — docs/CONTROL_THEORY_ARCHITECTURE.md §0) ─
+// Read-only sensor-honesty view of a source: GET /sources/{id}/control-state.
+// `measurement`/`control_state`/`confidence`/`sensor_coverage` are all null when
+// the source has never run. The point of this shape is that an incomplete
+// sensor system can never present as a confident "healthy" — see confidence +
+// missing_signals, which the UI must render prominently, not as an afterthought.
+export interface SourceMeasurement {
+  source_id: string
+  run_id: string
+  accepted: number
+  duplicates: number
+  rejected: number
+  fetch_latency_ms: number
+  ingest_latency_ms?: number | null
+  store_latency_ms?: number | null
+  error_rate: number
+  duplicate_rate: number
+  freshness_lag_seconds?: number | null
+  cursor_advanced: boolean
+  odp_stream_lag?: number | null
+  odp_pending?: number | null
+  dlq_count: number
+  observed_at: string
+}
+
+export type SourceControlStateValue =
+  | 'healthy'
+  | 'degraded'
+  | 'backpressured'
+  | 'rate_limited'
+  | 'auth_failed'
+  | 'schema_drift'
+  | 'paused'
+  | 'dead'
+  | 'unknown'
+
+export type SensorConfidence = 'high' | 'medium' | 'low'
+
+// Which sensor signals behind control_state are real vs. still a placeholder —
+// see backend.control.coverage. `run` is true whenever a measurement exists;
+// the other four are only true once that specific signal is actually wired up.
+export interface SensorCoverage {
+  run: boolean
+  cursor: boolean
+  freshness: boolean
+  error_kinds: boolean
+  odp: boolean
+}
+
+export interface SourceObjective {
+  max_error_rate: number
+  max_duplicate_rate: number
+  max_freshness_lag_seconds?: number | null
+  max_run_latency_ms: number
+  max_pending: number
+  min_accepted_per_run?: number | null
+}
+
+export interface SourceControlState {
+  source_id: string
+  measurement: SourceMeasurement | null
+  control_state: SourceControlStateValue | null
+  objective: SourceObjective
+  confidence: SensorConfidence | null
+  sensor_coverage: SensorCoverage | null
+  missing_signals: string[]
+}

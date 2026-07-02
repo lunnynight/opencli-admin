@@ -17,6 +17,7 @@ import type {
   NotificationLog,
   NotificationRule,
   Skill,
+  SourceControlState,
   SystemConfig,
   TaskRun,
   TaskRunEvent,
@@ -61,6 +62,13 @@ export const storeSourceCredential = (id: string, data: { key_name: string; secr
 
 export const deleteSourceCredential = (id: string, keyName: string) =>
   apiClient.delete<ApiResponse<null>>(`/sources/${id}/credentials/${keyName}`).then((r) => r.data)
+
+// Read-only sensor-honesty view (C0 Control Room v0) — poll this, don't infer
+// health from anything else. See SourceControlState: an incomplete-sensor
+// source reports confidence "low" / control_state "unknown", never a fake
+// "healthy". No websocket in v0 — TanStack Query refetchInterval only.
+export const getSourceControlState = (id: string) =>
+  apiClient.get<ApiResponse<SourceControlState>>(`/sources/${id}/control-state`).then((r) => r.data.data)
 
 // ── Tasks ──────────────────────────────────────────────────────────────────────
 export const listTasks = (params?: {

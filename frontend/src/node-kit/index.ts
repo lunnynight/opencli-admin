@@ -14,6 +14,8 @@ export type {
   ConfigSchema,
   ConfigValues,
   NodeRenderContext,
+  // C0 Control Room v0 — well-known facts.__control shape (docs/CONTROL_THEORY_ARCHITECTURE.md §0)
+  ControlFacts,
   // reserved execution surface
   NodeRunContext,
   EdgeValue,
@@ -52,6 +54,9 @@ export {
   NodeOpButton,
   NodeToggle,
   iconByName,
+  // C0 Control Room v0 — sensor-honesty atoms (docs/CONTROL_THEORY_ARCHITECTURE.md §0)
+  ControlBadge,
+  SensorCoverageBadge,
 } from './render/atoms'
 
 // atomic node library (real system functionality, nodified)

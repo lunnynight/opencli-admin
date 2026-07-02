@@ -10,6 +10,7 @@ import {
 import * as Icons from 'lucide-react'
 
 import type { FieldDef, PortDef } from '../spec'
+import type { SensorConfidence, SensorCoverage, SourceControlStateValue } from '../../api/types'
 
 /** Resolve a lucide icon by name ('database' -> Database). Falls back to Box. */
 export function iconByName(name?: string): LucideIcon {
@@ -169,6 +170,101 @@ export function NodeBadge({ children, tone = 'neutral' }: { children: ReactNode;
         ? 'border-red-400/35 bg-red-400/10 text-red-100'
         : 'border-white/10 bg-white/[0.04] text-zinc-300'
   return <span className={`rounded-sm border px-1.5 py-0.5 text-[10px] ${cls}`}>{children}</span>
+}
+
+// ── C0 Control Room v0 (docs/CONTROL_THEORY_ARCHITECTURE.md §0) ─────────────
+// "先让系统诚实" — these two atoms are the one place a node renders its control
+// state + sensor honesty, so every node type (source or otherwise) that wires
+// up control-state facts gets the same "never a fake healthy" visual for free.
+
+const CONTROL_STATE_LABEL: Record<SourceControlStateValue, string> = {
+  healthy: 'HEALTHY',
+  degraded: 'DEGRADED',
+  backpressured: 'BACKPRESSURED',
+  rate_limited: 'RATE LIMITED',
+  auth_failed: 'AUTH FAILED',
+  schema_drift: 'SCHEMA DRIFT',
+  paused: 'PAUSED',
+  dead: 'DEAD',
+  unknown: 'UNKNOWN',
+}
+
+const CONTROL_STATE_TONE: Record<SourceControlStateValue, 'neutral' | 'accent' | 'danger'> = {
+  healthy: 'accent',
+  degraded: 'danger',
+  backpressured: 'danger',
+  rate_limited: 'danger',
+  auth_failed: 'danger',
+  schema_drift: 'danger',
+  paused: 'neutral',
+  dead: 'danger',
+  unknown: 'neutral',
+}
+
+/** control_state + confidence, in one glance. HARD RULE: `healthy` only ever
+ *  renders green when confidence is not "low" — the backend evaluator already
+ *  refuses to emit a low-confidence HEALTHY (see backend.control.evaluator),
+ *  but this component enforces the same rule defensively on the render side,
+ *  so a stale/mocked/hand-built facts blob can never paint a fake-healthy dot
+ *  either. `control_state`/`confidence` null (source never ran) renders as a
+ *  neutral "no data" chip, not a green dot. */
+export function ControlBadge({
+  controlState,
+  confidence,
+}: {
+  controlState: SourceControlStateValue | null | undefined
+  confidence: SensorConfidence | null | undefined
+}) {
+  if (!controlState) {
+    return <NodeBadge tone="neutral">NO DATA</NodeBadge>
+  }
+  // Defensive: even if something upstream claims "healthy" with low confidence,
+  // never paint it as a trustworthy green — render it as UNKNOWN instead.
+  const effective: SourceControlStateValue =
+    controlState === 'healthy' && confidence === 'low' ? 'unknown' : controlState
+  const label = CONTROL_STATE_LABEL[effective]
+  const tone = CONTROL_STATE_TONE[effective]
+  const dotClass =
+    effective === 'healthy'
+      ? 'bg-emerald-400'
+      : effective === 'unknown' || effective === 'paused'
+        ? 'bg-zinc-500'
+        : 'bg-red-400'
+  return (
+    <NodeBadge tone={tone}>
+      <span className="inline-flex items-center gap-1">
+        <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
+        {label}
+        {confidence && confidence !== 'high' && (
+          <span className="text-[9px] opacity-70">· {confidence}</span>
+        )}
+      </span>
+    </NodeBadge>
+  )
+}
+
+/** Which sensor signals are real vs. placeholder, spelled out — the whole
+ *  point of C0 is that this can't be buried in a tooltip. Renders nothing when
+ *  coverage is null (source never ran: no measurement, nothing to show) and a
+ *  reassuring "full coverage" chip when nothing is missing, so the absence of
+ *  a warning is a deliberate state, not silence. */
+export function SensorCoverageBadge({
+  coverage,
+  missingSignals,
+}: {
+  coverage: SensorCoverage | null | undefined
+  missingSignals: string[] | null | undefined
+}) {
+  if (!coverage) return null
+  const missing = missingSignals ?? []
+  if (missing.length === 0) {
+    return <NodeBadge tone="accent">sensors: full coverage</NodeBadge>
+  }
+  return (
+    <NodeBadge tone="danger">
+      partial sensors · missing {missing.join(', ')}
+    </NodeBadge>
+  )
 }
 
 export function NodeOpButton({

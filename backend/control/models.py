@@ -26,6 +26,11 @@ class SourceControlState(str, Enum):
     SCHEMA_DRIFT = "schema_drift"
     PAUSED = "paused"
     DEAD = "dead"
+    # C0 (Control Room v0, docs/CONTROL_THEORY_ARCHITECTURE.md §0): reported
+    # instead of HEALTHY when sensor_coverage is incomplete enough that a
+    # confident "healthy" would be a lie. See backend.control.evaluator for the
+    # exact gate. Not a plant failure mode — an admission that we cannot see.
+    UNKNOWN = "unknown"
 
 
 class ControlAction(BaseModel):

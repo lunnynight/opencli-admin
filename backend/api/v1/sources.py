@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.manager import AuthManager
 from backend.control import aggregation, evaluator
+from backend.control.coverage import compute_sensor_coverage, derive_confidence, missing_signals
 from backend.control.objectives import SourceObjective
 from backend.database import get_db
 from backend.schemas.common import ApiResponse, PaginationMeta
@@ -180,7 +181,7 @@ async def delete_source_credential(
 async def get_source_control_state(
     source_id: str, db: AsyncSession = Depends(get_db)
 ) -> ApiResponse:
-    """Read-only control view of a source (PR-Control-2).
+    """Read-only control view of a source (PR-Control-2 + C0 Control Room v0).
 
     Aggregates the source's latest run evidence into a ``SourceMeasurement`` and
     derives a provisional ``SourceControlState`` from it (see
@@ -188,9 +189,17 @@ async def get_source_control_state(
     evaluator/policies engine). This endpoint exposes sensor readings only; it
     performs no writes and does not affect collection/pipeline/runner behavior.
 
-    ``measurement``/``control_state`` are null when the source has never run.
-    The ``objective`` is the ``SourceObjective`` defaults for now — per-source
-    objective overrides are not stored yet (future work).
+    ``measurement``/``control_state``/``confidence``/``sensor_coverage`` are
+    null when the source has never run — there is no measurement to derive
+    coverage from. The ``objective`` is the ``SourceObjective`` defaults for
+    now — per-source objective overrides are not stored yet (future work).
+
+    C0: ``confidence`` + ``sensor_coverage`` + ``missing_signals`` make the
+    sensor gaps behind ``control_state`` visible (see
+    ``backend.control.coverage``), and ``evaluator.evaluate`` never returns a
+    confident HEALTHY when coverage confidence is "low" — it returns UNKNOWN
+    instead. This endpoint adds no new sensors; it only classifies the same
+    measurement it already aggregates.
     """
     source = await source_service.get_source(db, source_id)
     if not source:
@@ -198,9 +207,16 @@ async def get_source_control_state(
 
     objective = SourceObjective()
     measurement = await aggregation.build_measurement(db, source_id)
-    control_state = (
-        evaluator.evaluate(measurement, objective) if measurement is not None else None
-    )
+
+    control_state = None
+    confidence = None
+    coverage = None
+    missing: list[str] = []
+    if measurement is not None:
+        control_state = evaluator.evaluate(measurement, objective)
+        coverage = compute_sensor_coverage(measurement)
+        confidence = derive_confidence(coverage)
+        missing = missing_signals(coverage)
 
     return ApiResponse.ok(
         SourceControlStateRead(
@@ -208,5 +224,8 @@ async def get_source_control_state(
             measurement=measurement,
             control_state=control_state,
             objective=objective,
+            confidence=confidence,
+            sensor_coverage=coverage,
+            missing_signals=missing,
         )
     )

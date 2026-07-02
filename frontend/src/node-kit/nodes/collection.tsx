@@ -11,6 +11,7 @@ import type { ReactNode } from 'react'
 import { defineNode } from '../define'
 import type { NodeRenderContext, NodeSpec } from '../spec'
 import { NodeBadge, NodeField } from '../render/atoms'
+import { SourceControlStrip } from '../render/controlState'
 import {
   deleteRecord,
   testSourceConnectivity,
@@ -53,6 +54,20 @@ function StageBody(ctx: NodeRenderContext): ReactNode {
 // ── entity-id helpers (carried on config by the host) ────────────────────────
 const entityId = (ctx: NodeRenderContext) => String(ctx.config.__entityId ?? '')
 
+// C0 (Control Room v0, docs/CONTROL_THEORY_ARCHITECTURE.md §0): collection.source
+// is the node type ReactFlowTopologyCanvas actually renders for a data source
+// (stageConfig stamps config.__entityId = the real source id) — reuse the same
+// StageBody plus SourceControlStrip so this canvas gets the "never a fake
+// healthy" guarantee too, not just the node-kit workbench's source.* atoms.
+function SourceStageBody(ctx: NodeRenderContext): ReactNode {
+  return (
+    <>
+      {StageBody(ctx)}
+      <SourceControlStrip sourceId={entityId(ctx)} />
+    </>
+  )
+}
+
 // ── specs ────────────────────────────────────────────────────────────────────
 const source = defineNode({
   type: 'collection.source',
@@ -77,7 +92,7 @@ const source = defineNode({
       { key: 'tags', type: 'json', label: '标签' },
     ],
   },
-  render: StageBody,
+  render: SourceStageBody,
   ops: [
     {
       id: 'toggle',

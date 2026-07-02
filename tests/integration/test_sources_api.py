@@ -254,6 +254,10 @@ async def test_control_state_source_never_ran(client, sample_source_data):
     assert data["source_id"] == source_id
     assert data["measurement"] is None
     assert data["control_state"] is None
+    # C0: no measurement -> no coverage/confidence to compute either.
+    assert data["confidence"] is None
+    assert data["sensor_coverage"] is None
+    assert data["missing_signals"] == []
     # objective defaults are always present
     assert data["objective"]["max_error_rate"] == 0.05
     assert data["objective"]["max_pending"] == 1000
@@ -261,7 +265,10 @@ async def test_control_state_source_never_ran(client, sample_source_data):
 
 @pytest.mark.asyncio
 async def test_control_state_with_run_evidence(client, db_session, sample_source_data):
-    """A healthy completed run yields a populated measurement + HEALTHY state.
+    """A clean completed run yields a populated measurement — but C0 (Control
+    Room v0) means it must NOT render as a confident HEALTHY: odp/error_kinds
+    are not wired up yet (aggregation.py leaves them None/unrecorded), so
+    coverage confidence is "low" and control_state is UNKNOWN, not healthy.
 
     The client fixture and db_session share the same injected session, so
     evidence inserted here is visible to the endpoint's aggregation query.
@@ -301,8 +308,18 @@ async def test_control_state_with_run_evidence(client, db_session, sample_source
     assert data["measurement"]["accepted"] == 9
     assert data["measurement"]["duplicates"] == 1
     assert data["measurement"]["rejected"] == 0  # 10 - 9 - 1
-    # error_rate = 0/10 = 0.0 -> HEALTHY
-    assert data["control_state"] == "healthy"
+    # error_rate = 0/10 = 0.0 -> would be HEALTHY pre-C0, but odp + error_kinds
+    # coverage is missing today -> gated to UNKNOWN, never a fake "healthy".
+    assert data["control_state"] == "unknown"
+    assert data["confidence"] == "low"
+    assert data["sensor_coverage"] == {
+        "run": True,
+        "cursor": False,
+        "freshness": False,
+        "error_kinds": False,
+        "odp": False,
+    }
+    assert set(data["missing_signals"]) == {"cursor", "freshness", "error_kinds", "odp"}
 
 
 @pytest.mark.asyncio
@@ -340,4 +357,8 @@ async def test_control_state_degraded_when_errors(client, db_session, sample_sou
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["measurement"]["rejected"] == 9
+    # DEGRADED is positive evidence (an observed error_rate over setpoint) —
+    # C0's honesty gate only remaps HEALTHY, never downgrades a real problem.
     assert data["control_state"] == "degraded"
+    assert data["confidence"] == "low"
+    assert "odp" in data["missing_signals"]

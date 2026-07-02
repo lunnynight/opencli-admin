@@ -30,6 +30,7 @@ class TestSourceControlState:
             "SCHEMA_DRIFT",
             "PAUSED",
             "DEAD",
+            "UNKNOWN",
         }
         assert {m.name for m in SourceControlState} == expected
 
