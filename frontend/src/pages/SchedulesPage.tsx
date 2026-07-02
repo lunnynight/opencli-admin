@@ -12,6 +12,7 @@ import PageHeader from '../components/PageHeader'
 import { Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
 import { SITE_LABELS } from '../components/ChannelConfigForm'
 import { formatInTimeZone } from 'date-fns-tz'
+import { Button } from '../components/ui/button'
 
 /** Derive noVNC port from CDP URL using chrome-N hostname convention. */
 function chromeNovncPort(cdpUrl: string, basePort = 3010): number {
@@ -96,8 +97,8 @@ const DEFAULT_FIELDS: CronFields = {
 function CronBuilder({ fields, onChange }: { fields: CronFields; onChange: (f: CronFields) => void }) {
   const set = (patch: Partial<CronFields>) => onChange({ ...fields, ...patch })
 
-  const inputCls = 'border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-  const labelSm = 'text-xs text-gray-500 dark:text-gray-400 mr-1'
+  const inputCls = 'border border-white/[0.08] rounded-lg px-2 py-1.5 text-sm bg-black/20 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-primary-500'
+  const labelSm = 'text-xs text-zinc-400 mr-1'
 
   return (
     <div className="space-y-3">
@@ -110,8 +111,8 @@ function CronBuilder({ fields, onChange }: { fields: CronFields; onChange: (f: C
             onClick={() => set({ freq: value })}
             className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
               fields.freq === value
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                ? 'bg-primary-500 text-white'
+                : 'bg-white/[0.06] text-zinc-300 hover:bg-white/[0.1]'
             }`}
           >
             {label}
@@ -130,7 +131,7 @@ function CronBuilder({ fields, onChange }: { fields: CronFields; onChange: (f: C
               onChange={(e) => set({ datetime: e.target.value })}
               onClick={(e) => (e.currentTarget as HTMLInputElement).showPicker?.()}
             />
-            <p className="text-xs text-amber-600 dark:text-amber-400">执行完成后自动禁用</p>
+            <p className="text-xs text-amber-400">执行完成后自动禁用</p>
           </div>
         )}
         {fields.freq === 'minutely' && (
@@ -198,9 +199,9 @@ function CronBuilder({ fields, onChange }: { fields: CronFields; onChange: (f: C
       </div>
 
       {/* Cron preview */}
-      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+      <div className="flex items-center gap-2 text-xs text-zinc-400">
         <span>Cron:</span>
-        <code className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded font-mono text-gray-700 dark:text-gray-300">
+        <code className="px-2 py-0.5 border border-white/[0.1] bg-black/40 font-code rounded font-mono text-zinc-300">
           {buildCron(fields)}
         </code>
       </div>
@@ -286,8 +287,8 @@ function AddScheduleModal({
     }
   }, [chromeEndpoints, bindingsData, sourceId])
 
-  const inputCls = 'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-  const labelCls = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'
+  const inputCls = 'w-full border border-white/[0.08] rounded-lg px-3 py-2 text-sm bg-black/20 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-primary-500'
+  const labelCls = 'block text-sm font-medium text-zinc-300 mb-1'
 
   const handleSave = () => {
     onSave({
@@ -303,9 +304,9 @@ function AddScheduleModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-2xl">
-        <div className="p-6 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-lg font-semibold dark:text-white">{t('schedules.addScheduleTitle')}</h2>
+      <div className="border border-white/[0.08] bg-black/20 shadow-xl w-full max-w-2xl">
+        <div className="p-6 border-b border-white/[0.06]">
+          <h2 className="text-lg font-semibold text-zinc-100">{t('schedules.addScheduleTitle')}</h2>
         </div>
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[75vh]">
@@ -338,7 +339,7 @@ function AddScheduleModal({
           {/* Cron builder */}
           <div>
             <label className={labelCls}>执行频率</label>
-            <div className="border border-gray-200 dark:border-gray-600 rounded-lg p-3 bg-gray-50 dark:bg-gray-900/40">
+            <div className="border border-white/[0.08] rounded-lg p-3 bg-black/20">
               <CronBuilder fields={cronFields} onChange={setCronFields} />
             </div>
           </div>
@@ -370,7 +371,7 @@ function AddScheduleModal({
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <label className={labelCls} style={{ marginBottom: 0 }}>采集节点</label>
-                <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">Agent 模式</span>
+                <span className="px-1.5 py-0.5 rounded text-xs font-medium border border-violet-500/40 bg-violet-500/10 text-violet-300">Agent 模式</span>
               </div>
               <div className="space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer py-1">
@@ -380,9 +381,9 @@ function AddScheduleModal({
                     value=""
                     checked={chromeEndpoint === ''}
                     onChange={() => setChromeEndpoint('')}
-                    className="accent-blue-600 shrink-0"
+                    className="accent-primary-500 shrink-0"
                   />
-                  <span className="text-sm text-gray-600 dark:text-gray-300">自动分配</span>
+                  <span className="text-sm text-zinc-300">自动分配</span>
                 </label>
                 {agentEndpoints.map((ep) => {
                   const isWs = ep.agent_protocol === 'ws'
@@ -393,8 +394,8 @@ function AddScheduleModal({
                       key={ep.url}
                       className={`flex gap-3 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors ${
                         chromeEndpoint === ep.url
-                          ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-500'
-                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                          ? 'border-primary-500/70 bg-primary-500/10'
+                          : 'border-white/[0.08] hover:border-white/[0.16]'
                       }`}
                     >
                       <input
@@ -403,11 +404,11 @@ function AddScheduleModal({
                         value={ep.url}
                         checked={chromeEndpoint === ep.url}
                         onChange={() => setChromeEndpoint(ep.url)}
-                        className="accent-blue-600 shrink-0 mt-0.5"
+                        className="accent-primary-500 shrink-0 mt-0.5"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-sm font-medium font-mono ${isConnected ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400'}`}>
+                          <span className={`text-sm font-medium font-mono ${isConnected ? 'text-zinc-100' : 'text-zinc-500'}`}>
                             {label}
                           </span>
                           <span className={`text-xs ${isConnected ? 'text-green-500' : 'text-red-400'}`}>
@@ -415,8 +416,8 @@ function AddScheduleModal({
                           </span>
                           <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
                             isWs
-                              ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300'
-                              : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                              ? 'border border-violet-500/40 bg-violet-500/10 text-violet-300'
+                              : 'border border-primary-500/40 bg-primary-500/10 text-primary-300'
                           }`}>
                             {isWs ? 'WS' : 'HTTP'}
                           </span>
@@ -426,7 +427,7 @@ function AddScheduleModal({
                   )
                 })}
               </div>
-              <p className="mt-1 text-xs text-gray-400">{t('channelConfig.chromeEndpointHint')}</p>
+              <p className="mt-1 text-xs text-zinc-500">{t('channelConfig.chromeEndpointHint')}</p>
             </div>
           )}
 
@@ -434,7 +435,7 @@ function AddScheduleModal({
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <label className={labelCls} style={{ marginBottom: 0 }}>{t('channelConfig.chromeEndpoint')}</label>
-                <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">本地模式</span>
+                <span className="px-1.5 py-0.5 rounded text-xs font-medium border border-primary-500/40 bg-primary-500/10 text-primary-300">本地模式</span>
               </div>
               <div className="space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer py-1">
@@ -444,9 +445,9 @@ function AddScheduleModal({
                     value=""
                     checked={chromeEndpoint === ''}
                     onChange={() => setChromeEndpoint('')}
-                    className="accent-blue-600 shrink-0"
+                    className="accent-primary-500 shrink-0"
                   />
-                  <span className="text-sm text-gray-600 dark:text-gray-300">{t('channelConfig.chromeEndpointAny')}</span>
+                  <span className="text-sm text-zinc-300">{t('channelConfig.chromeEndpointAny')}</span>
                 </label>
                 {chromeEndpoints.map((ep) => {
                   const novncPort = ep.novnc_port ?? chromeNovncPort(ep.url)
@@ -458,8 +459,8 @@ function AddScheduleModal({
                       key={ep.url}
                       className={`flex gap-3 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors ${
                         chromeEndpoint === ep.url
-                          ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-500'
-                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                          ? 'border-primary-500/70 bg-primary-500/10'
+                          : 'border-white/[0.08] hover:border-white/[0.16]'
                       }`}
                     >
                       <input
@@ -468,35 +469,35 @@ function AddScheduleModal({
                         value={ep.url}
                         checked={chromeEndpoint === ep.url}
                         onChange={() => setChromeEndpoint(ep.url)}
-                        className="accent-blue-600 shrink-0 mt-0.5"
+                        className="accent-primary-500 shrink-0 mt-0.5"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-sm font-medium ${ep.available ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400'}`}>
+                          <span className={`text-sm font-medium ${ep.available ? 'text-zinc-100' : 'text-zinc-500'}`}>
                             {label}
                           </span>
                           <span className={`text-xs ${ep.available ? 'text-green-500' : 'text-red-400'}`}>
                             {ep.available ? '● 在线' : '○ 离线'}
                           </span>
-                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${ep.mode === 'bridge' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${ep.mode === 'bridge' ? 'border border-primary-500/40 bg-primary-500/10 text-primary-300' : 'border border-amber-500/40 bg-amber-500/10 text-amber-300'}`}>
                             {ep.mode === 'bridge' ? 'Bridge' : 'CDP'}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                           {boundSites.map((site) => (
-                            <span key={site} className="px-1.5 py-0.5 rounded text-xs bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                            <span key={site} className="px-1.5 py-0.5 rounded text-xs border border-indigo-500/40 bg-indigo-500/10 text-indigo-300">
                               {SITE_LABELS[site] ?? site}
                             </span>
                           ))}
                           {boundSites.length === 0 && (
-                            <span className="text-xs text-gray-400">暂无绑定站点</span>
+                            <span className="text-xs text-zinc-500">暂无绑定站点</span>
                           )}
                           <a
                             href={novncUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="ml-auto text-xs text-blue-500 hover:underline font-mono shrink-0"
+                            className="ml-auto text-xs text-primary-400 hover:underline font-mono shrink-0"
                           >
                             noVNC ↗
                           </a>
@@ -506,22 +507,21 @@ function AddScheduleModal({
                   )
                 })}
               </div>
-              <p className="mt-1 text-xs text-gray-400">{t('channelConfig.chromeEndpointHint')}</p>
+              <p className="mt-1 text-xs text-zinc-500">{t('channelConfig.chromeEndpointHint')}</p>
             </div>
           )}
         </div>
 
-        <div className="p-6 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <div className="p-6 border-t border-white/[0.06] flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={handleSave}
             disabled={!sourceId || !name.trim()}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {t('common.create')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -580,10 +580,9 @@ export default function SchedulesPage() {
         title={t('schedules.title')}
         description={t('schedules.description')}
         action={
-          <button onClick={() => setShowAdd(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+          <Button onClick={() => setShowAdd(true)}>
             <Plus size={16} /> {t('schedules.addSchedule')}
-          </button>
+          </Button>
         }
       />
 
@@ -601,7 +600,7 @@ export default function SchedulesPage() {
               render: (s) => (
                 <div>
                   {sourceNameMap[s.source_id] && <p className="text-sm font-medium">{sourceNameMap[s.source_id]}</p>}
-                  <p className="font-mono text-xs text-gray-400">{s.source_id.slice(0, 8)}…</p>
+                  <p className="font-mono text-xs text-zinc-500">{s.source_id.slice(0, 8)}…</p>
                 </div>
               ),
             },
@@ -610,7 +609,7 @@ export default function SchedulesPage() {
               header: t('schedules.cronExpression'),
               width: '130px',
               render: (s) => (
-                <code className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
+                <code className="px-2 py-0.5 border border-white/[0.1] bg-black/40 font-code rounded text-xs font-mono">
                   {s.cron_expression}
                 </code>
               ),
@@ -621,7 +620,7 @@ export default function SchedulesPage() {
               header: t('schedules.lastRun'),
               width: '110px',
               render: (s) => (
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-zinc-500">
                   {s.last_run_at
                     ? formatInTimeZone(new Date(s.last_run_at), 'Asia/Shanghai', 'MM-dd HH:mm')
                     : '—'}
@@ -633,7 +632,7 @@ export default function SchedulesPage() {
               header: t('schedules.enabledCol'),
               width: '70px',
               render: (s) => (
-                <span className={`text-xs font-medium ${s.enabled ? 'text-green-600' : 'text-gray-400'}`}>
+                <span className={`text-xs font-medium ${s.enabled ? 'text-green-600' : 'text-zinc-500'}`}>
                   {s.enabled ? t('common.yes') : t('common.no')}
                 </span>
               ),
@@ -645,13 +644,13 @@ export default function SchedulesPage() {
               render: (s) => (
                 <div className="flex gap-1">
                   <button onClick={() => toggleMut.mutate({ id: s.id, enabled: !s.enabled })}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500">
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-white/[0.04] text-zinc-500">
                     {s.enabled ? <ToggleRight size={12} /> : <ToggleLeft size={12} />}
                     {s.enabled ? t('common.disable') : t('common.enable')}
                   </button>
                   <button
                     onClick={() => { if (confirm(t('schedules.confirmDelete', { name: s.name }))) deleteMut.mutate(s.id) }}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500">
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-red-500/10 text-red-500">
                     <Trash2 size={12} /> 删除
                   </button>
                 </div>

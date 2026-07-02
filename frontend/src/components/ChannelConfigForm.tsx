@@ -8,9 +8,9 @@ import { deleteSourceCredential, listProviders, listSkills, listSourceCredential
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const input =
-  'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-const label = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'
-const hint = 'mt-1 text-xs text-gray-400'
+  'w-full border border-white/[0.12] bg-black/40 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500/60'
+const label = 'block text-sm font-medium text-zinc-300 mb-1'
+const hint = 'mt-1 text-xs text-zinc-500'
 
 function formFieldName(seed: string | undefined, fallback: string) {
   const slug = (seed ?? '')
@@ -175,7 +175,7 @@ function KVList({
       <button
         type="button"
         onClick={() => onChange([...pairs, { key: '', value: '' }])}
-        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
+        className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 mt-1"
       >
         <Plus size={12} /> Add row
       </button>
@@ -286,7 +286,7 @@ function CredentialField({
         type="button"
         disabled={busy || !value}
         onClick={save}
-        className="px-3 py-2 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-40 flex-shrink-0"
+        className="px-3 py-2 text-xs border border-primary-500/70 bg-primary-500/20 text-primary-200 hover:bg-primary-500/30 disabled:opacity-40 flex-shrink-0"
       >
         存储
       </button>
@@ -425,7 +425,7 @@ function APIConfig({
           ]}
         />
       </Field>
-      {authType === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
+      {authType === 'cookie' && <p className="text-xs text-zinc-400">{t('channelConfig.authCookieHint')}</p>}
 
       {authType === 'bearer' && (
         <>
@@ -573,7 +573,7 @@ function WebScraperConfig({
           min={1}
         />
       </Field>
-      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
         <input
           type="checkbox"
           checked={auth.type === 'cookie'}
@@ -581,7 +581,7 @@ function WebScraperConfig({
         />
         {t('channelConfig.authCookie')}
       </label>
-      {auth.type === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
+      {auth.type === 'cookie' && <p className="text-xs text-zinc-400">{t('channelConfig.authCookieHint')}</p>}
     </div>
   )
 }
@@ -656,7 +656,7 @@ function Crawl4AIConfig({
 
       <div>
         <label className={label}>抽取方式</label>
-        <div className="flex gap-4 text-sm text-gray-700 dark:text-gray-300">
+        <div className="flex gap-4 text-sm text-zinc-300">
           <label className="flex items-center gap-1.5">
             <input type="radio" checked={mode === 'css'} onChange={() => setMode('css')} />
             CSS 选择器(零 AI 成本)
@@ -728,7 +728,7 @@ function Crawl4AIConfig({
           placeholder="css:.item"
         />
       </Field>
-      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
         <input
           type="checkbox"
           checked={auth.type === 'cookie'}
@@ -736,7 +736,7 @@ function Crawl4AIConfig({
         />
         {t('channelConfig.authCookie')}
       </label>
-      {auth.type === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
+      {auth.type === 'cookie' && <p className="text-xs text-zinc-400">{t('channelConfig.authCookieHint')}</p>}
     </div>
   )
 }
@@ -1069,7 +1069,7 @@ function ArgsKVList({
               </button>
             </div>
             {hintText && (
-              <p className="text-xs text-gray-400 ml-1">{hintText}</p>
+              <p className="text-xs text-zinc-400 ml-1">{hintText}</p>
             )}
           </div>
         )
@@ -1078,7 +1078,7 @@ function ArgsKVList({
         <select
           aria-label="添加参数"
           name="opencli-add-param"
-          className="text-xs text-blue-600 bg-transparent border-none cursor-pointer hover:text-blue-700 mt-1 outline-none"
+          className="text-xs text-primary-400 bg-transparent border-none cursor-pointer hover:text-primary-300 mt-1 outline-none"
           value=""
           onChange={(e) => { if (e.target.value) addParam(e.target.value) }}
         >
@@ -1094,7 +1094,7 @@ function ArgsKVList({
         <button
           type="button"
           onClick={() => addParam('__custom__')}
-          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
+          className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 mt-1"
         >
           <Plus size={12} /> 添加参数
         </button>
@@ -1196,7 +1196,7 @@ function OpenCLIConfig({
       )}
 
       {args.length === 0 && currentCommand && (
-        <p className="text-xs text-gray-400 italic">{t('channelConfig.noArgs')}</p>
+        <p className="text-xs text-zinc-400 italic">{t('channelConfig.noArgs')}</p>
       )}
 
       <Field label={t('channelConfig.outputFormat')}>
@@ -1392,7 +1392,7 @@ function SkillSourceConfig({
           placeholder="打开列表页并读取所有行"
         />
       </Field>
-      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
         <input
           type="checkbox"
           checked={Boolean(config.auto_confirm)}

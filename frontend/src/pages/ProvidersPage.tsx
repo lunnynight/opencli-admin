@@ -9,11 +9,12 @@ import ErrorAlert from '../components/ErrorAlert'
 import Card from '../components/Card'
 import DataTable from '../components/DataTable'
 import PageHeader from '../components/PageHeader'
+import { Button } from '../components/ui/button'
 import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, Eye, EyeOff } from 'lucide-react'
 
 const inputCls =
-  'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-const labelCls = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'
+  'w-full border border-white/[0.08] rounded-lg px-3 py-2 text-sm bg-black/20 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-primary-500'
+const labelCls = 'block text-sm font-medium text-zinc-300 mb-1'
 
 const PROVIDER_TYPE_OPTIONS = [
   { value: 'claude', label: 'Claude (Anthropic)' },
@@ -31,9 +32,9 @@ const PROVIDER_PRESETS: Record<string, { base_url: string; label: string }> = {
 }
 
 const PROCESSOR_COLORS: Record<string, string> = {
-  claude: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-  openai: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  local:  'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  claude: 'border border-violet-500/40 bg-violet-500/10 text-violet-300',
+  openai: 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+  local:  'border border-orange-500/40 bg-orange-500/10 text-orange-300',
 }
 
 function ProviderModal({
@@ -79,9 +80,9 @@ function ProviderModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg">
-        <div className="p-6 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-lg font-semibold dark:text-white">
+      <div className="telemetry-panel w-full max-w-lg">
+        <div className="p-6 border-b border-white/[0.06]">
+          <h2 className="text-lg font-semibold text-zinc-100">
             {isEdit ? t('providers.editTitle') : t('providers.addTitle')}
           </h2>
         </div>
@@ -97,7 +98,7 @@ function ProviderModal({
                     key={key}
                     type="button"
                     onClick={() => applyPreset(key)}
-                    className="px-2.5 py-1 text-xs rounded-full border border-blue-300 text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
+                    className="px-2.5 py-1 text-xs rounded-full border border-primary-500/40 text-primary-300 hover:bg-primary-500/10 transition-colors"
                   >
                     {p.label}
                   </button>
@@ -137,7 +138,7 @@ function ProviderModal({
           <div>
             <label className={labelCls}>
               Base URL
-              <span className="ml-1 text-gray-400 font-normal text-[11px]">（OpenAI 兼容接口地址）</span>
+              <span className="ml-1 text-zinc-500 font-normal text-[11px]">（OpenAI 兼容接口地址）</span>
             </label>
             <input
               className={inputCls}
@@ -161,7 +162,7 @@ function ProviderModal({
               <button
                 type="button"
                 onClick={() => setShowKey((v) => !v)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
               >
                 {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
@@ -191,20 +192,13 @@ function ProviderModal({
           </div>
         </div>
 
-        <div className="p-6 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
-          >
+        <div className="p-6 border-t border-white/[0.06] flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!name.trim()}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-          >
+          </Button>
+          <Button onClick={handleSave} disabled={!name.trim()}>
             {isEdit ? t('common.save') : t('common.create')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -256,12 +250,9 @@ export default function ProvidersPage() {
         title={t('providers.title')}
         description={t('providers.description')}
         action={
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
-          >
+          <Button onClick={() => setShowAdd(true)}>
             <Plus size={16} /> {t('providers.addProvider')}
-          </button>
+          </Button>
         }
       />
 
@@ -277,8 +268,8 @@ export default function ProvidersPage() {
               width: '200px',
               render: (p) => (
                 <div>
-                  <p className="font-medium dark:text-white">{p.name}</p>
-                  {p.notes && <p className="text-xs text-gray-400">{p.notes}</p>}
+                  <p className="font-medium text-zinc-100">{p.name}</p>
+                  {p.notes && <p className="text-xs text-zinc-500">{p.notes}</p>}
                 </div>
               ),
             },
@@ -287,7 +278,7 @@ export default function ProvidersPage() {
               header: t('providers.providerType'),
               width: '130px',
               render: (p) => (
-                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${PROCESSOR_COLORS[p.provider_type] ?? 'bg-gray-100 text-gray-700'}`}>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${PROCESSOR_COLORS[p.provider_type] ?? 'border border-white/[0.08] bg-black/20 text-zinc-300'}`}>
                   {p.provider_type}
                 </span>
               ),
@@ -296,7 +287,7 @@ export default function ProvidersPage() {
               key: 'base_url',
               header: 'Base URL',
               render: (p) => (
-                <span className="text-xs font-mono text-gray-500 dark:text-gray-400">
+                <span className="text-xs font-mono text-zinc-400">
                   {p.base_url ?? '—'}
                 </span>
               ),
@@ -306,7 +297,7 @@ export default function ProvidersPage() {
               header: t('providers.defaultModel'),
               width: '140px',
               render: (p) => (
-                <span className="text-xs font-mono text-gray-600 dark:text-gray-300">
+                <span className="text-xs font-mono text-zinc-300">
                   {p.default_model ?? '—'}
                 </span>
               ),
@@ -316,7 +307,7 @@ export default function ProvidersPage() {
               header: 'API Key',
               width: '100px',
               render: (p) => (
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-zinc-500">
                   {p.api_key ? '••••••••' : '—'}
                 </span>
               ),
@@ -326,7 +317,7 @@ export default function ProvidersPage() {
               header: t('common.status'),
               width: '70px',
               render: (p) => (
-                <span className={`text-xs font-medium ${p.enabled ? 'text-green-600' : 'text-gray-400'}`}>
+                <span className={`text-xs font-medium ${p.enabled ? 'text-emerald-400' : 'text-zinc-500'}`}>
                   {p.enabled ? t('common.enabled') : t('common.disabled')}
                 </span>
               ),
@@ -339,14 +330,14 @@ export default function ProvidersPage() {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => toggleMut.mutate({ id: p.id, enabled: !p.enabled })}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-white/[0.04] text-zinc-500"
                   >
                     {p.enabled ? <ToggleRight size={12} /> : <ToggleLeft size={12} />}
                     {p.enabled ? t('common.disable') : t('common.enable')}
                   </button>
                   <button
                     onClick={() => setEditProvider(p)}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-primary-500/10 text-primary-300"
                   >
                     <Pencil size={12} />
                   </button>
@@ -354,7 +345,7 @@ export default function ProvidersPage() {
                     onClick={() => {
                       if (confirm(t('providers.confirmDelete', { name: p.name }))) deleteMut.mutate(p.id)
                     }}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-red-500/10 text-red-400"
                   >
                     <Trash2 size={12} />
                   </button>

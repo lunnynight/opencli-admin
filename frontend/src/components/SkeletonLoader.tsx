@@ -8,7 +8,7 @@ export function TableSkeleton({ rows = 5 }: TableSkeletonProps) {
   return (
     <div className="w-full">
       {/* Header row */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06] bg-white/[0.03]">
         <Skeleton className="h-4 w-4 rounded" />
         <Skeleton className="h-4 w-16" />
         <Skeleton className="h-4 w-48" />
@@ -20,7 +20,7 @@ export function TableSkeleton({ rows = 5 }: TableSkeletonProps) {
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
-          className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 dark:border-gray-700/50"
+          className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]"
         >
           <Skeleton className="h-4 w-4 rounded" />
           <Skeleton className="h-4 w-16" />
@@ -44,7 +44,7 @@ export function CardSkeleton({ cards = 4 }: CardSkeletonProps) {
       {Array.from({ length: cards }).map((_, i) => (
         <div
           key={i}
-          className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 space-y-3"
+          className="rounded-xl border border-white/[0.08] bg-black/20 p-4 space-y-3"
         >
           <div className="flex items-center justify-between">
             <Skeleton className="h-5 w-24" />

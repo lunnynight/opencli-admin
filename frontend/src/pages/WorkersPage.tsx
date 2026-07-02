@@ -54,17 +54,17 @@ export default function WorkersPage() {
         <PageHeader title={t('workers.title')} description={t('workers.description')} />
         <Card>
           <div className="flex flex-col items-center py-10 text-center gap-4">
-            <div className="p-4 bg-gray-100 dark:bg-gray-700 rounded-full">
-              <Server size={32} className="text-gray-400" />
+            <div className="p-4 bg-white/[0.06] rounded-full">
+              <Server size={32} className="text-zinc-500" />
             </div>
             <div>
-              <p className="text-base font-medium text-gray-700 dark:text-gray-200">{t('workers.localModeTitle')}</p>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 max-w-sm">
+              <p className="text-base font-medium text-zinc-100">{t('workers.localModeTitle')}</p>
+              <p className="mt-1 text-sm text-zinc-400 max-w-sm">
                 {t('workers.localModeDescription')}{' '}
                 {t('workers.localModeHint')}{' '}
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">TASK_EXECUTOR</code>{' '}
+                <code className="border border-white/[0.1] bg-black/40 font-code px-1 py-0.5 rounded text-xs">TASK_EXECUTOR</code>{' '}
                 {t('workers.localModeSetTo')}{' '}
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">celery</code>
+                <code className="border border-white/[0.1] bg-black/40 font-code px-1 py-0.5 rounded text-xs">celery</code>
                 {t('workers.localModeSuffix')}
               </p>
             </div>
@@ -79,9 +79,9 @@ export default function WorkersPage() {
       <PageHeader title={t('workers.title')} description={t('workers.description')} />
 
       <Card className="mb-6">
-        <h2 className="font-semibold text-gray-900 dark:text-white mb-3">{t('workers.liveStats')}</h2>
+        <h2 className="font-semibold text-zinc-100 mb-3">{t('workers.liveStats')}</h2>
         {statsQ.isLoading ? (
-          <p className="text-sm text-gray-400">{t('workers.statsLoading')}</p>
+          <p className="text-sm text-zinc-400">{t('workers.statsLoading')}</p>
         ) : statsError ? (
           <div className="rounded-md border border-amber-500/25 bg-amber-500/10 p-4">
             <div className="flex items-start gap-3">
@@ -96,11 +96,11 @@ export default function WorkersPage() {
             </div>
           </div>
         ) : statsQ.data ? (
-          <pre className="text-xs bg-gray-50 dark:bg-gray-900 p-3 rounded-lg overflow-auto max-h-48">
+          <pre className="text-xs border border-white/[0.08] bg-black/40 font-code p-3 rounded-lg overflow-auto max-h-48">
             {JSON.stringify(statsQ.data, null, 2)}
           </pre>
         ) : (
-          <p className="text-sm text-gray-400">{t('workers.notReachable')}</p>
+          <p className="text-sm text-zinc-400">{t('workers.notReachable')}</p>
         )}
       </Card>
 
@@ -117,7 +117,7 @@ export default function WorkersPage() {
             columns={[
               {
                 key: 'id', header: t('common.id'), width: '100px',
-                render: (w) => <span className="font-mono text-xs text-gray-400">{w.id.slice(0, 8)}</span>,
+                render: (w) => <span className="font-mono text-xs text-zinc-500">{w.id.slice(0, 8)}</span>,
               },
               { key: 'worker_id', header: t('workers.workerId'), render: (w) => <code className="text-xs">{w.worker_id}</code> },
               { key: 'hostname', header: t('workers.host'), render: (w) => <span className="text-sm">{w.hostname}</span> },
@@ -127,7 +127,7 @@ export default function WorkersPage() {
                 key: 'heartbeat',
                 header: t('workers.lastHeartbeat'),
                 render: (w) => (
-                  <span className="text-xs text-gray-500">
+                  <span className="text-xs text-zinc-500">
                     {w.last_heartbeat
                       ? formatInTimeZone(new Date(w.last_heartbeat), 'Asia/Shanghai', 'MM-dd HH:mm:ss')
                       : '—'}

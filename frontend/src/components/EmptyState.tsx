@@ -13,22 +13,22 @@ export default function EmptyState({ icon: Icon, title, description, action }: E
       {Icon && (
         <Icon
           size={48}
-          className="text-gray-300 dark:text-gray-600 mb-4"
+          className="text-zinc-600 mb-4"
           strokeWidth={1.5}
         />
       )}
-      <h3 className="text-base font-medium text-gray-600 dark:text-gray-400 mb-1">
+      <h3 className="text-base font-medium text-zinc-400 mb-1">
         {title}
       </h3>
       {description && (
-        <p className="text-sm text-gray-400 dark:text-gray-500 max-w-xs">
+        <p className="text-sm text-zinc-500 max-w-xs">
           {description}
         </p>
       )}
       {action && (
         <button
           onClick={action.onClick}
-          className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          className="mt-4 px-4 py-2 text-sm rounded-lg bg-primary-500/20 border border-primary-500/50 text-primary-300 hover:bg-primary-500/30 transition-colors"
         >
           {action.label}
         </button>

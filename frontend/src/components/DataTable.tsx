@@ -18,11 +18,11 @@ export default function DataTable<T>({ columns, data, keyFn, emptyMessage = 'No 
     <div className="overflow-x-auto">
       <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
         <thead>
-          <tr className="border-b border-gray-200 dark:border-gray-700">
+          <tr className="border-b border-white/[0.08]">
             {columns.map((col) => (
               <th
                 key={col.key}
-                className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+                className="px-4 py-3 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider"
                 style={col.width ? { width: col.width } : undefined}
               >
                 {col.header}
@@ -30,12 +30,12 @@ export default function DataTable<T>({ columns, data, keyFn, emptyMessage = 'No 
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+        <tbody className="divide-y divide-white/[0.06]">
           {data.length === 0 ? (
             <tr>
               <td colSpan={columns.length}>
                 {emptyComponent ?? (
-                  <div className="px-4 py-8 text-center text-gray-400">{emptyMessage}</div>
+                  <div className="px-4 py-8 text-center text-zinc-400">{emptyMessage}</div>
                 )}
               </td>
             </tr>
@@ -43,10 +43,10 @@ export default function DataTable<T>({ columns, data, keyFn, emptyMessage = 'No 
             data.map((row) => (
               <tr
                 key={keyFn(row)}
-                className="hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
+                className="hover:bg-white/[0.03] transition-colors"
               >
                 {columns.map((col) => (
-                  <td key={col.key} className="px-4 py-3 text-gray-700 dark:text-gray-300 overflow-hidden">
+                  <td key={col.key} className="px-4 py-3 text-zinc-300 overflow-hidden">
                     {col.render(row)}
                   </td>
                 ))}

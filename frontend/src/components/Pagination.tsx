@@ -41,15 +41,15 @@ export default function Pagination({ page, pages, total, onChange }: PaginationP
   const pageNumbers = buildPageNumbers(page, pages)
 
   return (
-    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 dark:border-gray-700 text-sm">
-      <span className="text-gray-500">共 {total} 条</span>
+    <div className="flex items-center justify-between px-5 py-3 border-t border-white/[0.06] text-sm">
+      <span className="text-zinc-400">共 {total} 条</span>
 
       <div className="flex items-center gap-1">
         {/* Prev */}
         <button
           disabled={page <= 1}
           onClick={() => onChange(page - 1)}
-          className="px-2 py-1 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="px-2 py-1 rounded border border-white/[0.08] text-zinc-400 hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           aria-label="上一页"
         >
           &lt;
@@ -58,7 +58,7 @@ export default function Pagination({ page, pages, total, onChange }: PaginationP
         {/* Page numbers */}
         {pageNumbers.map((p, i) =>
           p === 'ellipsis' ? (
-            <span key={`ellipsis-${i}`} className="px-2 py-1 text-gray-400 select-none">
+            <span key={`ellipsis-${i}`} className="px-2 py-1 text-zinc-400 select-none">
               …
             </span>
           ) : (
@@ -67,8 +67,8 @@ export default function Pagination({ page, pages, total, onChange }: PaginationP
               onClick={() => onChange(p)}
               className={`min-w-[32px] px-2 py-1 rounded border transition-colors ${
                 p === page
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  ? 'bg-primary-500/20 border-primary-500/50 text-primary-300'
+                  : 'border-white/[0.08] text-zinc-400 hover:bg-white/[0.04]'
               }`}
             >
               {p}
@@ -80,7 +80,7 @@ export default function Pagination({ page, pages, total, onChange }: PaginationP
         <button
           disabled={page >= pages}
           onClick={() => onChange(page + 1)}
-          className="px-2 py-1 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="px-2 py-1 rounded border border-white/[0.08] text-zinc-400 hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           aria-label="下一页"
         >
           &gt;
