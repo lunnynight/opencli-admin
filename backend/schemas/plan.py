@@ -47,3 +47,21 @@ class PlanRead(UTCModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PlanRunRead(BaseModel):
+    """Response body for ``POST /plans/{plan_id}/run`` (issue 03). Mirrors
+    ``backend.plan_ir.executor.PlanRunResult`` field-for-field — the executor
+    body's return value IS the HTTP response shape, no separate projection."""
+
+    plan_id: str
+    source_id: str
+    task_id: str
+    run_id: Optional[str] = None
+    success: bool
+    collected: int
+    stored: int
+    skipped: int
+    error: Optional[str] = None
+
+    model_config = {"from_attributes": True}

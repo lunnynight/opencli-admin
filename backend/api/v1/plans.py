@@ -13,13 +13,14 @@ in this router runs a Plan.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.plan_ir.executor import PlanExecutionError, run_plan_once
 from backend.schemas.common import ApiResponse, PaginationMeta
-from backend.schemas.plan import PlanCreate, PlanRead, PlanUpdate
+from backend.schemas.plan import PlanCreate, PlanRead, PlanRunRead, PlanUpdate
 from backend.services import plan_service
 
 logger = logging.getLogger(__name__)
@@ -95,3 +96,31 @@ async def delete_plan(plan_id: str, db: AsyncSession = Depends(get_db)) -> ApiRe
         raise HTTPException(status_code=404, detail="Plan not found")
     await plan_service.delete_plan(db, plan)
     return ApiResponse.ok(None)
+
+
+@router.post("/{plan_id}/run", response_model=ApiResponse[PlanRunRead], status_code=202)
+async def run_plan(
+    plan_id: str,
+    parameters: dict = Body(default_factory=dict),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse:
+    """Manual whole-plan run (issue 03, PRD story 13 — "run whole plan" for
+    debugging). v1 scope: degenerate (single-source) Plans only, invoking
+    the existing channel/runner machinery synchronously
+    (``backend.plan_ir.executor.run_plan_once``) so the response already
+    reflects the completed run (or its failure) — no polling required.
+
+    404 if the Plan doesn't exist. Draft Plans, non-runnable Plans, and
+    multi-source Plans (issue 04's scope) are all refused with 400 and a
+    clear message rather than silently no-op'ing or partially executing.
+    """
+    plan = await plan_service.get_plan(db, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    try:
+        result = await run_plan_once(db, plan, parameters=parameters)
+    except PlanExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ApiResponse.ok(PlanRunRead.model_validate(result))
