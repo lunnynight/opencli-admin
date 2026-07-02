@@ -146,6 +146,7 @@ export default function Layout() {
       { to: '/workers',         label: t('nav.workers'),       icon: Server },
       { to: '/providers',       label: t('nav.providers'),     icon: KeyRound },
       { to: '/control/actions', label: t('nav.actionHistory'), icon: History },
+      { to: '/labs/node-kit',   label: '节点工作台',            icon: Blocks },
     ],
   }
 
@@ -154,7 +155,6 @@ export default function Layout() {
   // drawer. Day-to-day = look at the graph, talk to the agent. Routes kept.
   const PRIMARY_ITEMS: NavItem[] = [
     { to: '/labs/topology', label: t('nav.workspace'), icon: Network },
-    { to: '/labs/node-kit', label: '节点工作台', icon: Blocks },
     { to: '/dashboard',     label: t('nav.dashboard'), icon: LayoutDashboard },
   ]
   const ADVANCED_GROUPS: NavGroup[] = [PIPELINE_GROUP, INFRA_GROUP]

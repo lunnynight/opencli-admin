@@ -3,12 +3,16 @@ import { describe, it } from 'node:test'
 
 import {
   actionVerdict,
+  formatRecoveryRate,
+  killSwitchSourceLabel,
+  killSwitchTone,
   toActionHistoryRowView,
+  toAdvisoryBucketRowView,
   toListControlActionsParams,
   verdictTone,
   EMPTY_ACTION_HISTORY_FILTERS,
 } from './actionHistory.ts'
-import type { ControlActionRecord } from '../../api/types.ts'
+import type { AdvisoryReportBucket, ControlActionRecord, KillSwitchState } from '../../api/types.ts'
 
 function baseRow(overrides: Partial<ControlActionRecord> = {}): ControlActionRecord {
   return {
@@ -106,5 +110,76 @@ describe('toListControlActionsParams', () => {
       page: 1,
       limit: 20,
     })
+  })
+})
+
+describe('formatRecoveryRate', () => {
+  it('renders an em-dash rather than fabricating 0% for a null (0-of-0) rate', () => {
+    assert.equal(formatRecoveryRate(null), '—')
+  })
+
+  it('renders a rounded percentage when a rate exists', () => {
+    assert.equal(formatRecoveryRate(0.5), '50%')
+    assert.equal(formatRecoveryRate(1), '100%')
+    assert.equal(formatRecoveryRate(0), '0%')
+    assert.equal(formatRecoveryRate(0.333), '33%')
+  })
+})
+
+function baseBucket(overrides: Partial<AdvisoryReportBucket> = {}): AdvisoryReportBucket {
+  return {
+    state: 'auth_failed',
+    action_type: 'pause_source',
+    total: 10,
+    pending: 2,
+    evaluated: 8,
+    recovered: 5,
+    persisted: 3,
+    insufficient_data: 0,
+    recovery_rate: 0.625,
+    ...overrides,
+  }
+}
+
+describe('toAdvisoryBucketRowView', () => {
+  it('projects tallies and a formatted recovery rate keyed by state+action_type', () => {
+    const view = toAdvisoryBucketRowView(baseBucket())
+    assert.equal(view.key, 'auth_failed::pause_source')
+    assert.equal(view.state, 'auth_failed')
+    assert.equal(view.actionType, 'pause_source')
+    assert.equal(view.total, 10)
+    assert.equal(view.recovered, 5)
+    assert.equal(view.persisted, 3)
+    assert.equal(view.recoveryRateLabel, '63%')
+  })
+
+  it('never fabricates a recovery rate for a 0-of-0 bucket', () => {
+    const view = toAdvisoryBucketRowView(
+      baseBucket({ total: 0, pending: 0, evaluated: 0, recovered: 0, persisted: 0, recovery_rate: null }),
+    )
+    assert.equal(view.recoveryRateLabel, '—')
+  })
+})
+
+describe('killSwitchTone', () => {
+  it('reads engaged as danger and disengaged as neutral', () => {
+    assert.equal(killSwitchTone(true), 'danger')
+    assert.equal(killSwitchTone(false), 'neutral')
+  })
+})
+
+describe('killSwitchSourceLabel', () => {
+  function baseState(overrides: Partial<KillSwitchState> = {}): Pick<KillSwitchState, 'runtime_override' | 'config_default'> {
+    return { runtime_override: null, config_default: false, ...overrides }
+  }
+
+  it('reports following config default when no runtime override has been set', () => {
+    assert.equal(killSwitchSourceLabel(baseState({ config_default: true })), 'following config default (engaged)')
+    assert.equal(killSwitchSourceLabel(baseState({ config_default: false })), 'following config default (disengaged)')
+  })
+
+  it('reports the runtime override once one has been set this process lifetime', () => {
+    assert.equal(killSwitchSourceLabel(baseState({ runtime_override: true })), 'runtime override (engaged)')
+    assert.equal(killSwitchSourceLabel(baseState({ runtime_override: false })), 'runtime override (disengaged)')
   })
 })

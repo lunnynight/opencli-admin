@@ -1,6 +1,7 @@
 import { apiClient, rootClient } from './client.ts'
 import type {
   AIAgent,
+  AdvisoryReport,
   ApiResponse,
   ModelProvider,
   BrowserBinding,
@@ -14,6 +15,7 @@ import type {
   DashboardStats,
   EdgeNode,
   EdgeNodeEvent,
+  KillSwitchState,
   NodeStats,
   NotificationLog,
   NotificationRule,
@@ -89,6 +91,22 @@ export const listControlActions = (params?: {
   page?: number
   limit?: number
 }) => apiClient.get<ApiResponse<ControlActionRecord[]>>('/control/actions', { params }).then((r) => r.data)
+
+// Global actuator kill switch (issue 03) — the Control Cycle checks this
+// before ever executing anything in "automatic" mode. GET is a snapshot;
+// POST sets the in-memory runtime override (resets to config on restart).
+export const getKillSwitch = () =>
+  apiClient.get<ApiResponse<KillSwitchState>>('/control/kill-switch').then((r) => r.data.data)
+
+export const setKillSwitch = (engaged: boolean) =>
+  apiClient.post<ApiResponse<KillSwitchState>>('/control/kill-switch', { engaged }).then((r) => r.data.data)
+
+// Agreement/recovery report over the control_actions evidence ledger
+// (PR-Control-3.5) — the gate data for ever flipping CONTROL_MODE to
+// "automatic" per state class. Runs a lazy outcome-evaluation pass before
+// aggregating, so no separate "evaluate" button is needed in the UI.
+export const getAdvisoryReport = () =>
+  apiClient.get<ApiResponse<AdvisoryReport>>('/control/advisory-report').then((r) => r.data.data)
 
 // ── Tasks ──────────────────────────────────────────────────────────────────────
 export const listTasks = (params?: {

@@ -467,3 +467,51 @@ export interface ControlActionRecord {
   created_at: string
   updated_at: string
 }
+
+// ── Kill switch (PR-Control issue 03 — GET/POST /control/kill-switch) ────────
+// `engaged` is the effective state the Control Cycle actually checks: the
+// in-memory runtime override when one has been set via POST, else
+// Settings.control_kill_switch. `runtime_override` is null when no runtime
+// toggle has been set this process lifetime (purely following config) —
+// mirrors backend/schemas/control.py's KillSwitchRead exactly.
+export interface KillSwitchState {
+  engaged: boolean
+  runtime_override: boolean | null
+  config_default: boolean
+}
+
+// ── Advisory report (PR-Control-3.5 — GET /control/advisory-report) ─────────
+// The gate data for ever flipping Settings.control_mode to "automatic" per
+// state class. `recovery_rate` = recovered / (recovered + persisted); null
+// when no row in the set has reached a recovered/persisted verdict yet — a
+// 0-of-0 rate would be a fabricated signal, not a measurement. Mirrors
+// backend/schemas/control.py's AdvisoryReportTotalsRead/AdvisoryReportRead.
+export interface AdvisoryReportTotals {
+  total: number
+  pending: number
+  evaluated: number
+  recovered: number
+  persisted: number
+  insufficient_data: number
+  recovery_rate: number | null
+}
+
+// One (state, action_type) bucket of the advisory evidence ledger — e.g.
+// "everything we suggested pause_source for while auth_failed".
+export interface AdvisoryReportBucket extends AdvisoryReportTotals {
+  state: string
+  action_type: string
+}
+
+export interface AdvisoryReport {
+  buckets: AdvisoryReportBucket[]
+  totals: AdvisoryReportTotals
+  mode_breakdown: Record<string, number>
+  evaluation: {
+    evaluated: number
+    recovered: number
+    persisted: number
+    insufficient_data: number
+    still_pending: number
+  }
+}
