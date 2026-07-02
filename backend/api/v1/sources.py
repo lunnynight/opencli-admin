@@ -7,11 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.manager import AuthManager
 from backend.config import get_settings
-from backend.control import aggregation, evaluator
-from backend.control.coverage import compute_sensor_coverage, derive_confidence, missing_signals
-from backend.control.ledger import record_advisory_actions
 from backend.control.objectives import SourceObjective
-from backend.control.policies import suggest_actions
+from backend.control.service import decide_for_source
 from backend.database import get_db
 from backend.schemas.common import ApiResponse, PaginationMeta
 from backend.schemas.control import (
@@ -249,6 +246,10 @@ async def get_source_control_state(
     404 if the source itself doesn't exist. Every other failure mode (no run
     evidence yet, ODP fully down) degrades gracefully to nulls/False fields —
     this endpoint never 500s because a downstream signal is unavailable.
+
+    All decision logic (measure -> evaluate -> record) lives in
+    ``backend.control.service.decide_for_source`` — this handler only does
+    HTTP concerns: 404 lookup and assembling the pinned response schema.
     """
     source = await source_service.get_source(db, source_id)
     if not source:
@@ -256,121 +257,45 @@ async def get_source_control_state(
 
     settings = get_settings()
     objective = SourceObjective()
-    measurement_row = await aggregation.latest_measurement_row(db, source_id)
-    measurement = (
-        aggregation.row_to_measurement(measurement_row)
-        if measurement_row is not None
-        else await aggregation.build_measurement(db, source_id)
-    )
-    trend_summary = await aggregation.build_trend(db, source_id)
     system_context = await _build_system_context(objective)
 
-    control_state = None
-    confidence = None
-    coverage = None
-    missing: list[str] = []
-    trend_read: Optional[TrendRead] = None
-    suggestions: list[SuggestedActionRead] = []
+    decision = await decide_for_source(
+        db,
+        source_id=source_id,
+        objective=objective,
+        system_context={
+            "odp_backpressured": system_context.odp_backpressured,
+            "available": system_context.available,
+        },
+        mode=settings.control_mode,
+        dedup_seconds=settings.control_advisory_dedup_seconds,
+    )
 
-    if measurement is not None:
-        if trend_summary is not None:
-            trend_read = TrendRead(
-                window=trend_summary.window,
-                zero_accepted_streak=trend_summary.zero_accepted_streak,
-                avg_error_rate=trend_summary.avg_error_rate,
-                rate_limited_runs=trend_summary.rate_limited_runs,
-            )
-
-        control_state = evaluator.evaluate(
-            measurement,
-            objective,
-            trend=(
-                {
-                    "window": trend_summary.window,
-                    "zero_accepted_streak": trend_summary.zero_accepted_streak,
-                    "avg_error_rate": trend_summary.avg_error_rate,
-                    "rate_limited_runs": trend_summary.rate_limited_runs,
-                }
-                if trend_summary is not None
-                else None
-            ),
-            system_context={
-                "odp_backpressured": system_context.odp_backpressured,
-                "available": system_context.available,
-            },
+    trend_read = (
+        TrendRead(
+            window=decision.trend.window,
+            zero_accepted_streak=decision.trend.zero_accepted_streak,
+            avg_error_rate=decision.trend.avg_error_rate,
+            rate_limited_runs=decision.trend.rate_limited_runs,
         )
-        coverage = compute_sensor_coverage(measurement)
-        confidence = derive_confidence(coverage)
-        missing = missing_signals(coverage)
-
-        actions = suggest_actions(control_state, measurement, objective)
-        suggestions = [
-            SuggestedActionRead(
-                action_type=a.action_type, reason=a.reason, payload=a.payload
-            )
-            for a in actions
-        ]
-
-        if suggestions:
-            # Advisory activity is observable (docs §2 principle 8:
-            # "自动化必须可解释") — emit a TaskRunEvent-shaped audit trail via
-            # the existing pipeline event sink. Best-effort: events.emit()
-            # already swallows its own errors and never raises, and emitting
-            # is not required for the response to be correct.
-            from backend.pipeline import events
-
-            await events.emit(
-                run_id=measurement.run_id,
-                step="control_advisory",
-                message=(
-                    f"advisory: {control_state.value} -> "
-                    f"{[a.action_type for a in actions]}"
-                ),
-                level="info",
-                detail={
-                    "source_id": source_id,
-                    "control_state": control_state.value,
-                    "suggested_actions": [
-                        {"action_type": a.action_type, "reason": a.reason, "payload": a.payload}
-                        for a in actions
-                    ],
-                    "control_mode": settings.control_mode,
-                },
-            )
-
-            # PR-Control-3.5: persist each suggestion to the advisory evidence
-            # ledger (backend.control.ledger) so a later outcome pass can judge
-            # whether it was justified. Same request session — the ledger
-            # write shares this request's transaction — and same best-effort
-            # stance as the events.emit() call above: recording evidence must
-            # never turn this read-only, advisory endpoint into a 500.
-            try:
-                await record_advisory_actions(
-                    db,
-                    source_id=source_id,
-                    state=control_state,
-                    actions=actions,
-                    measurement=measurement,
-                    measurement_row_id=(
-                        measurement_row.id if measurement_row is not None else None
-                    ),
-                    run_id=(
-                        measurement_row.run_id if measurement_row is not None else None
-                    ),
-                    mode=settings.control_mode,
-                    dedup_seconds=settings.control_advisory_dedup_seconds,
-                )
-            except Exception as exc:  # pragma: no cover - defensive guard
-                logger.warning("control-state: ledger write failed: %s", exc)
+        if decision.trend is not None
+        else None
+    )
+    suggestions = [
+        SuggestedActionRead(
+            action_type=a.action_type, reason=a.reason, payload=a.payload
+        )
+        for a in decision.suggested_actions
+    ]
 
     return ApiResponse.ok(
         SourceControlStateRead(
             source_id=source_id,
-            control_state=control_state,
-            confidence=confidence,
-            sensor_coverage=coverage,
-            missing_signals=missing,
-            measurement=measurement,
+            control_state=decision.control_state,
+            confidence=decision.confidence,
+            sensor_coverage=decision.coverage,
+            missing_signals=decision.missing_signals,
+            measurement=decision.measurement,
             objective=objective,
             trend=trend_read,
             system_context=system_context,
