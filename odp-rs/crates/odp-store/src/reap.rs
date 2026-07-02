@@ -45,23 +45,46 @@ pub async fn reap_stale(bus: &RedisBus, pool: &PgPool) -> Result<()> {
     if !dlq_ids.is_empty() {
         // XRANGE, not XCLAIM: these ids must not re-enter anyone's PEL —
         // reading by id leaves ownership and delivery count untouched.
-        let entries = bus.read_entries_by_id(&dlq_ids).await?;
+        //
+        // Every dlq_id falls into exactly one of three buckets, and only one
+        // of them may be acked without writing a DLQ row first:
+        //
+        //   1. PARSEABLE — present in the stream AND its `event` field
+        //      deserializes into a RecordEvent. Goes through `dead_letter`
+        //      (structured columns). Ack only if that write succeeds.
+        //   2. PRESENT-BUT-UNPARSEABLE — present in the stream, but the
+        //      `event` field is not valid JSON (or the entry is otherwise
+        //      malformed). This is genuine data: dropping it silently would
+        //      be permanent, invisible data loss. Goes through
+        //      `dead_letter_raw` (raw payload, NULL structured columns). Ack
+        //      only if THAT write succeeds.
+        //   3. GENUINELY ABSENT — no stream entry at all (already trimmed
+        //      away by Redis, e.g. MAXLEN). Nothing left to dead-letter —
+        //      this is the ONLY bucket that may be acked without a DLQ row,
+        //      because there is nothing left to lose.
+        //
+        // A failed dead_letter / dead_letter_raw write must NEVER be acked,
+        // or the event's payload (structured or raw) is lost for good —
+        // evicted from the PEL with no odp_dlq row to show for it.
+        let parsed_entries = bus.read_entries_by_id(&dlq_ids).await?;
+        let raw_entries = bus.read_raw_entries_by_id(&dlq_ids).await?;
 
-        // Only ack ids that are actually resolved — a failed dead_letter
-        // write must NOT be acked, or the event's payload is lost for good
-        // (evicted from the PEL with no odp_dlq row to show for it). An id
-        // with no stream entry at all (already trimmed away) has nothing
-        // left to dead-letter but still needs its PEL entry cleared, or the
-        // sweep re-scans it forever.
-        let found_ids: std::collections::HashSet<&str> =
-            entries.iter().map(|m| m.id.as_str()).collect();
+        let parsed_ids: std::collections::HashSet<&str> =
+            parsed_entries.iter().map(|m| m.id.as_str()).collect();
+        let raw_by_id: std::collections::HashMap<&str, &str> = raw_entries
+            .iter()
+            .map(|r| (r.id.as_str(), r.payload.as_str()))
+            .collect();
+
+        // Bucket 3: absent from both the parsed AND the raw read.
         let mut ack_ids: Vec<String> = dlq_ids
             .iter()
-            .filter(|id| !found_ids.contains(id.as_str()))
+            .filter(|id| !parsed_ids.contains(id.as_str()) && !raw_by_id.contains_key(id.as_str()))
             .cloned()
             .collect();
 
-        for msg in &entries {
+        // Bucket 1: parseable — structured dead_letter.
+        for msg in &parsed_entries {
             let delivery_count = pending
                 .iter()
                 .find(|p| p.id == msg.id)
@@ -78,6 +101,32 @@ pub async fn reap_stale(bus: &RedisBus, pool: &PgPool) -> Result<()> {
                 Ok(()) => ack_ids.push(msg.id.clone()),
                 Err(e) => {
                     tracing::error!(stream_id = %msg.id, error = %e, "failed to write DLQ row — leaving pending, will retry next sweep");
+                }
+            }
+        }
+
+        // Bucket 2: present but unparseable — raw dead_letter, never dropped.
+        for (id, payload) in raw_by_id.iter() {
+            if parsed_ids.contains(id) {
+                continue; // already handled as bucket 1
+            }
+            let delivery_count = pending
+                .iter()
+                .find(|p| p.id == *id)
+                .map(|p| p.delivery_count)
+                .unwrap_or(MAX_DELIVERIES + 1);
+            match writer::dead_letter_raw(
+                pool,
+                id,
+                payload,
+                delivery_count,
+                "unparseable event payload — exceeded max delivery attempts (odp-store reap sweep)",
+            )
+            .await
+            {
+                Ok(()) => ack_ids.push((*id).to_string()),
+                Err(e) => {
+                    tracing::error!(stream_id = %id, error = %e, "failed to write raw DLQ row for unparseable event — leaving pending, will retry next sweep");
                 }
             }
         }

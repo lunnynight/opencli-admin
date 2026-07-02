@@ -211,6 +211,29 @@ impl RedisBus {
         }
         Ok(out)
     }
+
+    /// Read entries by id as raw field maps, WITHOUT parsing the `event` field
+    /// as a `RecordEvent`. This is what lets a caller tell "present but the
+    /// stored JSON doesn't deserialize" apart from "genuinely absent (already
+    /// trimmed)" — `read_entries_by_id` silently drops the former, so it alone
+    /// cannot distinguish the two cases. Absent ids simply do not appear in
+    /// the result; this method never errors just because a payload is not
+    /// valid JSON.
+    pub async fn read_raw_entries_by_id(&self, ids: &[String]) -> Result<Vec<RawStreamEntry>> {
+        let stream = &self.config.streams.ingest_raw;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let mut conn = self.conn.clone();
+            let reply: RedisResult<Value> = redis::cmd("XRANGE")
+                .arg(stream)
+                .arg(id)
+                .arg(id)
+                .query_async(&mut conn)
+                .await;
+            out.extend(parse_raw_entry_array(reply)?);
+        }
+        Ok(out)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +284,27 @@ fn parse_entry_array(reply: RedisResult<Value>) -> Result<Vec<StreamMessage>> {
     Ok(entries.into_iter().filter_map(|e| parse_stream_entry(&e)).collect())
 }
 
+/// Same XRANGE/XCLAIM reply shape as `parse_entry_array`, but keeps the raw
+/// `event` field string instead of deserializing it — an entry is included
+/// here as long as it exists and has an `event` field, regardless of whether
+/// that field is valid JSON.
+fn parse_raw_entry_array(reply: RedisResult<Value>) -> Result<Vec<RawStreamEntry>> {
+    let value = match reply {
+        Ok(v) => v,
+        Err(e) if e.kind() == redis::ErrorKind::TypeError => return Ok(vec![]),
+        Err(e) => return Err(e.into()),
+    };
+    let entries = match value {
+        Value::Nil => return Ok(vec![]),
+        Value::Array(entries) => entries,
+        other => anyhow::bail!("unexpected reply: {other:?}"),
+    };
+    Ok(entries
+        .into_iter()
+        .filter_map(|e| parse_raw_stream_entry(&e))
+        .collect())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommittedMessage {
     pub record_id: i64,
@@ -271,6 +315,15 @@ pub struct CommittedMessage {
 pub struct StreamMessage {
     pub id: String,
     pub event: RecordEvent,
+}
+
+/// A stream entry's raw payload, read without attempting `RecordEvent`
+/// deserialization — the `payload` field is whatever raw string was stored
+/// under the `event` field key by `publish_ingest`, valid JSON or not.
+#[derive(Debug, Clone)]
+pub struct RawStreamEntry {
+    pub id: String,
+    pub payload: String,
 }
 
 fn parse_xreadgroup(reply: RedisResult<Value>, stream: &str) -> Result<Vec<StreamMessage>> {
@@ -334,6 +387,32 @@ fn parse_stream_entry(value: &Value) -> Option<StreamMessage> {
     let json = event_json?;
     let event: RecordEvent = serde_json::from_str(&json).ok()?;
     Some(StreamMessage { id, event })
+}
+
+/// Like `parse_stream_entry`, but returns the raw `event` field string as-is
+/// — no `serde_json::from_str` — so a present-but-malformed payload is still
+/// returned instead of silently becoming `None`.
+fn parse_raw_stream_entry(value: &Value) -> Option<RawStreamEntry> {
+    let parts = match value {
+        Value::Array(p) if p.len() == 2 => p,
+        _ => return None,
+    };
+    let id = value_as_string(&parts[0])?;
+    let fields = match &parts[1] {
+        Value::Array(f) => f,
+        _ => return None,
+    };
+    let mut payload = None;
+    let mut i = 0;
+    while i + 1 < fields.len() {
+        let key = value_as_string(&fields[i])?;
+        let val = value_as_string(&fields[i + 1])?;
+        if key == "event" {
+            payload = Some(val);
+        }
+        i += 2;
+    }
+    Some(RawStreamEntry { id, payload: payload? })
 }
 
 fn value_as_string(value: &Value) -> Option<String> {
@@ -431,5 +510,56 @@ mod tests {
     fn parse_entry_array_empty_reply_is_empty_vec() {
         let reply: RedisResult<Value> = Ok(Value::Nil);
         assert!(parse_entry_array(reply).unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_raw_entry_array_returns_payload_even_when_json_is_invalid() {
+        // The key property under test: an entry whose `event` field is
+        // present but is NOT valid JSON must still come back from the raw
+        // parser (unlike parse_entry_array/parse_stream_entry, which would
+        // silently drop it via serde .ok()?).
+        let reply: RedisResult<Value> = Ok(Value::Array(vec![Value::Array(vec![
+            bulk("1700000000000-0"),
+            Value::Array(vec![bulk("event"), bulk("{not valid json")]),
+        ])]));
+
+        let out = parse_raw_entry_array(reply).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "1700000000000-0");
+        assert_eq!(out[0].payload, "{not valid json");
+    }
+
+    #[test]
+    fn parse_raw_entry_array_returns_payload_for_valid_json_too() {
+        let json = sample_event_json();
+        let reply: RedisResult<Value> = Ok(Value::Array(vec![Value::Array(vec![
+            bulk("1700000000001-0"),
+            Value::Array(vec![bulk("event"), bulk(&json)]),
+        ])]));
+
+        let out = parse_raw_entry_array(reply).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "1700000000001-0");
+        assert_eq!(out[0].payload, json);
+    }
+
+    #[test]
+    fn parse_raw_entry_array_truly_missing_id_is_absent() {
+        // A truly-missing id means Redis returns an empty array for that
+        // XRANGE call (nothing between id and id) — nothing to include.
+        let reply: RedisResult<Value> = Ok(Value::Array(vec![]));
+        assert!(parse_raw_entry_array(reply).unwrap().is_empty());
+
+        let reply: RedisResult<Value> = Ok(Value::Nil);
+        assert!(parse_raw_entry_array(reply).unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_raw_entry_array_skips_entries_without_an_event_field() {
+        let reply: RedisResult<Value> = Ok(Value::Array(vec![Value::Array(vec![
+            bulk("1700000000002-0"),
+            Value::Array(vec![bulk("other_field"), bulk("value")]),
+        ])]));
+        assert!(parse_raw_entry_array(reply).unwrap().is_empty());
     }
 }

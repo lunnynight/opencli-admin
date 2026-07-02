@@ -51,13 +51,39 @@ async fn main() -> anyhow::Result<()> {
             last_reap = Instant::now();
         }
 
-        let messages = bus.read_ingest_batch(batch_size, 2000).await?;
+        // Steady-state loop body: a transient Redis/PG error here must not
+        // crash the whole process (that would drop every consumer/PEL entry
+        // this instance owns and require an external restart). Log and
+        // `continue` — the same message stays pending and gets retried on
+        // the next iteration (or eventually reaped by reap_stale), matching
+        // reap.rs's existing log-and-continue idiom. Only genuinely
+        // unrecoverable startup errors above (connect_pool, migrate, connect
+        // bus, ensure_consumer_group) stay fatal `?`.
+        let messages = match bus.read_ingest_batch(batch_size, 2000).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, "read_ingest_batch failed — will retry next iteration");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
         if messages.is_empty() {
             continue;
         }
 
-        let (inserted, ack_ids) = writer::persist_batch(&pool, &bus, &messages).await?;
-        bus.ack_ingest(&ack_ids).await?;
+        let (inserted, ack_ids) = match writer::persist_batch(&pool, &bus, &messages).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "persist_batch failed — messages remain pending, will retry next iteration");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
+        if let Err(e) = bus.ack_ingest(&ack_ids).await {
+            tracing::error!(error = %e, "ack_ingest failed — inserted rows are durable, ack will be retried (dup-safe via ON CONFLICT) next sweep");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
+        }
         tracing::info!(
             read = messages.len(),
             inserted,

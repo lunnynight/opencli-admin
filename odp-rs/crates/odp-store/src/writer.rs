@@ -150,6 +150,37 @@ pub async fn dead_letter(
     Ok(())
 }
 
+/// Move a poison message to the DLQ table when its stream entry exists but
+/// could not be parsed into a `RecordEvent` at all (invalid JSON, or a
+/// missing/garbled `event` field) — so there is no `RecordEvent` to hand to
+/// `dead_letter`. `provider`/`source_id`/`event_id` are NULL since none of
+/// that could be extracted; `payload` stores the raw string wrapped so the
+/// column stays valid jsonb regardless of what the raw bytes look like.
+/// Same caller contract as `dead_letter`: only XACK the stream id after this
+/// returns `Ok`.
+pub async fn dead_letter_raw(
+    pool: &PgPool,
+    stream_id: &str,
+    raw_payload: &str,
+    delivery_count: i64,
+    error: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO odp_dlq (stream_id, provider, source_id, event_id, error, delivery_count, payload)
+        VALUES ($1, NULL, NULL, NULL, $2, $3, to_jsonb($4::text))
+        "#,
+    )
+    .bind(stream_id)
+    .bind(error)
+    .bind(delivery_count as i32)
+    .bind(raw_payload)
+    .execute(pool)
+    .await
+    .context("insert odp_dlq (raw/unparseable)")?;
+    Ok(())
+}
+
 async fn insert_one(
     tx: &mut Transaction<'_, Postgres>,
     event: &RecordEvent,
