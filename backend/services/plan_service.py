@@ -1,9 +1,10 @@
 from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.plan import Plan
+from backend.models.plan_source_index import PlanSourceIndex
 from backend.plan_ir.validation import PlanValidationResult, validate_plan_graph
 from backend.schemas.plan import PlanCreate, PlanUpdate
 from backend.schemas.plan_ir import PlanGraph
@@ -69,6 +70,26 @@ async def get_plan(session: AsyncSession, plan_id: str) -> Optional[Plan]:
     return result.scalar_one_or_none()
 
 
+async def _reindex_plan_sources(session: AsyncSession, plan: Plan, graph: PlanGraph) -> None:
+    """Rebuild ``plan_source_index`` rows for ``plan`` from ``graph``'s
+    materialized source nodes (issue 05, dataflow triggering). Delete +
+    reinsert on every save — the table is small (one row per materialized
+    source node per Plan) and this keeps the index trivially consistent with
+    whatever graph shape was just validated and persisted, no diffing logic
+    required. Draft source nodes (no ``source_id``) are never indexed: they
+    cannot trigger anything, matching ``Plan.runnable`` semantics.
+    """
+    await session.execute(delete(PlanSourceIndex).where(PlanSourceIndex.plan_id == plan.id))
+    for node in graph.nodes:
+        if node.kind == "source" and node.source_id and not node.draft:
+            session.add(
+                PlanSourceIndex(
+                    plan_id=plan.id, source_id=node.source_id, source_node_id=node.id
+                )
+            )
+    await session.flush()
+
+
 async def create_plan(session: AsyncSession, data: PlanCreate, draft: bool, runnable: bool) -> Plan:
     """Persist ``data.graph`` verbatim (byte-faithful round-trip) alongside
     the caller-derived draft/runnable flags. Callers must validate and
@@ -80,6 +101,7 @@ async def create_plan(session: AsyncSession, data: PlanCreate, draft: bool, runn
     session.add(plan)
     await session.flush()
     await session.refresh(plan)
+    await _reindex_plan_sources(session, plan, PlanGraph.model_validate(data.graph))
     return plan
 
 
@@ -93,7 +115,10 @@ async def update_plan(
     """Apply only the fields the caller set. When ``graph`` is part of the
     update, ``version`` increments and the caller-supplied ``draft``/
     ``runnable`` (re-derived from the new graph) replace the stored flags;
-    a name-only update leaves version/graph/flags untouched."""
+    a name-only update leaves version/graph/flags untouched. The
+    ``plan_source_index`` (issue 05) is rebuilt whenever the graph changes,
+    so a source added/removed/rewired from the canvas is reflected in the
+    trigger index immediately."""
     updates = data.model_dump(exclude_unset=True)
     if "name" in updates:
         plan.name = updates["name"]
@@ -104,6 +129,8 @@ async def update_plan(
         plan.runnable = bool(runnable)
     await session.flush()
     await session.refresh(plan)
+    if "graph" in updates:
+        await _reindex_plan_sources(session, plan, PlanGraph.model_validate(plan.graph))
     return plan
 
 

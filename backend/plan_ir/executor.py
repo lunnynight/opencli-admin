@@ -462,14 +462,9 @@ async def _run_shared_segments(
         branches.append(items)
 
     start_node_ids = {nid for node in source_nodes for nid in _downstream_of(graph, node.id)}
-    order = _shared_segment_topo_order(graph, start_node_ids)
-    nodes_by_id = _nodes_by_id(graph)
-
-    shared_segment: Optional[SharedSegmentResult] = None
-    if order:
-        shared_segment = await _run_shared_pipeline(
-            session, plan, run_key, order, nodes_by_id, branches, params
-        )
+    shared_segment = await _run_shared_segment_over_branches(
+        session, plan, graph, run_key, start_node_ids, branches, params
+    )
 
     overall_success = all(r.success for r in source_results) and (
         shared_segment is None or shared_segment.success
@@ -498,6 +493,31 @@ async def _run_shared_segments(
         source_results=source_results,
         shared_segment=shared_segment,
     )
+
+
+async def _run_shared_segment_over_branches(
+    session: AsyncSession,
+    plan: Plan,
+    graph: PlanGraph,
+    run_key: str,
+    start_node_ids: set[str],
+    branches: list[list[ProvenancedItem]],
+    params: dict,
+) -> Optional[SharedSegmentResult]:
+    """Shared plumbing for both the manual whole-plan run (``_run_shared_
+    segments``, issue 04, one branch per source node run this pass) and the
+    incremental dataflow-triggered run (``run_plan_shared_segment_
+    incremental``, issue 05, exactly one branch: the triggering delivery's
+    items). Computes the shared-segment topological order downstream of
+    ``start_node_ids`` and walks it via ``_run_shared_pipeline`` — the ONE
+    node-execution engine both callers share, never duplicated. Returns
+    ``None`` when the Plan has no shared nodes downstream of the given
+    starting point (nothing to run)."""
+    order = _shared_segment_topo_order(graph, start_node_ids)
+    if not order:
+        return None
+    nodes_by_id = _nodes_by_id(graph)
+    return await _run_shared_pipeline(session, plan, run_key, order, nodes_by_id, branches, params)
 
 
 async def _run_shared_pipeline(
@@ -647,3 +667,93 @@ async def _store_shared_items(
     )
     await session.flush()
     return len(new_records), skipped
+
+
+# ── dataflow triggering (issue 05) ──────────────────────────────────────────
+
+
+@dataclass
+class IncrementalTriggerResult:
+    """One incremental shared-segment run's outcome — triggered by a single
+    source's delivery, not a manual whole-plan run (issue 05,
+    ``PlanRunResult``'s counterpart for the dataflow-triggered path). Never
+    raised to the caller: ``backend.services.plan_trigger_service`` catches
+    everything and turns a failure into ``success=False`` here, because a
+    shared-segment failure on this path must never propagate back into
+    ``run_collection_pipeline`` and fail the triggering source's own run
+    (failure isolation, PRD "a broken dedupe node never marks my healthy
+    sources DEGRADED")."""
+
+    plan_id: str
+    source_id: str
+    source_node_id: str
+    run_key: str
+    success: bool
+    error: Optional[str]
+    shared_segment: Optional[SharedSegmentResult]
+
+
+async def run_plan_shared_segment_incremental(
+    session: AsyncSession,
+    plan: Plan,
+    *,
+    source_id: str,
+    source_node_id: str,
+    task_id: str,
+    parameters: Optional[dict] = None,
+) -> IncrementalTriggerResult:
+    """Run ``plan``'s downstream shared segment incrementally over JUST the
+    records ``task_id`` (one source's one delivery) just stored — the
+    dataflow-triggering entrypoint (issue 05, PRD story 12: "any upstream
+    delivery runs the downstream shared segment incrementally with
+    source-tagged provenance"). Reuses the IDENTICAL node-execution engine
+    (``_run_shared_segment_over_branches`` / ``_run_shared_pipeline``) the
+    manual whole-plan run uses — the only difference is ``branches`` has
+    exactly one entry (this delivery's items) and the topological walk
+    starts from this one source node's downstream neighbors, not every
+    source node's.
+
+    Two sources on different cadences in one Plan each call this
+    independently, one delivery at a time — there is no whole-plan lockstep
+    here at all (this function never looks at any OTHER source node in the
+    graph).
+
+    Never raises: any failure (bad graph shape, node not found, a shared
+    node raising) is caught and returned as ``success=False`` so a caller
+    (the pipeline runner, right after a source's own run already completed
+    successfully) can never have this trigger fail the source's own
+    TaskRun/measurements — Plan Health already recorded the shared node's
+    own failure via the same ``_run_shared_pipeline`` path manual runs use.
+    """
+    run_key = str(uuid.uuid4())
+    try:
+        if plan.draft or not plan.runnable:
+            # A Plan can go draft/non-runnable between the index write and
+            # this trigger firing (e.g. an in-flight edit); skip silently —
+            # this is not a shared-segment failure, there is nothing to run.
+            return IncrementalTriggerResult(
+                plan_id=plan.id, source_id=source_id, source_node_id=source_node_id,
+                run_key=run_key, success=True, error=None, shared_segment=None,
+            )
+
+        graph = PlanGraph.model_validate(plan.graph)
+        items = await _load_provenanced_items(session, task_id, source_id, source_node_id)
+        # start_node_ids must be the nodes DOWNSTREAM of the source node
+        # (mirrors _run_shared_segments' start_node_ids computation) — the
+        # source node itself is never part of the shared segment's own
+        # topo-ordered walk.
+        start_node_ids = set(_downstream_of(graph, source_node_id))
+        shared_segment = await _run_shared_segment_over_branches(
+            session, plan, graph, run_key, start_node_ids, [items], parameters or {}
+        )
+        success = shared_segment is None or shared_segment.success
+        error = shared_segment.error if shared_segment and not shared_segment.success else None
+        return IncrementalTriggerResult(
+            plan_id=plan.id, source_id=source_id, source_node_id=source_node_id,
+            run_key=run_key, success=success, error=error, shared_segment=shared_segment,
+        )
+    except Exception as exc:  # noqa: BLE001 - failure isolation boundary, see docstring
+        return IncrementalTriggerResult(
+            plan_id=plan.id, source_id=source_id, source_node_id=source_node_id,
+            run_key=run_key, success=False, error=str(exc), shared_segment=None,
+        )
