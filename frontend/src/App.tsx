@@ -23,6 +23,7 @@ const TopologyPage = lazy(() => import('./labs/topology/TopologyPage'))
 const NetworkPage = lazy(() => import('./labs/topology/NetworkPage'))
 const NodeKitPage = lazy(() => import('./labs/topology/NodeKitPage'))
 const WorkflowPage = lazy(() => import('./labs/topology/workflow/WorkflowPage'))
+const PlanCanvasPage = lazy(() => import('./pages/PlanCanvasPage'))
 
 function LazyRoute({ children }: { children: ReactNode }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>
@@ -86,6 +87,8 @@ export default function App() {
             }
           />
           <Route path="topology" element={<Navigate to={isTopologyLabEnabled ? '/labs/topology' : '/dashboard'} replace />} />
+          <Route path="plans/new" element={<LazyRoute><PlanCanvasPage /></LazyRoute>} />
+          <Route path="plans/:planId" element={<LazyRoute><PlanCanvasPage /></LazyRoute>} />
           <Route path="sources" element={<LazyRoute><SourcesPage /></LazyRoute>} />
           <Route path="sources/:sourceId/control-room" element={<LazyRoute><SourceControlRoomPage /></LazyRoute>} />
           <Route path="tasks" element={<LazyRoute><TasksPage /></LazyRoute>} />

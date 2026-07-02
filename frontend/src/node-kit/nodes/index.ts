@@ -5,6 +5,7 @@
 //   primitives→ generic compute atoms (value/filter/map/branch/display/note)
 import { COLLECTION_NODES } from './collection'
 import { PIPELINE_NODES } from './pipeline'
+import { PLAN_GRAPH_NODES } from './planGraph'
 import { PRIMITIVE_NODES } from './primitives'
 import { PROCESSOR_NODES } from './processors'
 import { SOURCE_NODES } from './sources'
@@ -15,6 +16,7 @@ export { PROCESSOR_NODES } from './processors'
 export { PIPELINE_NODES } from './pipeline'
 export { PRIMITIVE_NODES } from './primitives'
 export { COLLECTION_NODES } from './collection'
+export { PLAN_GRAPH_NODES } from './planGraph'
 
 export const ALL_NODES: NodeSpec<any>[] = [
   ...SOURCE_NODES,
@@ -22,4 +24,5 @@ export const ALL_NODES: NodeSpec<any>[] = [
   ...PIPELINE_NODES,
   ...PRIMITIVE_NODES,
   ...COLLECTION_NODES,
+  ...PLAN_GRAPH_NODES,
 ]

@@ -562,3 +562,79 @@ export interface SourceMeasurementRecord {
   created_at: string
   updated_at: string
 }
+
+// ── Plan IR (Plan IR issues 01/02/06 — docs/plan-ir-PRD.md) ────────────────────
+// Mirrors backend.schemas.plan_ir.{PlanPort,PlanNode,PlanEdge,PlanGraph} and
+// backend.schemas.plan.{PlanRead,...} field-for-field. This is the wire shape;
+// frontend/src/lib/planCanvasModel.ts owns the pure IR↔canvas projection.
+
+export type PlanNodeKind = 'source' | 'transform' | 'merge' | 'sink'
+
+export interface PlanPort {
+  name: string
+  type: string
+}
+
+export interface PlanNode {
+  id: string
+  kind: PlanNodeKind
+  type: string
+  label?: string | null
+  params: Record<string, unknown>
+  required_params: string[]
+  inputs: PlanPort[]
+  outputs: PlanPort[]
+  source_id?: string | null
+  draft: boolean
+}
+
+export interface PlanEdge {
+  id: string
+  source_node: string
+  source_port: string
+  target_node: string
+  target_port: string
+}
+
+export interface PlanGraph {
+  ir_version: string
+  name?: string | null
+  draft: boolean
+  nodes: PlanNode[]
+  edges: PlanEdge[]
+}
+
+export interface PlanRead {
+  id: string
+  name: string
+  graph: PlanGraph
+  version: number
+  draft: boolean
+  runnable: boolean
+  created_at: string
+  updated_at: string
+}
+
+// One node-anchored structural-validation error (backend.plan_ir.validation.
+// PlanValidationError.to_dict()) — returned as the 422 `detail` array on a
+// failed plan save. node_id/edge_id are the anchors the canvas renders on.
+export interface PlanValidationErrorItem {
+  code: string
+  message: string
+  node_id?: string
+  edge_id?: string
+}
+
+// ── Presets (Plan IR issue 06) ──────────────────────────────────────────────────
+// Mirrors backend.plan_ir.presets.Preset. Read-only, grouped by channel_type;
+// the palette (issue 07) renders these dynamically — nothing hardcoded here.
+export interface Preset {
+  id: string
+  channel_type: string
+  node_type: string
+  label: string
+  description: string
+  params: Record<string, unknown>
+}
+
+export type PresetsGrouped = Record<string, Preset[]>

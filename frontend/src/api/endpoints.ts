@@ -20,6 +20,9 @@ import type {
   NotificationLog,
   NotificationRule,
   OdpSystemState,
+  PlanGraph,
+  PlanRead,
+  PresetsGrouped,
   Skill,
   SourceControlState,
   SourceMeasurementRecord,
@@ -361,3 +364,30 @@ export const updateChromeEndpointMode = (endpoint: string, mode: 'bridge' | 'cdp
     .patch<ApiResponse<{ endpoint: string; mode: string }>>(`/workers/chrome-pool/${b64}/mode`, { mode })
     .then((r) => r.data.data)
 }
+
+// ── Presets (Plan IR issue 06) ──────────────────────────────────────────────────
+// Read-only, grouped by channel_type — palette (issue 07) source of truth.
+export const listPresets = () =>
+  apiClient.get<ApiResponse<PresetsGrouped>>('/presets').then((r) => r.data.data)
+
+// ── Plans (Plan IR issue 02) — Collection Canvas persistence ────────────────────
+// Save (create/update) validates server-side and 422s with a node-anchored
+// error list (backend.plan_ir.validation.PlanValidationError.to_dict()) on an
+// invalid graph. client.ts's normalizeApiError attaches that raw array onto
+// the thrown Error as `.detail` (see PlanSaveError in planCanvasModel.ts for
+// the typed accessor) — callers that only want the message keep working
+// unchanged; callers that need node-anchored errors read `.detail`.
+export const listPlans = (params?: { draft?: boolean; page?: number; limit?: number }) =>
+  apiClient.get<ApiResponse<PlanRead[]>>('/plans', { params }).then((r) => r.data)
+
+export const getPlan = (id: string) =>
+  apiClient.get<ApiResponse<PlanRead>>(`/plans/${id}`).then((r) => r.data.data)
+
+export const createPlan = (data: { name: string; graph: PlanGraph }) =>
+  apiClient.post<ApiResponse<PlanRead>>('/plans', data).then((r) => r.data.data)
+
+export const updatePlan = (id: string, data: { name?: string; graph?: PlanGraph }) =>
+  apiClient.patch<ApiResponse<PlanRead>>(`/plans/${id}`, data).then((r) => r.data.data)
+
+export const deletePlan = (id: string) =>
+  apiClient.delete<ApiResponse<null>>(`/plans/${id}`).then((r) => r.data)

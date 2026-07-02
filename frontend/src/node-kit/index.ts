@@ -86,7 +86,7 @@ export {
 } from './render/atoms'
 
 // atomic node library (real system functionality, nodified)
-export { ALL_NODES, SOURCE_NODES, PROCESSOR_NODES, PIPELINE_NODES, PRIMITIVE_NODES, COLLECTION_NODES } from './nodes'
+export { ALL_NODES, SOURCE_NODES, PROCESSOR_NODES, PIPELINE_NODES, PRIMITIVE_NODES, COLLECTION_NODES, PLAN_GRAPH_NODES } from './nodes'
 
 // macros — saved subgraph + collapse/expand (pure graph ops) + runGraph flatten
 export type { MacroDef, MacroPort } from './macros'

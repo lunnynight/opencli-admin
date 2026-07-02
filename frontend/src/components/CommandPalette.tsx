@@ -16,6 +16,7 @@ import {
   Settings,
   Workflow,
   X,
+  LayoutPanelTop,
 } from 'lucide-react'
 import { isTopologyLabEnabled } from '../labs/topology/flags'
 
@@ -55,6 +56,14 @@ export default function CommandPalette() {
             },
           ]
         : []),
+      {
+        id: 'plan-canvas',
+        label: t('nav.planCanvas'),
+        hint: 'plan graph draft preset',
+        keywords: ['plan', 'canvas', 'graph', 'preset', '采集画布', '计划', '图'],
+        to: '/plans/new',
+        icon: LayoutPanelTop,
+      },
       {
         id: 'records',
         label: t('nav.records'),
