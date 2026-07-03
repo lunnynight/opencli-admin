@@ -10,6 +10,9 @@ import type {
   DashboardActivity,
   DashboardStats,
   DataSource,
+  PlanGraph,
+  PlanRead,
+  PresetsGrouped,
 } from "@/lib/types"
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -90,6 +93,48 @@ export function useTasks(params?: { status?: string }) {
     queryFn: () =>
       api.get<CollectionTask[]>(`/tasks?limit=100${qs}`).then((r) => r.data),
     refetchInterval: 15_000,
+  })
+}
+
+// ── Plans (canvas) ───────────────────────────────────────────────────────────
+
+export function usePlans() {
+  return useQuery({
+    queryKey: ["plans"],
+    queryFn: () => api.get<PlanRead[]>("/plans?limit=100").then((r) => r.data),
+  })
+}
+
+export function usePlan(id: string | null) {
+  return useQuery({
+    queryKey: ["plans", id],
+    queryFn: () => api.get<PlanRead>(`/plans/${id}`).then((r) => r.data),
+    enabled: !!id,
+  })
+}
+
+export function usePresets() {
+  return useQuery({
+    queryKey: ["presets"],
+    queryFn: () => api.get<PresetsGrouped>("/presets").then((r) => r.data),
+    staleTime: 5 * 60_000,
+  })
+}
+
+export function useSavePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, name, graph }: { id: string | null; name: string; graph: PlanGraph }) =>
+      id
+        ? api.patch<PlanRead>(`/plans/${id}`, { name, graph }).then((r) => r.data)
+        : api.post<PlanRead>("/plans", { name, graph }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["plans"] }),
+  })
+}
+
+export function useRunPlan() {
+  return useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/plans/${id}/run`, {}),
   })
 }
 
