@@ -21,6 +21,27 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let state = AppState::from_env().await?;
+    if state.bus.is_none() {
+        // Without a bus, every "accepted" ingest event vanishes: the dedup
+        // index is in-memory only and nothing durable ever receives the
+        // event. That is a silent black hole — refuse to start rather than
+        // serve 202s that lie about persistence. ODP_INGEST_ALLOW_NO_BUS=1 is
+        // the explicit, deliberate opt-in for an in-memory dev/test mode;
+        // even then, handlers::process_events additionally refuses to count
+        // no-bus events as accepted (defense in depth — see handlers.rs).
+        let allow_no_bus = std::env::var("ODP_INGEST_ALLOW_NO_BUS")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        if !allow_no_bus {
+            anyhow::bail!(
+                "odp-ingest refusing to start with no Redis bus configured (ODP_REDIS_URL/REDIS_URL unset or unreachable) — \
+                 every ingested event would be silently lost. Set ODP_INGEST_ALLOW_NO_BUS=1 to run in explicit no-bus dev/test mode."
+            );
+        }
+        tracing::warn!(
+            "ODP_INGEST_ALLOW_NO_BUS=1 set — starting with NO bus. All events will be rejected as unpersisted (see handlers::process_events); this is a deliberate dev/test-only mode."
+        );
+    }
     let app = Router::new()
         .route("/health", get(handlers::health))
         .route("/v1/ingest/batch", post(handlers::ingest_batch))
