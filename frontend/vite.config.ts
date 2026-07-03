@@ -43,6 +43,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     port: 8030,
     // Allow requests from Docker containers (host.docker.internal) and any LAN IP
     // Dev-only: production uses nginx which doesn't have this restriction
