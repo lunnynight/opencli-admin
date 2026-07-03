@@ -49,14 +49,30 @@ export function NodeHeader({ icon, title, subtitle }: { icon?: string; title: st
   )
 }
 
-/** A typed connection port rendered as an xyflow Handle. */
-export function NodePort({ port, side }: { port: PortDef; side: 'input' | 'output' }) {
+/** A typed connection port rendered as an xyflow Handle. Bigger + hover-grow
+ *  hit target so it's easy to grab, and when a node exposes more than one port
+ *  on a side (e.g. a merge node's two inputs) they're distributed evenly down
+ *  the edge instead of stacking on top of each other. */
+export function NodePort({
+  port,
+  side,
+  index = 0,
+  count = 1,
+}: {
+  port: PortDef
+  side: 'input' | 'output'
+  index?: number
+  count?: number
+}) {
+  const top = count > 1 ? `${((index + 1) / (count + 1)) * 100}%` : undefined
   return (
     <Handle
       id={port.id}
       type={side === 'input' ? 'target' : 'source'}
       position={side === 'input' ? Position.Left : Position.Right}
-      className="h-2.5! w-2.5! border-2! border-ops-panel! bg-sky-400!"
+      style={top ? { top } : undefined}
+      title={port.label ?? port.id}
+      className="h-3.5! w-3.5! border-2! border-ops-panel! bg-sky-400! transition-transform hover:scale-125! hover:bg-sky-300!"
     />
   )
 }

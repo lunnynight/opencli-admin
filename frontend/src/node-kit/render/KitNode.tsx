@@ -80,11 +80,11 @@ export function KitNode<C extends ConfigValues = ConfigValues>({
         runBorder && selected ? 'ring-2 ring-sky-500/30' : '',
       ].join(' ')}
     >
-      {spec.ports.inputs.map((p) => (
-        <NodePort key={`in-${p.id}`} port={p} side="input" />
+      {spec.ports.inputs.map((p, i) => (
+        <NodePort key={`in-${p.id}`} port={p} side="input" index={i} count={spec.ports.inputs.length} />
       ))}
-      {spec.ports.outputs.map((p) => (
-        <NodePort key={`out-${p.id}`} port={p} side="output" />
+      {spec.ports.outputs.map((p, i) => (
+        <NodePort key={`out-${p.id}`} port={p} side="output" index={i} count={spec.ports.outputs.length} />
       ))}
 
       <div className="flex items-start justify-between gap-1.5">

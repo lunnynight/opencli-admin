@@ -29,7 +29,9 @@ import { toast } from 'sonner'
 import {
   Background,
   BackgroundVariant,
+  ConnectionLineType,
   Controls,
+  MarkerType,
   MiniMap,
   Panel,
   ReactFlow,
@@ -123,6 +125,13 @@ function toFlowNode(
   }
 }
 
+const EDGE_STROKE = '#38bdf8'
+const EDGE_STYLE = {
+  type: 'smoothstep' as const,
+  markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_STROKE, width: 18, height: 18 },
+  style: { stroke: EDGE_STROKE, strokeWidth: 1.75 },
+}
+
 function toFlowEdge(e: CanvasEdge): FlowEdge {
   return {
     id: e.id,
@@ -130,7 +139,7 @@ function toFlowEdge(e: CanvasEdge): FlowEdge {
     target: e.target,
     sourceHandle: e.sourceHandle,
     targetHandle: e.targetHandle,
-    type: 'default',
+    ...EDGE_STYLE,
   }
 }
 
@@ -299,6 +308,24 @@ function PlanCanvasInner() {
     [dropAt],
   )
 
+  // Reject connections that can't make sense before they're ever created: no
+  // self-loops, and no duplicate wire between the exact same port pair (xyflow
+  // already prevents output→output / input→input via handle types).
+  const isValidConnection = useCallback(
+    (conn: Connection | Edge) => {
+      if (!conn.source || !conn.target) return false
+      if (conn.source === conn.target) return false
+      return !planEdges.some(
+        (e) =>
+          e.source_node === conn.source &&
+          e.target_node === conn.target &&
+          (e.source_port ?? 'out') === (conn.sourceHandle ?? 'out') &&
+          (e.target_port ?? 'in') === (conn.targetHandle ?? 'in'),
+      )
+    },
+    [planEdges],
+  )
+
   const onConnect = useCallback(
     (params: Connection) => {
       const id = `e-${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`
@@ -312,10 +339,31 @@ function PlanCanvasInner() {
           target_port: params.targetHandle ?? 'in',
         },
       ])
-      setRfEdges((eds) => addEdge({ ...params, type: 'default' }, eds))
+      // Keep the rf edge id aligned with the plan edge id (and styled like the
+      // rest) so the two stay in sync for later selection / deletion.
+      setRfEdges((eds) => addEdge({ ...params, id, ...EDGE_STYLE }, eds))
     },
     [setRfEdges],
   )
+
+  // Deleting a wire on the canvas must also drop it from planEdges (the source
+  // of truth the graph re-projects from) — otherwise a deleted edge silently
+  // reappears on the next re-render and gets saved back. Match by endpoints so
+  // it works regardless of how the edge id was generated.
+  const onEdgesDelete = useCallback((deleted: Edge[]) => {
+    setPlanEdges((prev) =>
+      prev.filter(
+        (pe) =>
+          !deleted.some(
+            (d) =>
+              d.source === pe.source_node &&
+              d.target === pe.target_node &&
+              (d.sourceHandle ?? 'out') === (pe.source_port ?? 'out') &&
+              (d.targetHandle ?? 'in') === (pe.target_port ?? 'in'),
+          ),
+      ),
+    )
+  }, [])
 
   const requestDetach = useCallback((nodeId: string) => setDetachTarget(nodeId), [])
 
@@ -516,6 +564,8 @@ function PlanCanvasInner() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onEdgesDelete={onEdgesDelete}
+            isValidConnection={isValidConnection}
             nodeTypes={nodeTypes}
             onNodeClick={(_, node) => setSelectedId(node.id)}
             onPaneClick={() => setSelectedId(null)}
@@ -523,6 +573,11 @@ function PlanCanvasInner() {
               for (const n of deleted) requestDetach(n.id)
             }}
             deleteKeyCode={['Backspace', 'Delete']}
+            connectionLineType={ConnectionLineType.SmoothStep}
+            connectionLineStyle={{ stroke: EDGE_STROKE, strokeWidth: 2 }}
+            connectionRadius={32}
+            snapToGrid
+            snapGrid={[16, 16]}
             fitView
             minZoom={0.3}
             maxZoom={1.6}
