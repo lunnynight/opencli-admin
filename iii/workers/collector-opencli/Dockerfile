@@ -6,13 +6,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @jackwener/opencli
 
-COPY workers/collector-opencli/pyproject.toml ./worker/
-COPY workers/collector-opencli/src ./worker/src/
+COPY workers/collector-opencli/pyproject.toml workers/collector-opencli/src ./worker/
 COPY lib ./lib
 RUN pip install --no-cache-dir -e ./worker
 
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
 ENV OPENCLI_BIN=opencli
 ENV OPENCLI_MODE=bridge
 ENV OPENCLI_DAEMON_HOST=agent-1
