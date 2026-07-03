@@ -5,6 +5,7 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Providers } from "@/components/providers"
 import { Toaster } from "@/components/ui/sonner"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" })
@@ -34,9 +35,11 @@ export default function RootLayout({
       className={cn("antialiased bg-background", fontMono.variable, "font-sans", geist.variable)}
     >
       <body>
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
-          <Providers>{children}</Providers>
-          <Toaster position="top-center" richColors />
+        <ThemeProvider defaultTheme="light">
+          <TooltipProvider delayDuration={0}>
+            <Providers>{children}</Providers>
+            <Toaster position="top-center" richColors />
+          </TooltipProvider>
         </ThemeProvider>
       </body>
     </html>
