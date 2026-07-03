@@ -273,7 +273,7 @@ function PlanCanvasInner() {
   }, [])
 
   const dropAt = useCallback(
-    (payload: PaletteDropPayload, position: { x: number; y: number }) => {
+    (payload: PaletteDropPayload, position: { x: number; y: number }): string => {
       const id = `n-${Date.now()}-${seq.current++}`
       if (payload.kind === 'preset') {
         addNode(createDraftNodeFromPreset(payload.preset, position, id), position)
@@ -296,6 +296,7 @@ function PlanCanvasInner() {
           position,
         )
       }
+      return id
     },
     [addNode],
   )
@@ -344,6 +345,51 @@ function PlanCanvasInner() {
       setRfEdges((eds) => addEdge({ ...params, id, ...EDGE_STYLE }, eds))
     },
     [setRfEdges],
+  )
+
+  // "Add node on edge drop" (ReactFlow official pattern): dropping a
+  // connection line on empty canvas opens an in-place picker; choosing a kind
+  // creates the node at the drop point and wires it to the dragged-from port.
+  const [edgeDropMenu, setEdgeDropMenu] = useState<{
+    client: { x: number; y: number }
+    flow: { x: number; y: number }
+    fromNodeId: string
+    fromHandle: string
+  } | null>(null)
+
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, connectionState: { isValid: boolean | null; fromNode: { id: string } | null; fromHandle: { id?: string | null } | null }) => {
+      if (connectionState.isValid || !connectionState.fromNode) return
+      const { clientX, clientY } = 'changedTouches' in event ? event.changedTouches[0] : event
+      setEdgeDropMenu({
+        client: { x: clientX, y: clientY },
+        flow: screenToFlowPosition({ x: clientX, y: clientY }),
+        fromNodeId: connectionState.fromNode.id,
+        fromHandle: connectionState.fromHandle?.id ?? 'out',
+      })
+    },
+    [screenToFlowPosition],
+  )
+
+  const insertNodeFromEdgeDrop = useCallback(
+    (nodeKind: 'transform' | 'merge' | 'sink') => {
+      if (!edgeDropMenu) return
+      const newId = dropAt({ kind: 'graph-node', nodeKind }, edgeDropMenu.flow)
+      const targetPort = nodeKind === 'merge' ? 'a' : 'in'
+      const edgeId = `e-${edgeDropMenu.fromNodeId}-${edgeDropMenu.fromHandle}-${newId}-${targetPort}`
+      setPlanEdges((prev) => [
+        ...prev,
+        {
+          id: edgeId,
+          source_node: edgeDropMenu.fromNodeId,
+          source_port: edgeDropMenu.fromHandle,
+          target_node: newId,
+          target_port: targetPort,
+        },
+      ])
+      setEdgeDropMenu(null)
+    },
+    [edgeDropMenu, dropAt],
   )
 
   // Deleting a wire on the canvas must also drop it from planEdges (the source
@@ -564,11 +610,15 @@ function PlanCanvasInner() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onConnectEnd={onConnectEnd}
             onEdgesDelete={onEdgesDelete}
             isValidConnection={isValidConnection}
             nodeTypes={nodeTypes}
             onNodeClick={(_, node) => setSelectedId(node.id)}
-            onPaneClick={() => setSelectedId(null)}
+            onPaneClick={() => {
+              setSelectedId(null)
+              setEdgeDropMenu(null)
+            }}
             onNodesDelete={(deleted) => {
               for (const n of deleted) requestDetach(n.id)
             }}
@@ -601,6 +651,37 @@ function PlanCanvasInner() {
               </CanvasToolbarButton>
             </Panel>
           </ReactFlow>
+
+          {edgeDropMenu && (
+            <div
+              className="fixed z-50 w-44 overflow-hidden rounded-lg border border-white/12 bg-ops-raised shadow-2xl"
+              style={{ left: edgeDropMenu.client.x + 4, top: edgeDropMenu.client.y + 4 }}
+              role="menu"
+              aria-label="添加下游节点"
+            >
+              <p className="border-b border-white/8 px-3 py-1.5 font-telemetry text-3xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                添加下游节点
+              </p>
+              {(
+                [
+                  { kind: 'transform' as const, label: '变换', hint: 'dedupe / map / filter' },
+                  { kind: 'merge' as const, label: '合并', hint: '合并多个分支' },
+                  { kind: 'sink' as const, label: '汇', hint: '写入存储' },
+                ]
+              ).map((item) => (
+                <button
+                  key={item.kind}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => insertNodeFromEdgeDrop(item.kind)}
+                  className="flex w-full flex-col items-start gap-0 px-3 py-2 text-left transition-colors hover:bg-white/6"
+                >
+                  <span className="text-xs font-medium text-zinc-200">{item.label}</span>
+                  <span className="text-3xs text-zinc-600">{item.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {selectedPlanNode && (
