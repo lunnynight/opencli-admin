@@ -176,10 +176,10 @@ export default function Layout() {
         to={to}
         className={({ isActive }) =>
           clsx(
-            'group flex items-center gap-3 border border-transparent px-3 py-2 text-sm transition-colors',
+            'group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
             isActive
-              ? 'border-primary-500/45 bg-primary-500/10 text-white'
-              : 'text-zinc-500 hover:border-white/10 hover:bg-white/4 hover:text-zinc-100'
+              ? 'bg-white/[0.06] text-white before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary-500'
+              : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-200'
           )
         }
         title={sidebarCollapsed ? label : undefined}
@@ -228,7 +228,7 @@ export default function Layout() {
       >
         {/* Logo */}
         <div className="flex items-center gap-3 border-b border-white/10 px-4 py-5">
-          <span className="grid h-8 w-8 shrink-0 place-items-center border border-primary-500/60 bg-primary-500/10 font-telemetry text-2xs font-black tracking-[-0.02em] text-primary-100">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-primary-500/50 bg-primary-500/15 font-telemetry text-2xs font-black tracking-[-0.02em] text-primary-100">
             OC
           </span>
           {!sidebarCollapsed && (
@@ -252,7 +252,7 @@ export default function Layout() {
         <div className="flex flex-col gap-2 border-t border-white/10 px-2 py-3">
           <button
             onClick={() => navigate('/settings')}
-            className="flex items-center gap-3 border border-transparent px-3 py-2 text-sm text-zinc-500 transition-colors hover:border-white/10 hover:bg-white/4 hover:text-zinc-100"
+            className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-200"
           >
             <Settings size={18} />
             {!sidebarCollapsed && <span className="font-medium uppercase tracking-[0.08em]">{t('nav.settings')}</span>}
@@ -261,7 +261,7 @@ export default function Layout() {
           {/* Collapse toggle */}
           <button
             onClick={() => setCollapsed((c) => !c)}
-            className="flex items-center gap-3 border border-transparent px-3 py-2 text-sm text-zinc-500 transition-colors hover:border-white/10 hover:bg-white/4 hover:text-zinc-100"
+            className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-200"
           >
             {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
             {!sidebarCollapsed && <span>{t('nav.collapse')}</span>}
