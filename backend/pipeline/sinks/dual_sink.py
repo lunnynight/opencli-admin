@@ -50,6 +50,15 @@ class DualSink:
                 shadow.duplicates,
                 shadow.rejected,
             )
+            # Previously these counts only reached a log line (P1-7) — attach
+            # them to the returned result too so a caller (pipeline.py) can
+            # surface them without redefining what accepted/duplicates mean
+            # for the legacy/authoritative leg above.
+            result.shadow_meta = {
+                "accepted": shadow.accepted,
+                "duplicates": shadow.duplicates,
+                "rejected": shadow.rejected,
+            }
         except Exception as exc:
             if self.require_odp:
                 # Dual-write required: surface the failure even though legacy wrote.

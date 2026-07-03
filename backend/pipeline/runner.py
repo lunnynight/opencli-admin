@@ -192,6 +192,16 @@ async def run_collection_pipeline(
             run.records_collected = pipeline_result.stored
             if pipeline_result.metadata.get("node_url"):
                 run.node_url = pipeline_result.metadata["node_url"]
+            # Shadow-sink errors (P1-7): best-effort ODP forward failures never
+            # fail the run, but must not vanish either — record them on the
+            # existing error_detail JSON column (no migration: the column
+            # already exists and is otherwise unused on a successful run).
+            shadow_errors = pipeline_result.metadata.get("shadow_errors")
+            if shadow_errors:
+                run.error_detail = {
+                    "shadow_errors": shadow_errors,
+                    "shadow_meta": pipeline_result.metadata.get("shadow_meta"),
+                }
 
         # Paused outcome (skill execute loop hit the confirm gate in headless v1):
         # a successful pipeline run that stopped at a confirm-required action.
@@ -229,6 +239,43 @@ async def run_collection_pipeline(
         pipeline_result.ai_processed, pipeline_result.duration_ms,
         pipeline_result.error,
     )
+
+    # ── Phase 5: dataflow triggering (issue 05) ──────────────────────────────
+    # Fires AFTER the source's own TaskRun/CollectionTask row above is already
+    # committed — so this is strictly additive: a Plan's shared-segment
+    # trouble can never touch what's already durably recorded as this
+    # source's own outcome (Two-Tier Attribution / failure isolation). Only
+    # fires on a genuine delivery of new data (a successful run that actually
+    # stored something) — a run that collected nothing new, or failed,
+    # triggers no downstream shared segment (nothing new to flow through).
+    # This is the ONE call site for both scheduled and manually-triggered
+    # collection: LocalExecutor.dispatch_collection/dispatch_scheduled_
+    # collection and the Celery run_collection/run_scheduled_collection
+    # tasks all funnel into this same run_collection_pipeline function, so
+    # hooking here (rather than in either trigger path separately) covers
+    # both without duplicating the hook or needing plan-level cron.
+    if pipeline_result.success and pipeline_result.stored > 0 and source_id:
+        try:
+            from backend.services.plan_trigger_service import trigger_incremental_shared_segments
+
+            async with AsyncSessionLocal() as trigger_session:
+                await trigger_incremental_shared_segments(
+                    trigger_session,
+                    source_id=source_id,
+                    task_id=task_id,
+                    parameters=parameters,
+                )
+                await trigger_session.commit()
+        except Exception:
+            # Belt-and-braces on top of trigger_incremental_shared_segments'
+            # own internal isolation: this source's collection run is ALREADY
+            # committed as completed above; nothing downstream may ever flip
+            # that outcome, so any surprise here is logged, never raised.
+            logger.exception(
+                "[task:%s] dataflow trigger raised unexpectedly | source_id=%s",
+                task_id, source_id,
+            )
+
     return {
         "task_id": task_id,
         "run_id": run_id,

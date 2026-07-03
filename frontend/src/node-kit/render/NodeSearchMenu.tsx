@@ -29,7 +29,7 @@ export function NodeSearchMenu({
     <>
       <div className="absolute inset-0 z-40" onClick={onClose} onContextMenu={(e) => e.preventDefault()} />
       <div
-        className="absolute z-50 w-64 overflow-hidden rounded-lg border border-white/15 bg-[#0c0d10] shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
+        className="absolute z-50 w-64 overflow-hidden rounded-lg border border-white/15 bg-ops-raised shadow-overlay"
         style={{ left: x, top: y }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -42,7 +42,7 @@ export function NodeSearchMenu({
             else if (e.key === 'Enter' && filtered[0]) onPick(filtered[0].type)
           }}
           placeholder="搜索节点…"
-          className="w-full border-b border-white/10 bg-transparent px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+          className="w-full border-b border-white/10 bg-transparent px-3 py-2 text-sm text-zinc-100 outline-hidden placeholder:text-zinc-600"
         />
         <div className="max-h-64 overflow-auto py-1">
           {filtered.length === 0 && <div className="px-3 py-2 text-xs text-zinc-600">无匹配节点</div>}
@@ -57,7 +57,7 @@ export function NodeSearchMenu({
               >
                 <Icon className="h-4 w-4 shrink-0 text-zinc-500" />
                 <span className="flex-1 truncate">{s.title}</span>
-                <span className="font-code text-[10px] text-zinc-600">{s.type}</span>
+                <span className="font-code text-3xs text-zinc-600">{s.type}</span>
               </button>
             )
           })}

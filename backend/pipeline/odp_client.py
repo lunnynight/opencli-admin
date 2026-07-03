@@ -16,8 +16,10 @@ from typing import Any
 
 import httpx
 
+from backend.channels.base import ChannelFetchError
 from backend.odp.mapper import RecordEventMapper
 from backend.odp.schemas import OdpIngestResponse
+from backend.pipeline.error_taxonomy import is_retryable_http_status
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,27 @@ async def post_batch(
     body = {"events": events}
     async with httpx.AsyncClient(timeout=INGEST_TIMEOUT) as client:
         resp = await client.post(endpoint, json=body)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # A raw HTTPStatusError classifies as neither retryable nor
+            # permanent (effective_error_type falls back to the exception's
+            # own class name, which is in neither frozenset in
+            # error_taxonomy.py) — is_retryable() would return False and
+            # pipeline.py would swallow a transient 503/429 into a
+            # success=False PipelineResult, so Celery's autoretry_for never
+            # fires. Reclassify by status code using the taxonomy's own
+            # is_retryable_http_status() so 5xx/429 propagate for retry and
+            # other 4xx stay permanent.
+            error_type = (
+                "RetryableHTTPStatus"
+                if is_retryable_http_status(resp.status_code)
+                else "PermanentHTTPStatus"
+            )
+            raise ChannelFetchError(
+                f"odp-ingest returned {resp.status_code}: {exc}",
+                error_type=error_type,
+            ) from exc
         data = resp.json()
 
     parsed = OdpIngestResponse.from_wire(data)

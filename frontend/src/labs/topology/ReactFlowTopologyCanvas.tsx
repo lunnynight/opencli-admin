@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -13,9 +13,15 @@ import {
 } from '@xyflow/react'
 import type { Edge, Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { Network } from 'lucide-react'
 
+import { CanvasToolbarButton } from '../../components/CanvasToolbarButton'
 import type { TopologyHealth, TopologyNodeData } from './topologyModel'
 import { ALL_NODES, hasNode, nodeTypesForXyflow, registerNodes, registerSavedMacros } from '../../node-kit'
+// elkLayout is not re-exported from node-kit's public index (only NodeWorkbench
+// uses it today) — import the module directly, same call signature NodeWorkbench
+// uses at ~line 310 (elkLayout(nodes, edges) => Promise<Node[]>, then fitView).
+import { elkLayout } from '../../node-kit/render/elkLayout'
 
 // The collection.* specs must exist before this canvas mounts (it may mount
 // before NetworkPage runs its own registerNodes). Idempotent: the registry is a
@@ -37,6 +43,30 @@ interface ReactFlowTopologyCanvasProps {
   /** Changes on dive (L0↔L1); drives an animated fitView instead of a remount. */
   viewKey?: string
   headerLabel?: string
+  /** Delete key pressed on a SOURCE (project) node — the canvas never deletes a
+   * DB entity itself, it only reports the request. Omit to disable delete-key
+   * handling entirely for entity nodes (safer default than silent removal). */
+  onRequestDeleteSource?: (sourceId: string) => void
+  /** Observation-only lens (总览, D18-B): node cards drop their spec.ops
+   * mutation buttons (启停/测连通/采集…) — status only. Defaults to false so
+   * the legacy /labs/topology-legacy workbench (TopologyPage.tsx) keeps its
+   * existing card affordances unchanged. */
+  hideOps?: boolean
+  /** 总览 (D18-B #2): run one ELK layout pass + fitView right after mount so
+   * the graph fills the viewport instead of landing bunched in the middle.
+   * Defaults to false — other consumers keep their current "fitView only"
+   * mount behavior and their manual 自动布局 button. */
+  autoLayoutOnMount?: boolean
+  /** Hide the manual "自动布局" toolbar button (D18-B #1: overview chrome has
+   * no editor affordances). Defaults to false. */
+  hideAutoLayoutButton?: boolean
+  /** MiniMap only renders once the graph is dense enough to need it (D18-B
+   * #5). Omit to always render (existing behavior for other consumers). */
+  minimapMinNodes?: number
+  /** Extra toolbar content in the canvas's top-right Panel, alongside (or, on
+   * 总览 where hideAutoLayoutButton is set, instead of) 自动布局 — D18-B #6
+   * lands the Agent Dock toggle here as a CanvasToolbarButton. */
+  topRightExtra?: React.ReactNode
 }
 
 // M3 emphasized-decelerate ~ approximated as easeOutQuart for the d3 viewport tween.
@@ -75,13 +105,20 @@ function ReactFlowTopologyCanvasInner({
   onNodeDoubleClick,
   viewKey,
   headerLabel,
+  onRequestDeleteSource,
+  hideOps = false,
+  autoLayoutOnMount = false,
+  hideAutoLayoutButton = false,
+  minimapMinNodes,
+  topRightExtra,
 }: ReactFlowTopologyCanvasProps) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TopologyFlowNode>([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TopologyFlowEdge>([])
   const { fitView } = useReactFlow()
+  const [laying, setLaying] = useState(false)
   // One nodeTypes map from the registry (KitNode bound per spec.type). Only the
   // set of registered types matters, so it's stable for this component's life.
-  const nodeTypes = useMemo(() => nodeTypesForXyflow(), [])
+  const nodeTypes = useMemo(() => nodeTypesForXyflow({ hideOps }), [hideOps])
 
   // Keep dive callback in a ref so the sync effect below does NOT depend on its
   // (per-render-unstable) identity — otherwise every parent re-render rebuilds
@@ -94,7 +131,7 @@ function ReactFlowTopologyCanvasInner({
   // Sync props → controlled state WITHOUT remounting. Preserve any user-dragged
   // position by id so the periodic refetches don't snap nodes back to layout.
   useEffect(() => {
-    setRfNodes((prev) => {
+    setRfNodes((prev: TopologyFlowNode[]) => {
       const posById = new Map(prev.map((n) => [n.id, n.position]))
       return nodes.map((node) => {
         const isProject = readDetailString(node.data.detail, 'kind', '') === 'project'
@@ -144,15 +181,75 @@ function ReactFlowTopologyCanvasInner({
     return () => cancelAnimationFrame(raf)
   }, [viewKey, fitView])
 
+  // AUTO-LAYOUT (issue: node-editor basics) — same elkLayout call NodeWorkbench
+  // uses (nodes, edges) => Promise<Node[]>, then fitView. Runs on the live
+  // rfNodes/rfEdges (post user drag) rather than the raw props so a manual
+  // auto-layout pass respects whatever is currently on screen.
+  const runAutoLayout = useCallback(async () => {
+    if (rfNodes.length === 0) return
+    setLaying(true)
+    try {
+      const laidOut = await elkLayout(rfNodes, rfEdges)
+      setRfNodes(laidOut as TopologyFlowNode[])
+      requestAnimationFrame(() => {
+        fitView({ padding: 0.16, maxZoom: 1, duration: prefersReducedMotion() ? 0 : 400, ease: m3Decel })
+      })
+    } catch (err) {
+      console.error('[topology] auto-layout failed', err)
+    } finally {
+      setLaying(false)
+    }
+  }, [rfNodes, rfEdges, setRfNodes, fitView])
+
+  // 总览 auto-layout on entry (D18-B #2): observation lens has no manual
+  // 自动布局 button, so it must run one layout pass itself right after mount
+  // (and again on each dive level change) so the graph fills the viewport
+  // instead of landing bunched in the model's raw grid positions. Keyed off
+  // viewKey (like the fitView effect above) rather than [] so diving into a
+  // project's subnet gets its own layout pass too — runAutoLayout itself is
+  // intentionally NOT a dependency here (it closes over rfNodes/rfEdges and
+  // would refire on every drag); this effect only ever wants "once per view".
+  const autoLayoutRef = useRef(runAutoLayout)
+  useEffect(() => {
+    autoLayoutRef.current = runAutoLayout
+  })
+  useEffect(() => {
+    if (!autoLayoutOnMount) return
+    void autoLayoutRef.current()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKey, autoLayoutOnMount])
+
+  // DELETE-KEY (issue: editor basics) — topology nodes are real DB entities, so
+  // xyflow must never remove them from its own state; onNodesDelete here is a
+  // read-only interceptor (nodes stay because there's no local mutation of
+  // rfNodes on delete) that forwards a delete *request* for SOURCE/project
+  // nodes to the parent, which owns the actual confirm+API-delete flow. Non-
+  // project nodes (schedule/task/agent/record/...) have no delete affordance
+  // here — deleting those isn't part of this canvas's contract.
+  const handleNodesDelete = useCallback(
+    (deleted: TopologyFlowNode[]) => {
+      if (!onRequestDeleteSource) return
+      for (const node of deleted) {
+        const isProject = readDetailString(node.data.detail, 'kind', '') === 'project'
+        const sourceId = readDetailString(node.data.detail, 'source_id', '') || node.data.detail?.id
+        if (isProject && typeof sourceId === 'string' && sourceId) {
+          onRequestDeleteSource(sourceId)
+        }
+      }
+    },
+    [onRequestDeleteSource],
+  )
+
   return (
     <ReactFlow
       nodes={rfNodes}
       edges={rfEdges}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
+      onNodesDelete={handleNodesDelete}
       nodeTypes={nodeTypes}
-      onNodeClick={(_, node) => onSelectNode(node.id)}
-      onNodeDoubleClick={onNodeDoubleClick ? (_, node) => onNodeDoubleClick(node.id) : undefined}
+      onNodeClick={(_: ReactMouseEvent, node: TopologyFlowNode) => onSelectNode(node.id)}
+      onNodeDoubleClick={onNodeDoubleClick ? (_: ReactMouseEvent, node: TopologyFlowNode) => onNodeDoubleClick(node.id) : undefined}
       fitView
       fitViewOptions={{ padding: 0.16, maxZoom: 1 }}
       minZoom={0.3}
@@ -160,22 +257,56 @@ function ReactFlowTopologyCanvasInner({
       nodesDraggable
       nodesConnectable={false}
       proOptions={{ hideAttribution: true }}
-      className="bg-[#060608]"
+      className="bg-ops-black"
+      // EDITOR BASICS (issue: node-editor basics) — multi-select via drag
+      // (including partial intersection, not just full-enclosure), 8px snap
+      // grid, and scroll-to-pan so the canvas behaves like a real node editor
+      // rather than a passive diagram.
+      selectionOnDrag
+      selectNodesOnDrag={false}
+      panOnDrag={[1, 2]}
+      panOnScroll
+      snapToGrid
+      snapGrid={[8, 8]}
+      deleteKeyCode={onRequestDeleteSource ? ['Backspace', 'Delete'] : null}
     >
       <Background variant={BackgroundVariant.Dots} color="#2a2a32" gap={22} size={1.6} />
       <Controls position="bottom-left" showInteractive={false} />
-      <MiniMap
-        position="bottom-right"
-        nodeColor={(node) => miniColor((node.data as TopologyNodeViewData).health)}
-        maskColor="rgba(6, 6, 8, 0.78)"
-        pannable
-        zoomable
-      />
+      {/* D18-B #5: minimap only earns its screen space once the graph is
+       * dense enough that panning without it would be annoying. */}
+      {(minimapMinNodes === undefined || rfNodes.length > minimapMinNodes) && (
+        <MiniMap
+          position="bottom-right"
+          nodeColor={(node) => miniColor((node.data as TopologyNodeViewData).health)}
+          maskColor="rgba(5, 7, 8, 0.78)"
+          pannable
+          zoomable
+        />
+      )}
       <Panel position="top-left">
-        <div className="rounded-md border border-white/10 bg-black/80 px-3 py-1.5 text-[11px] text-zinc-400 shadow-lg">
+        <div className="rounded-md border border-white/10 bg-black/80 px-3 py-1.5 text-2xs text-zinc-400 shadow-lg">
           <span className="font-code text-zinc-600">{headerLabel ?? `采集管线 · ${rfNodes.length} stages`}</span>
         </div>
       </Panel>
+      {(!hideAutoLayoutButton || topRightExtra) && (
+        <Panel position="top-right">
+          <div className="flex items-center gap-2">
+            {!hideAutoLayoutButton && (
+              <CanvasToolbarButton
+                tone="accent"
+                onClick={runAutoLayout}
+                disabled={laying}
+                title="按数据流自动排版 (ELK)"
+                className="shadow-lg"
+                icon={<Network className="h-3.5 w-3.5" />}
+              >
+                {laying ? '布局中…' : '自动布局'}
+              </CanvasToolbarButton>
+            )}
+            {topRightExtra}
+          </div>
+        </Panel>
+      )}
     </ReactFlow>
   )
 }
@@ -207,10 +338,10 @@ function healthLabel(health: TopologyHealth) {
 
 function miniColor(health: TopologyHealth) {
   const colors: Record<TopologyHealth, string> = {
-    healthy: '#34d399',
+    healthy: '#35b779',
     active: '#38bdf8',
-    warning: '#fbbf24',
-    failed: '#f87171',
+    warning: '#d99a3d',
+    failed: '#e15b64',
     disabled: '#64748b',
     unknown: '#a1a1aa',
   }

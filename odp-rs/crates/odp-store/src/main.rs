@@ -1,13 +1,19 @@
 //! ODP store writer — consume `odp.ingest.raw`, batch insert Postgres, publish `odp.record.committed`.
 
+mod reap;
 mod writer;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use odp_bus::redis_streams::BusConfig;
 use odp_bus::RedisBus;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+/// How often the reap sweep (stale-consumer recovery + DLQ) runs. It's a
+/// cheap XPENDING call when there's nothing stale, so this can be frequent
+/// without meaningfully loading Redis.
+const REAP_INTERVAL: Duration = Duration::from_secs(15);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,14 +41,49 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(batch_size, "odp-store started");
 
+    let mut last_reap = Instant::now();
+
     loop {
-        let messages = bus.read_ingest_batch(batch_size, 2000).await?;
+        if last_reap.elapsed() >= REAP_INTERVAL {
+            if let Err(e) = reap::reap_stale(&bus, &pool).await {
+                tracing::error!(error = %e, "reap sweep failed — will retry next interval");
+            }
+            last_reap = Instant::now();
+        }
+
+        // Steady-state loop body: a transient Redis/PG error here must not
+        // crash the whole process (that would drop every consumer/PEL entry
+        // this instance owns and require an external restart). Log and
+        // `continue` — the same message stays pending and gets retried on
+        // the next iteration (or eventually reaped by reap_stale), matching
+        // reap.rs's existing log-and-continue idiom. Only genuinely
+        // unrecoverable startup errors above (connect_pool, migrate, connect
+        // bus, ensure_consumer_group) stay fatal `?`.
+        let messages = match bus.read_ingest_batch(batch_size, 2000).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, "read_ingest_batch failed — will retry next iteration");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
         if messages.is_empty() {
             continue;
         }
 
-        let (inserted, ack_ids) = writer::persist_batch(&pool, &bus, &messages).await?;
-        bus.ack_ingest(&ack_ids).await?;
+        let (inserted, ack_ids) = match writer::persist_batch(&pool, &bus, &messages).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "persist_batch failed — messages remain pending, will retry next iteration");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
+        if let Err(e) = bus.ack_ingest(&ack_ids).await {
+            tracing::error!(error = %e, "ack_ingest failed — inserted rows are durable, ack will be retried (dup-safe via ON CONFLICT) next sweep");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
+        }
         tracing::info!(
             read = messages.len(),
             inserted,

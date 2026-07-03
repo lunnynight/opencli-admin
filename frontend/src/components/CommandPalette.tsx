@@ -14,10 +14,9 @@ import {
   Search,
   Server,
   Settings,
-  Workflow,
   X,
+  LayoutPanelTop,
 } from 'lucide-react'
-import { isTopologyLabEnabled } from '../labs/topology/flags'
 
 interface CommandAction {
   id: string
@@ -43,18 +42,14 @@ export default function CommandPalette() {
         to: '/dashboard',
         icon: Gauge,
       },
-      ...(isTopologyLabEnabled
-        ? [
-            {
-              id: 'topology',
-              label: t('nav.topology'),
-              hint: 'node graph data flow',
-              keywords: ['topology', 'graph', 'node', 'flow', '拓扑', '节点'],
-              to: '/labs/topology',
-              icon: Workflow,
-            },
-          ]
-        : []),
+      {
+        id: 'plan-canvas',
+        label: t('nav.planCanvas'),
+        hint: 'collection canvas overview plan graph draft preset',
+        keywords: ['plan', 'canvas', 'graph', 'preset', 'topology', '采集画布', '采集网络', '计划', '图', '拓扑'],
+        to: '/plans',
+        icon: LayoutPanelTop,
+      },
       {
         id: 'records',
         label: t('nav.records'),
@@ -154,7 +149,7 @@ export default function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/75 px-4 pt-[12vh] backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/75 px-4 pt-[12vh] backdrop-blur-xs"
       onMouseDown={() => setOpen(false)}
     >
       <Command
@@ -168,12 +163,12 @@ export default function CommandPalette() {
           <Command.Input
             autoFocus
             placeholder={t('command.placeholder')}
-            className="h-12 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+            className="h-12 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-hidden placeholder:text-zinc-600"
           />
           <button
             type="button"
             onClick={() => setOpen(false)}
-            className="grid h-8 w-8 place-items-center border border-transparent text-zinc-500 hover:border-white/10 hover:bg-white/[0.05] hover:text-zinc-100"
+            className="grid h-8 w-8 place-items-center border border-transparent text-zinc-500 hover:border-white/10 hover:bg-white/5 hover:text-zinc-100"
             title={t('common.cancel')}
           >
             <X className="h-4 w-4" />
@@ -203,7 +198,7 @@ export default function CommandPalette() {
             })}
           </Command.Group>
         </Command.List>
-        <div className="flex items-center justify-between border-t border-white/10 px-4 py-2 font-telemetry text-[11px] uppercase tracking-[0.14em] text-zinc-500">
+        <div className="flex items-center justify-between border-t border-white/10 px-4 py-2 font-telemetry text-2xs uppercase tracking-[0.14em] text-zinc-500">
           <span>{t('command.footer')}</span>
           <span className="font-mono">Esc</span>
         </div>

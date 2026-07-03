@@ -2,15 +2,20 @@ import xml.etree.ElementTree as ET
 from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.channels.registry import get_channel
+from backend.control.objectives import SourceObjectiveOverride
 from backend.models.source import DataSource
 from backend.models.source_credential import SourceCredential
 from backend.schemas.source import DataSourceCreate, DataSourceUpdate
+from backend.security.url_guard import (
+    SSRFValidationError,
+    avalidate_public_url,
+    guarded_async_client,
+)
 
 #: common feed paths probed when a site's <head> has no <link rel="alternate">
 #: feed tags at all (many blogs/CMSes still serve a feed at one of these).
@@ -67,6 +72,30 @@ async def update_source(
     return source
 
 
+async def set_objective_override(
+    session: AsyncSession, source: DataSource, override: Optional[dict[str, Any]]
+) -> DataSource:
+    """Set, update, or clear (``override=None``) a source's per-source
+    SourceObjective override (issue 02).
+
+    Validates ``override`` against ``SourceObjectiveOverride`` (unknown
+    field names / wrong types raise ``pydantic.ValidationError`` — the
+    caller, ``backend.api.v1.sources.set_source_objective``, translates that
+    into a 422). Only the fields the caller actually set are persisted
+    (``exclude_none``), so a merge later via
+    ``backend.control.objectives.resolve_objective`` sees exactly the
+    overridden keys, nothing else.
+    """
+    if override is None:
+        source.objective_override = None
+    else:
+        validated = SourceObjectiveOverride.model_validate(override)
+        source.objective_override = validated.model_dump(exclude_none=True)
+    await session.flush()
+    await session.refresh(source)
+    return source
+
+
 async def delete_source(session: AsyncSession, source: DataSource) -> None:
     # source_credentials has no FK/cascade to data_sources (it's written by
     # AuthManager, a separate session, so a DB-level FK would need cross-module
@@ -108,9 +137,23 @@ async def discover_feeds(url: str) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+    # guarded_async_client validates url AND pins the connection to the IP(s)
+    # that validation resolved (DNS-rebinding TOCTOU closure — AUDIT B3
+    # follow-up; see backend.security.url_guard's module docstring).
+    # follow_redirects=False: a validated URL can still 30x-redirect to a
+    # private/loopback/fleet address (SSRF via redirect) — this endpoint takes
+    # a raw user-supplied homepage URL at setup time, so it's a prime target.
+    # With redirects disabled, response.url == url, so the same pinned
+    # client's connection (bound to url's hostname) is also correct for the
+    # same-host fallback-probe loop below.
+    try:
+        client, url = await guarded_async_client(url, follow_redirects=False, timeout=10)
+    except SSRFValidationError:
+        return []
+
+    async with client as opened_client:
         try:
-            response = await client.get(url)
+            response = await opened_client.get(url)
             response.raise_for_status()
         except Exception:
             return []
@@ -121,6 +164,13 @@ async def discover_feeds(url: str) -> list[dict[str, Any]]:
             href = link.get("href")
             if mime in _FEED_MIME_TYPES and href:
                 feed_url = urljoin(str(response.url), href)
+                # The derived feed_url is attacker-influenceable (comes from the
+                # fetched page's own <link href>), so it needs the same check as
+                # the original url, not just a "we already validated the site" pass.
+                try:
+                    feed_url = await avalidate_public_url(feed_url)
+                except SSRFValidationError:
+                    continue
                 if feed_url not in seen:
                     seen.add(feed_url)
                     candidates.append({"url": feed_url, "title": link.get("title")})
@@ -128,13 +178,19 @@ async def discover_feeds(url: str) -> list[dict[str, Any]]:
         if candidates:
             return candidates
 
-        # Nothing declared in <head> — probe common paths as a fallback.
+        # Nothing declared in <head> — probe common paths as a fallback. Same
+        # host as the pinned client's connection (see guarded_async_client
+        # call above), so reusing opened_client keeps the pin in effect here.
         parsed = urlparse(str(response.url))
         base = f"{parsed.scheme}://{parsed.netloc}"
         for path in _COMMON_FEED_PATHS:
             probe_url = base + path
             try:
-                probe = await client.get(probe_url)
+                probe_url = await avalidate_public_url(probe_url)
+            except SSRFValidationError:
+                continue
+            try:
+                probe = await opened_client.get(probe_url)
             except Exception:
                 continue
             content_type = probe.headers.get("content-type", "").split(";")[0].strip().lower()

@@ -44,7 +44,11 @@ async def _seed(db_session):
 
 
 @pytest.mark.asyncio
-async def test_forward_called_when_url_set(db_session, monkeypatch):
+async def test_forward_called_when_url_set_and_flag_explicit_true(db_session, monkeypatch):
+    # P1-1: forward_to_odp now defaults to False, so an explicit opt-in is
+    # required — this is the shape OdpSink/DualSink use for an ODP-aware
+    # write_strategy. ODP_INGEST_URL being set is necessary but no longer
+    # sufficient on its own (see test_forward_skipped_when_flag_defaults_false).
     monkeypatch.setenv("ODP_INGEST_URL", "http://odp:8040")
     source, task = await _seed(db_session)
     triples = [_triple(source.id, 1), _triple(source.id, 2)]
@@ -52,7 +56,8 @@ async def test_forward_called_when_url_set(db_session, monkeypatch):
     post_mock = AsyncMock(return_value=(2, 0, 0))
     with patch("backend.pipeline.odp_client.post_batch", new=post_mock):
         new_records, skipped = await storer.store_records(
-            db_session, task.id, source.id, triples, channel_type="rss"
+            db_session, task.id, source.id, triples, channel_type="rss",
+            forward_to_odp=True,
         )
 
     assert len(new_records) == 2
@@ -62,6 +67,25 @@ async def test_forward_called_when_url_set(db_session, monkeypatch):
     assert [e["event_id"] for e in sent] == ["hash-1", "hash-2"]
     assert sent[0]["provider"] == "opencli-admin/rss"
     assert sent[0]["task_id"] == str(task.id)
+
+
+@pytest.mark.asyncio
+async def test_forward_skipped_when_flag_defaults_false(db_session, monkeypatch):
+    # P1-1 strangler collapse: the bare-env-var backdoor is closed. Even with
+    # ODP_INGEST_URL set, a caller that does not explicitly opt in (the new
+    # default) must NOT forward — closing the "legacy source silently leaks
+    # into ODP" bug. Only an explicit write_strategy (OdpSink/DualSink) opts in.
+    monkeypatch.setenv("ODP_INGEST_URL", "http://odp:8040")
+    source, task = await _seed(db_session)
+
+    post_mock = AsyncMock(return_value=(1, 0, 0))
+    with patch("backend.pipeline.odp_client.post_batch", new=post_mock):
+        new_records, _ = await storer.store_records(
+            db_session, task.id, source.id, [_triple(source.id, 1)], channel_type="rss",
+        )
+
+    assert len(new_records) == 1
+    post_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -106,7 +130,8 @@ async def test_forward_failure_swallowed_by_default(db_session, monkeypatch):
     boom = AsyncMock(side_effect=RuntimeError("odp down"))
     with patch("backend.pipeline.odp_client.post_batch", new=boom):
         new_records, _ = await storer.store_records(
-            db_session, task.id, source.id, [_triple(source.id, 1)], channel_type="rss"
+            db_session, task.id, source.id, [_triple(source.id, 1)], channel_type="rss",
+            forward_to_odp=True,
         )
 
     # Fail-open: ODP being down must not block the sqlite write.
@@ -123,5 +148,6 @@ async def test_forward_failure_raises_when_required(db_session, monkeypatch):
     with patch("backend.pipeline.odp_client.post_batch", new=boom):
         with pytest.raises(RuntimeError, match="odp down"):
             await storer.store_records(
-                db_session, task.id, source.id, [_triple(source.id, 1)], channel_type="rss"
+                db_session, task.id, source.id, [_triple(source.id, 1)], channel_type="rss",
+                forward_to_odp=True,
             )

@@ -321,7 +321,7 @@ function RunInboxCard({
               {runInboxStateLabel(state)}
             </Badge>
             <StatusBadge status={task.status} />
-            <span className="font-code text-[11px] text-zinc-600">{task.trigger_type}</span>
+            <span className="font-code text-2xs text-zinc-600">{task.trigger_type}</span>
           </div>
           <h3 className="mt-2 truncate text-base font-semibold text-zinc-100">
             {task.source_name ?? '未命名数据源'}
@@ -389,22 +389,22 @@ function EventTimeline({ events }: { events: TaskRunEvent[] }) {
     <div className="max-h-[500px] overflow-y-auto border border-white/10 bg-black/20">
       {events.map((event) => (
         <div key={event.id} className="grid grid-cols-[92px_minmax(0,1fr)] gap-3 border-b border-white/10 p-3 last:border-b-0">
-          <div className="font-code text-[11px] text-zinc-600">{formatDate(event.created_at, 'HH:mm:ss')}</div>
+          <div className="font-code text-2xs text-zinc-600">{formatDate(event.created_at, 'HH:mm:ss')}</div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className={cn('gap-1', levelTone(event.level))}>
                 {event.level}
               </Badge>
-              <span className="font-telemetry text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">
+              <span className="font-telemetry text-2xs font-semibold uppercase tracking-[0.08em] text-zinc-400">
                 {STEP_LABELS[event.step] ?? event.step}
               </span>
               {event.elapsed_ms != null && (
-                <span className="font-code text-[11px] text-zinc-600">{formatDuration(event.elapsed_ms)}</span>
+                <span className="font-code text-2xs text-zinc-600">{formatDuration(event.elapsed_ms)}</span>
               )}
             </div>
             <p className="mt-2 text-sm leading-relaxed text-zinc-200">{event.message}</p>
             {event.detail && (
-              <pre className="mt-2 max-h-32 overflow-auto border border-white/10 bg-black/30 p-2 font-code text-[11px] leading-relaxed text-zinc-500">
+              <pre className="mt-2 max-h-32 overflow-auto border border-white/10 bg-black/30 p-2 font-code text-2xs leading-relaxed text-zinc-500">
                 {JSON.stringify(event.detail, null, 2)}
               </pre>
             )}
@@ -430,7 +430,7 @@ function SurfacePanel({
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden border border-white/10 bg-black/20">
-      <header className="run-surface-handle flex cursor-move items-center justify-between gap-3 border-b border-white/10 bg-white/[0.025] px-3 py-2">
+      <header className="run-surface-handle flex cursor-move items-center justify-between gap-3 border-b border-white/10 bg-white/2.5 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="grid h-7 w-7 shrink-0 place-items-center border border-white/10 bg-black/25 text-zinc-400">
             <Icon size={14} />
@@ -504,7 +504,7 @@ function RenderSurface({ links }: { links: Array<{ label: string; href: string }
 
 function RecordPreviewSurface({ recordPreview }: { recordPreview: unknown }) {
   return (
-    <pre className="h-full min-h-32 overflow-auto border border-white/10 bg-black/30 p-3 font-code text-[11px] leading-relaxed text-zinc-500">
+    <pre className="h-full min-h-32 overflow-auto border border-white/10 bg-black/30 p-3 font-code text-2xs leading-relaxed text-zinc-500">
       {recordPreview ? JSON.stringify(recordPreview, null, 2) : 'N/A'}
     </pre>
   )
@@ -696,7 +696,7 @@ function LiveCollectionView({
               </DialogDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className={connectionState === 'live' ? 'border-sky-400/40 bg-sky-400/10 text-sky-100' : 'border-white/14 bg-white/[0.04] text-zinc-300'}>
+              <Badge variant="outline" className={connectionState === 'live' ? 'border-sky-400/40 bg-sky-400/10 text-sky-100' : 'border-white/14 bg-white/4 text-zinc-300'}>
                 {connectionState === 'live' ? 'SSE LIVE' : connectionState.toUpperCase()}
               </Badge>
               {selectedRun && <StatusBadge status={selectedRun.status} />}
@@ -721,11 +721,11 @@ function LiveCollectionView({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs font-semibold text-zinc-200">{formatDate(run.created_at)}</span>
-                    <span className="font-code text-[10px] text-zinc-600">{run.records_collected}</span>
+                    <span className="font-code text-3xs text-zinc-600">{run.records_collected}</span>
                   </div>
                   <div className="mt-2 flex items-center gap-2">
                     <StatusBadge status={run.status} />
-                    <span className="font-code text-[10px] text-zinc-600">{run.id.slice(0, 8)}</span>
+                    <span className="font-code text-3xs text-zinc-600">{run.id.slice(0, 8)}</span>
                   </div>
                 </button>
               ))}
@@ -873,7 +873,7 @@ export default function TasksPage() {
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <span className="grid h-9 w-9 place-items-center border border-white/10 bg-white/[0.04] text-zinc-300">
+            <span className="grid h-9 w-9 place-items-center border border-white/10 bg-white/4 text-zinc-300">
               <CheckCircle2 size={17} />
             </span>
             <div>
@@ -900,7 +900,7 @@ export default function TasksPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="搜索数据源、任务 ID、错误"
-                className="h-9 w-full border border-white/10 bg-black/30 pl-9 pr-3 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-600 focus:border-primary-500/60"
+                className="h-9 w-full border border-white/10 bg-black/30 pl-9 pr-3 text-sm text-zinc-100 outline-hidden transition-colors placeholder:text-zinc-600 focus:border-primary-500/60"
               />
             </label>
           </div>
@@ -919,9 +919,9 @@ export default function TasksPage() {
                 >
                   <span className="block text-xs font-semibold text-zinc-200">
                     {item.label}
-                    <span className="ml-2 font-code text-[11px] text-zinc-500">{count}</span>
+                    <span className="ml-2 font-code text-2xs text-zinc-500">{count}</span>
                   </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-zinc-600">{item.hint}</span>
+                  <span className="mt-0.5 block truncate text-2xs text-zinc-600">{item.hint}</span>
                 </button>
               )
             })}

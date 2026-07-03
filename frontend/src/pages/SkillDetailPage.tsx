@@ -99,7 +99,12 @@ export default function SkillDetailPage() {
   if (isLoading) return <PageLoader />
   if (error || !skill) return <ErrorAlert error={(error as Error) ?? new Error('技能不存在')} onRetry={refetch} />
 
-  const canRollback = (skill.evidence ?? []).some((ev) => ev.event === 'corrected')
+  const rollbackRelevant = (skill.evidence ?? []).filter(
+    (ev) => ev.event === 'corrected' || ev.event === 'rolled_back',
+  )
+  const canRollback =
+    rollbackRelevant.length > 0 &&
+    rollbackRelevant[rollbackRelevant.length - 1].event === 'corrected'
   const anyMutating = redistillMut.isPending || dismissMut.isPending || rollbackMut.isPending
 
   return (
@@ -192,12 +197,12 @@ export default function SkillDetailPage() {
         </div>
 
         {confirming === 'redistill' && (
-          <div className="mt-3 border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
+          <div className="mt-3 border border-amber-400/25 bg-amber-400/6 px-3 py-2.5">
             <p className="font-mono text-[9px] uppercase tracking-wider text-amber-200/70">待确认重蒸</p>
             <p className="mt-1 text-xs font-semibold text-amber-100">
               用最近一次失败轨迹重新蒸馏「{skill.name}」→ v{skill.version + 1}
             </p>
-            <p className="mt-0.5 font-mono text-[11px] text-amber-200/80">旧版本保留，确认后生成新版本。</p>
+            <p className="mt-0.5 font-mono text-2xs text-amber-200/80">旧版本保留，确认后生成新版本。</p>
             <div className="mt-2 flex gap-2">
               <Button type="button" size="sm" disabled={redistillMut.isPending} onClick={() => redistillMut.mutate()}>
                 {redistillMut.isPending ? '重蒸中…' : '确认重蒸'}
@@ -208,10 +213,10 @@ export default function SkillDetailPage() {
         )}
 
         {confirming === 'dismiss' && (
-          <div className="mt-3 border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
+          <div className="mt-3 border border-amber-400/25 bg-amber-400/6 px-3 py-2.5">
             <p className="font-mono text-[9px] uppercase tracking-wider text-amber-200/70">待确认驳回</p>
             <p className="mt-1 text-xs font-semibold text-amber-100">驳回「{skill.name}」的纠错提案</p>
-            <p className="mt-0.5 font-mono text-[11px] text-amber-200/80">
+            <p className="mt-0.5 font-mono text-2xs text-amber-200/80">
               判定这次连续失败不是真问题，重置计数，技能本身不改动。
             </p>
             <div className="mt-2 flex gap-2">
@@ -224,10 +229,10 @@ export default function SkillDetailPage() {
         )}
 
         {confirming === 'rollback' && (
-          <div className="mt-3 border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
+          <div className="mt-3 border border-amber-400/25 bg-amber-400/6 px-3 py-2.5">
             <p className="font-mono text-[9px] uppercase tracking-wider text-amber-200/70">待确认回滚</p>
             <p className="mt-1 text-xs font-semibold text-amber-100">回滚「{skill.name}」到上一版</p>
-            <p className="mt-0.5 font-mono text-[11px] text-amber-200/80">
+            <p className="mt-0.5 font-mono text-2xs text-amber-200/80">
               恢复上一次重蒸前的 skill_md / 九要素，仅能撤销最近一次重蒸。
             </p>
             <div className="mt-2 flex gap-2">
@@ -255,7 +260,7 @@ export default function SkillDetailPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-semibold text-zinc-200">{meta.label}</span>
-                    {ev.at && <span className="font-mono text-[11px] text-zinc-500">{String(ev.at)}</span>}
+                    {ev.at && <span className="font-mono text-2xs text-zinc-500">{String(ev.at)}</span>}
                   </div>
                   <p className="mt-0.5 font-mono text-xs text-zinc-500">{evidenceSummary(ev)}</p>
                 </div>

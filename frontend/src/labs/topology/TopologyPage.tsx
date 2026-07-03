@@ -381,14 +381,14 @@ export default function TopologyPage() {
         action={
           <div className="flex items-center gap-2">
             {sourceFilter && (
-              <span className="hidden border border-white/10 bg-black/25 px-2 py-1 font-code text-[10px] text-zinc-500 sm:inline-flex">
+              <span className="hidden border border-white/10 bg-black/25 px-2 py-1 font-code text-3xs text-zinc-500 sm:inline-flex">
                 source={sourceFilter}
               </span>
             )}
             <button
               type="button"
               onClick={refetchAll}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-white/[0.12] bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 hover:border-white/[0.24] hover:bg-white/[0.08]"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-white/12 bg-white/4 px-3 text-xs font-semibold text-zinc-200 hover:border-white/24 hover:bg-white/8"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
               同步
@@ -415,28 +415,28 @@ export default function TopologyPage() {
         />
 
         <div className="min-w-0 space-y-4">
-          <Card padding={false} className="overflow-hidden border-white/[0.1] bg-[#060606]">
-            <div className="flex min-h-16 items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-3">
+          <Card padding={false} className="overflow-hidden border-white/10 bg-ops-black">
+            <div className="flex min-h-16 items-center justify-between gap-3 border-b border-white/8 px-4 py-3">
               <div className="min-w-0">
                 <p className="telemetry-label">PIPELINE CANVAS</p>
                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
                   <h2 className="truncate text-sm font-semibold text-zinc-100">
                     {selectedNode ? selectedNode.data.title : '采集管线'}
                   </h2>
-                  <span className="border border-white/10 bg-white/[0.035] px-2 py-0.5 font-code text-[10px] text-zinc-500">
+                  <span className="border border-white/10 bg-white/[0.035] px-2 py-0.5 font-code text-3xs text-zinc-500">
                     {flowGraph.nodes.length} stages / {flowGraph.edges.length} links
                   </span>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <span className="hidden border border-signal-cyan/25 bg-signal-cyan/10 px-2 py-1 font-code text-[10px] uppercase text-sky-100 sm:inline-flex">
+                <span className="hidden border border-signal-cyan/25 bg-signal-cyan/10 px-2 py-1 font-code text-3xs uppercase text-sky-100 sm:inline-flex">
                   prototype
                 </span>
                 {selectedNode && (
                   <button
                     type="button"
                     onClick={() => setInspectorOpen(true)}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/[0.12] bg-white/[0.04] px-2.5 text-xs font-semibold text-zinc-200 hover:border-white/[0.25] hover:bg-white/[0.08]"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/12 bg-white/4 px-2.5 text-xs font-semibold text-zinc-200 hover:border-white/25 hover:bg-white/8"
                   >
                     <ListChecks className="h-3.5 w-3.5" />
                     详情
@@ -462,7 +462,7 @@ export default function TopologyPage() {
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex justify-end bg-black/55 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex justify-end bg-black/55 p-4 backdrop-blur-xs"
           onClick={() => setInspectorOpen(false)}
         >
           <div className="relative h-full w-full max-w-[600px]" onClick={(event) => event.stopPropagation()}>
@@ -470,7 +470,7 @@ export default function TopologyPage() {
               type="button"
               aria-label="Close node details"
               onClick={() => setInspectorOpen(false)}
-              className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/[0.12] bg-black/80 text-zinc-300 hover:border-white/[0.28] hover:text-white"
+              className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/12 bg-black/80 text-zinc-300 hover:border-white/[0.28] hover:text-white"
             >
               <X className="h-4 w-4" />
             </button>
@@ -772,14 +772,14 @@ function TopologyOperations({
           <OperatorCard label="可执行动作" value={actionNodes.length} icon={Play} tone="success" />
         </div>
 
-        <div className="divide-y divide-white/[0.08] overflow-hidden border border-white/[0.1] bg-black/20">
+        <div className="divide-y divide-white/8 overflow-hidden border border-white/10 bg-black/20">
           {queueItems.map((item) => (
             <button
               key={`${item.group}:${item.node.id}`}
               type="button"
               onClick={() => onSelectNode(item.node.id)}
               className={cn(
-                'flex w-full items-start gap-3 px-3 py-3 text-left transition hover:bg-white/[0.04]',
+                'flex w-full items-start gap-3 px-3 py-3 text-left transition hover:bg-white/4',
                 selectedNodeId === item.node.id && 'bg-signal-cyan/10',
               )}
             >
@@ -798,10 +798,10 @@ function TopologyOperations({
           ))}
         </div>
 
-        <section className="border border-white/[0.1] bg-black/20 p-3">
+        <section className="border border-white/10 bg-black/20 p-3">
           <div className="flex items-center justify-between gap-2">
             <p className="telemetry-label">ACTION QUEUE</p>
-            <span className="font-code text-[10px] text-zinc-600">{queuedActions.length} queued</span>
+            <span className="font-code text-3xs text-zinc-600">{queuedActions.length} queued</span>
           </div>
           <div className="mt-3 space-y-2">
             {queuedActions.length === 0 ? (
@@ -812,13 +812,13 @@ function TopologyOperations({
                   key={item.id}
                   type="button"
                   onClick={() => onSelectNode(item.nodeId)}
-                  className="flex w-full items-center justify-between gap-3 rounded-md border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-left text-xs hover:border-white/[0.22] hover:bg-white/[0.05]"
+                  className="flex w-full items-center justify-between gap-3 rounded-md border border-white/8 bg-white/2.5 px-3 py-2 text-left text-xs hover:border-white/22 hover:bg-white/5"
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-semibold text-zinc-100">{item.actionLabel}</span>
                     <span className="mt-0.5 block truncate text-zinc-500">{item.nodeTitle}</span>
                   </span>
-                  <span className="shrink-0 font-code text-[10px] text-zinc-600">{item.createdAt}</span>
+                  <span className="shrink-0 font-code text-3xs text-zinc-600">{item.createdAt}</span>
                 </button>
               ))
             )}
@@ -896,7 +896,7 @@ function LivePipelineSurface({ selectedNode }: { selectedNode: TopologyFlowNode 
             <button
               type="button"
               onClick={resetLayout}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-white/[0.1] px-2 text-[11px] text-zinc-300 hover:border-white/[0.25] hover:text-white"
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-white/10 px-2 text-2xs text-zinc-300 hover:border-white/25 hover:text-white"
             >
               <RotateCcw className="h-3 w-3" />
               重置
@@ -963,7 +963,7 @@ function SurfacePanel({
 }) {
   return (
     <section className="flex h-full min-h-[220px] flex-col overflow-hidden border border-white/10 bg-black/20">
-      <header className="pipeline-surface-handle flex cursor-move items-center justify-between gap-3 border-b border-white/10 bg-white/[0.025] px-3 py-2">
+      <header className="pipeline-surface-handle flex cursor-move items-center justify-between gap-3 border-b border-white/10 bg-white/2.5 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="grid h-7 w-7 shrink-0 place-items-center border border-white/10 bg-black/25 text-zinc-400">
             <Icon size={14} />
@@ -996,7 +996,7 @@ function EventStreamPanel({ selectedNode }: { selectedNode: TopologyFlowNode | n
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-code text-[10px] text-zinc-500">{event.time}</span>
+                <span className="font-code text-3xs text-zinc-500">{event.time}</span>
                 <span className="font-semibold text-zinc-200">{event.stage}</span>
               </div>
               <p className="mt-1 text-zinc-300">{event.message}</p>
@@ -1014,35 +1014,35 @@ function RenderPreviewPanel({ selectedNode }: { selectedNode: TopologyFlowNode |
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex items-center justify-between border border-white/10 bg-[#050505] px-3 py-2">
+      <div className="flex items-center justify-between border border-white/10 bg-ops-black px-3 py-2">
         <div className="min-w-0">
           <p className="telemetry-label">COLLECTOR VIEWPORT</p>
           <p className="mt-1 truncate text-sm font-semibold text-zinc-100">{stage}</p>
         </div>
-        <span className="border border-signal-cyan/35 bg-signal-cyan/10 px-2 py-1 font-code text-[10px] text-sky-100">
+        <span className="border border-signal-cyan/35 bg-signal-cyan/10 px-2 py-1 font-code text-3xs text-sky-100">
           LIVE MOCK
         </span>
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden border border-white/10 bg-black">
-        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(rgba(255,255,255,0.045)_1px,transparent_1px)] bg-[size:28px_28px] opacity-40" />
-        <div className="absolute left-5 top-5 w-[min(520px,calc(100%-40px))] border border-white/15 bg-[#0b0b0b] shadow-2xl">
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(rgba(255,255,255,0.045)_1px,transparent_1px)] bg-size-[28px_28px] opacity-40" />
+        <div className="absolute left-5 top-5 w-[min(520px,calc(100%-40px))] border border-white/15 bg-ops-panel shadow-2xl">
           <div className="flex items-center gap-1 border-b border-white/10 px-2 py-1">
             <span className="h-2 w-2 rounded-full bg-red-400/80" />
             <span className="h-2 w-2 rounded-full bg-amber-300/80" />
             <span className="h-2 w-2 rounded-full bg-emerald-400/80" />
-            <span className="ml-2 truncate font-code text-[10px] text-zinc-500">collector://prototype/live</span>
+            <span className="ml-2 truncate font-code text-3xs text-zinc-500">collector://prototype/live</span>
           </div>
           <div className="space-y-3 p-4">
-            <div className="h-7 w-40 bg-white/[0.08]" />
+            <div className="h-7 w-40 bg-white/8" />
             <div className="grid grid-cols-3 gap-2">
               <div className="h-16 border border-white/10 bg-white/[0.035]" />
               <div className="h-16 border border-signal-cyan/30 bg-signal-cyan/10" />
               <div className="h-16 border border-white/10 bg-white/[0.035]" />
             </div>
             <div className="space-y-2">
-              <div className="h-2 w-full bg-white/[0.06]" />
-              <div className="h-2 w-10/12 bg-white/[0.06]" />
-              <div className="h-2 w-7/12 bg-white/[0.06]" />
+              <div className="h-2 w-full bg-white/6" />
+              <div className="h-2 w-10/12 bg-white/6" />
+              <div className="h-2 w-7/12 bg-white/6" />
             </div>
           </div>
         </div>
@@ -1111,10 +1111,10 @@ function PipelineNodeInspector({
   const primaryAction = node.data.actions.find((action) => action.enabled) ?? node.data.actions[0]
 
   return (
-    <Card padding={false} className="flex h-full flex-col overflow-hidden border-white/[0.1] bg-[#0a0a0a]">
+    <Card padding={false} className="flex h-full flex-col overflow-hidden border-white/10 bg-ops-panel">
       {/* NDV header */}
-      <div className="flex items-start gap-3 border-b border-white/[0.08] px-4 py-4 pr-12">
-        <div className="grid h-10 w-10 shrink-0 place-items-center border border-white/15 bg-white/[0.04]">
+      <div className="flex items-start gap-3 border-b border-white/8 px-4 py-4 pr-12">
+        <div className="grid h-10 w-10 shrink-0 place-items-center border border-white/15 bg-white/4">
           <span className="font-code text-xs font-semibold text-zinc-200">{stageCode}</span>
         </div>
         <div className="min-w-0 flex-1">
@@ -1131,9 +1131,9 @@ function PipelineNodeInspector({
 
       {/* scroll body */}
       <div className="flex-1 space-y-4 overflow-auto px-4 py-4">
-        <div className="space-y-2 border border-white/[0.08] bg-black/25 p-3 text-xs leading-5">
+        <div className="space-y-2 border border-white/8 bg-black/25 p-3 text-xs leading-5">
           <p className="text-zinc-400">{responsibility}</p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[11px]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-2xs">
             <span className="text-zinc-500">
               状态 <span className="text-zinc-300">{status}</span>
             </span>
@@ -1146,15 +1146,15 @@ function PipelineNodeInspector({
 
       {/* footer · prototype action queue */}
       {primaryAction && (
-        <div className="border-t border-white/[0.08] px-4 py-3">
+        <div className="border-t border-white/8 px-4 py-3">
           <button
             type="button"
             onClick={() => onRunAction(node, primaryAction)}
             disabled={!primaryAction.enabled}
-            className="inline-flex w-full items-center justify-between border border-white/[0.12] px-3 py-2 text-xs transition hover:border-white/[0.3] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex w-full items-center justify-between border border-white/12 px-3 py-2 text-xs transition hover:border-white/30 hover:bg-white/4 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <span className="truncate">{primaryAction.label}</span>
-            <span className="font-medium text-slate-300">加入原型队列</span>
+            <span className="font-medium text-zinc-300">加入原型队列</span>
           </button>
         </div>
       )}
@@ -1164,7 +1164,7 @@ function PipelineNodeInspector({
 
 function DetailRow({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: 'neutral' | 'warning' }) {
   return (
-    <div className="rounded-md border border-white/[0.08] bg-black/25 p-3">
+    <div className="rounded-md border border-white/8 bg-black/25 p-3">
       <p className="telemetry-label">{label}</p>
       <p className={cn('mt-1 text-sm leading-6 text-zinc-300', tone === 'warning' && 'text-amber-100')}>{value}</p>
     </div>
@@ -1173,7 +1173,7 @@ function DetailRow({ label, value, tone = 'neutral' }: { label: string; value: s
 
 function SkillList({ title, skills }: { title: string; skills: TopologySkill[] }) {
   return (
-    <div className="rounded-md border border-white/[0.1] bg-black/30 p-3">
+    <div className="rounded-md border border-white/10 bg-black/30 p-3">
       <p className="telemetry-label">{title}</p>
       <div className="mt-3 space-y-2">
         {skills.length === 0 ? (
@@ -1181,7 +1181,7 @@ function SkillList({ title, skills }: { title: string; skills: TopologySkill[] }
         ) : (
           skills.map((skill) => (
             <div key={skill.id} className="text-xs leading-5">
-              <span className={cn('inline-flex border px-1.5 py-0.5 text-[10px]', skillChipClass(skill.state))}>
+              <span className={cn('inline-flex border px-1.5 py-0.5 text-3xs', skillChipClass(skill.state))}>
                 {skill.label}
               </span>
               <p className="mt-1 text-zinc-500">{skill.description}</p>
@@ -1332,10 +1332,10 @@ function healthLabel(health: TopologyHealth) {
 
 function healthColor(health: TopologyHealth, context: 'line' | 'mini') {
   const colors: Record<TopologyHealth, string> = {
-    healthy: context === 'line' ? '#00ac3a' : '#009432',
+    healthy: context === 'line' ? '#35b779' : '#35b779',
     active: '#47a8ff',
-    warning: '#ffae00',
-    failed: '#ff565f',
+    warning: '#d99a3d',
+    failed: '#e15b64',
     disabled: '#71717a',
     unknown: '#a1a1aa',
   }
@@ -1348,7 +1348,7 @@ function healthDotClass(health: TopologyHealth) {
     active: 'bg-sky-400',
     warning: 'bg-amber-400',
     failed: 'bg-red-400',
-    disabled: 'bg-slate-500',
+    disabled: 'bg-zinc-500',
     unknown: 'bg-zinc-500',
   }
   return classes[health]
@@ -1369,7 +1369,7 @@ function queueToneClass(tone: OperatorTone) {
     neutral: 'border-white/10 bg-white/[0.035] text-zinc-300',
     accent: 'border-primary-500/45 bg-primary-500/12 text-primary-100',
     info: 'border-signal-cyan/45 bg-signal-cyan/12 text-sky-100',
-    gold: 'border-signal-gold/45 bg-signal-gold/12 text-yellow-100',
+    gold: 'border-signal-gold/45 bg-signal-gold/12 text-yellow-100', // tokens-allow: gold pairing (decided exception, DESIGN_SYSTEM.md T1)
     success: 'border-signal-green/45 bg-signal-green/12 text-emerald-100',
     warning: 'border-signal-amber/45 bg-signal-amber/12 text-amber-100',
     danger: 'border-signal-red/50 bg-signal-red/14 text-red-100',

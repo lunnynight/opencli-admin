@@ -2,10 +2,10 @@
 
 Once a source declares an explicit strategy, the ODP forward is no longer an
 implicit env-var side effect buried in the legacy path — it is chosen here. The
-default ``legacy`` preserves today's behavior exactly (``LegacyDbSink`` with its
-env-gated shadow-forward still intact); every other strategy makes the ODP write
-explicit via ``OdpSink`` / ``DualSink`` and turns the storer's own forward off so
-nothing double-sends.
+default ``legacy`` writes to the DB only (``LegacyDbSink`` defaults its own
+``forward_to_odp`` to False, P1-1) — a bare ``ODP_INGEST_URL`` env var no
+longer opts an unmigrated source into ODP by accident. Every other strategy
+makes the ODP write explicit via ``OdpSink`` / ``DualSink``.
 """
 
 from __future__ import annotations
@@ -34,7 +34,8 @@ def select_sink(strategy: str | None) -> ItemSink:
     """Map a source's ``write_strategy`` to a sink instance.
 
     Migration states:
-      * ``legacy``            — DB write + the original env-gated ODP shadow.
+      * ``legacy``            — DB write only; no ODP forward (P1-1: no bare
+        env-var backdoor into ODP for an unmigrated source).
       * ``odp_shadow``        — DB authoritative + ODP best-effort, forwarded once.
       * ``odp_dual_required`` — DB + ODP, ODP failure is surfaced (invariant).
       * ``odp_primary``       — DB + ODP required; ODP is the read source of truth

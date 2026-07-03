@@ -46,13 +46,36 @@ export interface ConfigSchema {
 
 export type ConfigValues = Record<string, unknown>
 
+/** C0 Control Room v0 (docs/CONTROL_THEORY_ARCHITECTURE.md §0): the shape a
+ *  node's `facts.__control` carries once a host wires up GET
+ *  /sources/{id}/control-state polling for that node instance. One contract on
+ *  NodeRenderContext.facts — every node type gets ControlBadge/
+ *  SensorCoverageBadge for free by reading this key, instead of each node
+ *  inventing its own health facts shape. Mirrors
+ *  backend.schemas.control.SourceControlStateRead (see frontend/src/api/types.ts
+ *  SourceControlState) minus the objective (not rendered on the node body).
+ *  Absent (`undefined`) means "no control-state facts wired up for this node
+ *  instance" — NOT the same as a source that returned control_state: null;
+ *  render `undefined` as neutral, not as a health verdict either way. */
+export interface ControlFacts {
+  control_state: string | null
+  confidence: 'high' | 'medium' | 'low' | null
+  sensor_coverage: { run: boolean; cursor: boolean; freshness: boolean; error_kinds: boolean; odp: boolean } | null
+  missing_signals: string[]
+  error_rate?: number | null
+  duplicate_rate?: number | null
+  freshness_lag_seconds?: number | null
+}
+
 /** Context handed to a node's render(). UI-only; no execution state. */
 export interface NodeRenderContext<C extends ConfigValues = ConfigValues> {
   id: string
   spec: NodeSpec<C>
   config: C
   selected: boolean
-  /** live, node-instance-specific facts the host feeds in (status, counts, …) */
+  /** live, node-instance-specific facts the host feeds in (status, counts, …).
+   *  `facts.__control` is the well-known C0 control-state slot — see
+   *  {@link ControlFacts}. */
   facts: Record<string, unknown>
   emit: (op: string, payload?: unknown) => void
 }

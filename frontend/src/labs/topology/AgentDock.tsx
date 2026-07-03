@@ -245,10 +245,10 @@ export function AgentDock({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden border border-white/[0.1] bg-[#0a0a0a]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border border-white/10 bg-ops-panel">
       {/* header */}
-      <div className="flex items-center gap-2 border-b border-white/[0.08] px-3 py-2.5">
-        <span className="grid h-7 w-7 place-items-center border border-white/15 bg-white/[0.04] text-zinc-200">
+      <div className="flex items-center gap-2 border-b border-white/8 px-3 py-2.5">
+        <span className="grid h-7 w-7 place-items-center border border-white/15 bg-white/4 text-zinc-200">
           <Sparkles size={14} />
         </span>
         <div className="min-w-0 flex-1">
@@ -256,7 +256,7 @@ export function AgentDock({
           <p className="truncate text-xs font-semibold text-zinc-200">改动入口 · 写前确认</p>
         </div>
         {contextNode && (
-          <span className="max-w-[140px] truncate border border-white/10 bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] text-zinc-400" title={`${contextNode.kind}: ${contextNode.title}`}>
+          <span className="max-w-[140px] truncate border border-white/10 bg-white/4 px-2 py-0.5 font-mono text-3xs text-zinc-400" title={`${contextNode.kind}: ${contextNode.title}`}>
             @ {contextNode.title}
           </span>
         )}
@@ -266,7 +266,7 @@ export function AgentDock({
             onClick={proposeRedistill}
             disabled={loading || !!redistill || !!dismissTarget}
             title="用失败轨迹重新蒸馏这个技能 (version n+1)"
-            className="inline-flex shrink-0 items-center gap-1 border border-amber-400/35 bg-amber-400/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-100 transition hover:bg-amber-400/20 disabled:opacity-40"
+            className="inline-flex shrink-0 items-center gap-1 border border-amber-400/35 bg-amber-400/10 px-2 py-0.5 font-mono text-3xs font-semibold text-amber-100 transition hover:bg-amber-400/20 disabled:opacity-40"
           >
             <RefreshCw size={11} /> 重蒸技能
           </button>
@@ -277,7 +277,7 @@ export function AgentDock({
             onClick={proposeDismiss}
             disabled={loading || !!redistill || !!dismissTarget}
             title="驳回本次纠错提案, 判定失败连续计数不是真问题"
-            className="inline-flex shrink-0 items-center gap-1 border border-white/12 bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] font-semibold text-zinc-300 transition hover:border-white/25 hover:bg-white/[0.08] disabled:opacity-40"
+            className="inline-flex shrink-0 items-center gap-1 border border-white/12 bg-white/4 px-2 py-0.5 font-mono text-3xs font-semibold text-zinc-300 transition hover:border-white/25 hover:bg-white/8 disabled:opacity-40"
           >
             <Ban size={11} /> 驳回纠错
           </button>
@@ -291,7 +291,7 @@ export function AgentDock({
             <span
               className={cn(
                 'mt-0.5 grid h-6 w-6 shrink-0 place-items-center border text-zinc-300',
-                m.role === 'user' ? 'border-sky-400/30 bg-sky-400/10' : 'border-white/12 bg-white/[0.04]',
+                m.role === 'user' ? 'border-sky-400/30 bg-sky-400/10' : 'border-white/12 bg-white/4',
               )}
             >
               {m.role === 'user' ? <User size={12} /> : <Bot size={12} />}
@@ -300,8 +300,8 @@ export function AgentDock({
               className={cn(
                 'max-w-[82%] whitespace-pre-wrap border px-2.5 py-1.5 text-[12.5px] leading-5',
                 m.role === 'user'
-                  ? 'border-sky-400/25 bg-sky-400/[0.08] text-sky-50'
-                  : 'border-white/10 bg-white/[0.03] text-zinc-200',
+                  ? 'border-sky-400/25 bg-sky-400/8 text-sky-50'
+                  : 'border-white/10 bg-white/3 text-zinc-200',
               )}
             >
               {m.content}
@@ -309,7 +309,7 @@ export function AgentDock({
           </div>
         ))}
         {loading && (
-          <div className="flex items-center gap-2 px-1 text-[11px] text-zinc-500">
+          <div className="flex items-center gap-2 px-1 text-2xs text-zinc-500">
             <Loader2 size={12} className="animate-spin" /> 思考中…
           </div>
         )}
@@ -317,16 +317,16 @@ export function AgentDock({
 
       {/* 重蒸技能 confirm card — same amber confirm contract as proposals */}
       {redistill && (
-        <div className="border-t border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
+        <div className="border-t border-amber-400/25 bg-amber-400/6 px-3 py-2.5">
           <p className="font-mono text-[9px] uppercase tracking-wider text-amber-200/70">待确认重蒸</p>
           <p className="mt-1 text-xs font-semibold text-amber-100">重新蒸馏技能「{redistill.title}」→ version n+1</p>
-          <p className="mt-0.5 font-mono text-[11px] text-amber-200/80">用失败轨迹重蒸, 旧版本保留, 确认后生成新版本。</p>
+          <p className="mt-0.5 font-mono text-2xs text-amber-200/80">用失败轨迹重蒸, 旧版本保留, 确认后生成新版本。</p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
               onClick={confirmRedistill}
               disabled={loading}
-              className="inline-flex items-center gap-1 border border-emerald-400/40 bg-emerald-400/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1 border border-emerald-400/40 bg-emerald-400/15 px-2.5 py-1 text-2xs font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-50"
             >
               <Check size={12} /> 确认重蒸
             </button>
@@ -334,7 +334,7 @@ export function AgentDock({
               type="button"
               onClick={cancelRedistill}
               disabled={loading}
-              className="inline-flex items-center gap-1 border border-white/12 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-white/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1 border border-white/12 px-2.5 py-1 text-2xs text-zinc-300 transition hover:border-white/25 disabled:opacity-50"
             >
               <X size={12} /> 取消
             </button>
@@ -344,16 +344,16 @@ export function AgentDock({
 
       {/* 驳回纠错 confirm card — same amber confirm contract as proposals */}
       {dismissTarget && (
-        <div className="border-t border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
+        <div className="border-t border-amber-400/25 bg-amber-400/6 px-3 py-2.5">
           <p className="font-mono text-[9px] uppercase tracking-wider text-amber-200/70">待确认驳回</p>
           <p className="mt-1 text-xs font-semibold text-amber-100">驳回技能「{dismissTarget.title}」的纠错提案</p>
-          <p className="mt-0.5 font-mono text-[11px] text-amber-200/80">判定这次连续失败不是真问题, 重置计数, 技能本身不改动。</p>
+          <p className="mt-0.5 font-mono text-2xs text-amber-200/80">判定这次连续失败不是真问题, 重置计数, 技能本身不改动。</p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
               onClick={confirmDismiss}
               disabled={loading}
-              className="inline-flex items-center gap-1 border border-emerald-400/40 bg-emerald-400/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1 border border-emerald-400/40 bg-emerald-400/15 px-2.5 py-1 text-2xs font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-50"
             >
               <Check size={12} /> 确认驳回
             </button>
@@ -361,7 +361,7 @@ export function AgentDock({
               type="button"
               onClick={cancelDismiss}
               disabled={loading}
-              className="inline-flex items-center gap-1 border border-white/12 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-white/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1 border border-white/12 px-2.5 py-1 text-2xs text-zinc-300 transition hover:border-white/25 disabled:opacity-50"
             >
               <X size={12} /> 取消
             </button>
@@ -371,16 +371,16 @@ export function AgentDock({
 
       {/* proposal confirm card */}
       {proposal && (
-        <div className="border-t border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
+        <div className="border-t border-amber-400/25 bg-amber-400/6 px-3 py-2.5">
           <p className="font-mono text-[9px] uppercase tracking-wider text-amber-200/70">待确认改动</p>
           <p className="mt-1 text-xs font-semibold text-amber-100">{proposal.summary}</p>
-          <p className="mt-0.5 font-mono text-[11px] text-amber-200/80">{proposal.diff}</p>
+          <p className="mt-0.5 font-mono text-2xs text-amber-200/80">{proposal.diff}</p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
               onClick={confirm}
               disabled={loading}
-              className="inline-flex items-center gap-1 border border-emerald-400/40 bg-emerald-400/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1 border border-emerald-400/40 bg-emerald-400/15 px-2.5 py-1 text-2xs font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-50"
             >
               <Check size={12} /> 确认落库
             </button>
@@ -388,7 +388,7 @@ export function AgentDock({
               type="button"
               onClick={cancel}
               disabled={loading}
-              className="inline-flex items-center gap-1 border border-white/12 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-white/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1 border border-white/12 px-2.5 py-1 text-2xs text-zinc-300 transition hover:border-white/25 disabled:opacity-50"
             >
               <X size={12} /> 取消
             </button>
@@ -397,7 +397,7 @@ export function AgentDock({
       )}
 
       {/* composer */}
-      <div className="border-t border-white/[0.08] p-2">
+      <div className="border-t border-white/8 p-2">
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -405,13 +405,13 @@ export function AgentDock({
             onKeyDown={onKeyDown}
             rows={2}
             placeholder="跟 agent 说… 例: 停用 demo-binance-funding"
-            className="min-h-0 flex-1 resize-none border border-white/12 bg-black/40 px-2.5 py-1.5 text-[12.5px] text-zinc-100 placeholder:text-zinc-600 focus:border-white/30 focus:outline-none"
+            className="min-h-0 flex-1 resize-none border border-white/12 bg-black/40 px-2.5 py-1.5 text-[12.5px] text-zinc-100 placeholder:text-zinc-600 focus:border-white/30 focus:outline-hidden"
           />
           <button
             type="button"
             onClick={send}
             disabled={loading || !input.trim()}
-            className="grid h-9 w-9 shrink-0 place-items-center border border-white/12 bg-white/[0.05] text-zinc-200 transition hover:border-white/30 hover:bg-white/[0.1] disabled:opacity-40"
+            className="grid h-9 w-9 shrink-0 place-items-center border border-white/12 bg-white/5 text-zinc-200 transition hover:border-white/30 hover:bg-white/10 disabled:opacity-40"
           >
             <Send size={14} />
           </button>

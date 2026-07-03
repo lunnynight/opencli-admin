@@ -89,9 +89,9 @@ const KIND_META: Record<FlightKind, {
 }
 
 const STATUS_RING: Record<FlightStatus, string> = {
-  done: 'border-white/14 bg-white/[0.045]',
-  running: 'border-zinc-100/45 bg-zinc-100/[0.075]',
-  failed: 'border-signal-red/60 bg-signal-red/[0.12]',
+  done: 'border-white/14 bg-white/4.5',
+  running: 'border-zinc-100/45 bg-zinc-100/7.5',
+  failed: 'border-signal-red/60 bg-signal-red/12',
   queued: 'border-white/10 bg-black/20 opacity-60',
 }
 
@@ -274,10 +274,10 @@ function RunSelector({
           key={run.id}
           data-active={selectedId === run.id}
           onClick={() => onSelect(run.id)}
-          className="telemetry-button shrink-0 px-2.5 py-1.5 text-left text-[11px] data-[active=true]:border-primary-500/80 data-[active=true]:bg-primary-500/15"
+          className="telemetry-button shrink-0 px-2.5 py-1.5 text-left text-2xs data-[active=true]:border-primary-500/80 data-[active=true]:bg-primary-500/15"
         >
           <span className="block max-w-[128px] truncate text-zinc-200">{run.source_name}</span>
-          <span className="block font-code text-[10px] text-zinc-600">{run.id.slice(0, 8)}</span>
+          <span className="block font-code text-3xs text-zinc-600">{run.id.slice(0, 8)}</span>
         </button>
       ))}
     </div>
@@ -305,16 +305,16 @@ function FlightNode({
       onClick={onSelect}
       data-active={active}
       data-flight-step={step.id}
-      className={`group relative flex min-h-[154px] w-[216px] shrink-0 flex-col border p-3 text-left transition-colors ${STATUS_RING[step.status]} data-[active=true]:border-primary-500/70 data-[active=true]:bg-primary-500/[0.08]`}
+      className={`group relative flex min-h-[154px] w-[216px] shrink-0 flex-col border p-3 text-left transition-colors ${STATUS_RING[step.status]} data-[active=true]:border-primary-500/70 data-[active=true]:bg-primary-500/8`}
     >
-      <div className={`absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r ${meta.rail}`} />
+      <div className={`absolute inset-x-0 top-0 h-[2px] bg-linear-to-r ${meta.rail}`} />
       <div className="flex items-start gap-2">
         <span className={`grid h-8 w-8 shrink-0 place-items-center border ${meta.chip}`}>
           <Icon size={15} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <p className={`font-telemetry text-[10px] font-semibold uppercase tracking-[0.14em] ${meta.accent}`}>
+            <p className={`font-telemetry text-3xs font-semibold uppercase tracking-[0.14em] ${meta.accent}`}>
               {step.role}
             </p>
             <StatusIcon
@@ -331,15 +331,15 @@ function FlightNode({
       <div className="mt-auto grid grid-cols-3 gap-1.5 pt-3">
         <div className="border border-white/10 bg-black/20 px-2 py-1">
           <p className="font-telemetry text-[9px] uppercase tracking-[0.14em] text-zinc-600">TIME</p>
-          <p className="mt-0.5 truncate font-code text-[11px] text-zinc-300">{formatDuration(step.elapsedMs)}</p>
+          <p className="mt-0.5 truncate font-code text-2xs text-zinc-300">{formatDuration(step.elapsedMs)}</p>
         </div>
         <div className="border border-white/10 bg-black/20 px-2 py-1">
           <p className="font-telemetry text-[9px] uppercase tracking-[0.14em] text-zinc-600">TOK</p>
-          <p className="mt-0.5 truncate font-code text-[11px] text-zinc-300">{formatTokens(step.tokens)}</p>
+          <p className="mt-0.5 truncate font-code text-2xs text-zinc-300">{formatTokens(step.tokens)}</p>
         </div>
         <div className="border border-white/10 bg-black/20 px-2 py-1">
           <p className="font-telemetry text-[9px] uppercase tracking-[0.14em] text-zinc-600">USD</p>
-          <p className="mt-0.5 truncate font-code text-[11px] text-zinc-300">{formatCost(step.costUsd)}</p>
+          <p className="mt-0.5 truncate font-code text-2xs text-zinc-300">{formatCost(step.costUsd)}</p>
         </div>
       </div>
     </button>
@@ -551,7 +551,7 @@ export default function AgentFlightBoard({ runs }: { runs: RecentRun[] }) {
                   })()}
                 </span>
                 <div className="min-w-0">
-                  <p className="font-telemetry text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">{activeStep.role}</p>
+                  <p className="font-telemetry text-2xs font-semibold uppercase tracking-[0.16em] text-zinc-500">{activeStep.role}</p>
                   <h3 className="mt-1 truncate text-base font-semibold text-zinc-100">{activeStep.title}</h3>
                 </div>
               </div>
@@ -575,7 +575,7 @@ export default function AgentFlightBoard({ runs }: { runs: RecentRun[] }) {
 
               <div className="mt-4">
                 <p className="telemetry-label">DETAIL</p>
-                <pre className="mt-2 max-h-[180px] overflow-auto border border-white/10 bg-black/30 p-3 font-code text-[11px] leading-relaxed text-zinc-500">
+                <pre className="mt-2 max-h-[180px] overflow-auto border border-white/10 bg-black/30 p-3 font-code text-2xs leading-relaxed text-zinc-500">
                   {safeJson(activeStep.detail)}
                 </pre>
               </div>

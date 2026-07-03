@@ -26,12 +26,12 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return this.props.fallback ?? (
-        <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-gray-500">
+        <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-zinc-400">
           <p className="text-lg font-medium text-red-500">页面渲染出错</p>
-          <p className="text-sm text-gray-400 max-w-md text-center">{this.state.error?.message}</p>
+          <p className="text-sm text-zinc-400 max-w-md text-center">{this.state.error?.message}</p>
           <button
             onClick={this.reset}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+            className="px-4 py-2 bg-primary-500/20 border border-primary-500/50 text-primary-300 rounded-lg text-sm hover:bg-primary-500/30"
           >
             重试
           </button>

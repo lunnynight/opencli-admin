@@ -69,7 +69,7 @@ function chromeNovncPort(cdpUrl: string, basePort = 3010): number {
 }
 
 const inputCls =
-  'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
+  'w-full border border-white/8 rounded-lg px-3 py-2 text-sm bg-black/40 text-zinc-100 focus:outline-hidden focus:ring-2 focus:ring-primary-500'
 
 // ── Install Wizard Modal ──────────────────────────────────────────────────────
 
@@ -136,28 +136,28 @@ function InstallWizardModal({ onClose, agentImageTag }: { onClose: () => void; a
     [
       'px-4 py-2.5 text-sm font-medium transition-colors border-b-2',
       active
-        ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-        : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300',
+        ? 'border-primary-500 text-primary-400'
+        : 'border-transparent text-zinc-400 hover:text-zinc-300',
     ].join(' ')
 
   const btnCls = (active: boolean) =>
     [
       'px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
       active
-        ? 'bg-blue-600 text-white'
-        : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600',
+        ? 'bg-primary-500/80 text-white'
+        : 'bg-white/6 text-zinc-400 hover:bg-white/10',
     ].join(' ')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-xl"
+        className="border border-white/8 bg-black/20 shadow-xl w-full max-w-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-5 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-base font-semibold dark:text-white">新增节点</h2>
+        <div className="p-5 border-b border-white/6">
+          <h2 className="text-base font-semibold text-zinc-100">新增节点</h2>
         </div>
-        <div className="flex border-b border-gray-100 dark:border-gray-700">
+        <div className="flex border-b border-white/6">
           <button className={tabCls(method === 'docker')} onClick={() => { setMethod('docker'); reset() }}>
             Docker 直接运行
           </button>
@@ -167,14 +167,14 @@ function InstallWizardModal({ onClose, agentImageTag }: { onClose: () => void; a
         </div>
         <div className="p-5 space-y-4">
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">注册模式</span>
+            <span className="text-xs text-zinc-400 w-16 shrink-0">注册模式</span>
             <div className="flex gap-1.5">
               <button className={btnCls(regMode === 'ws')} onClick={() => { setRegMode('ws'); reset() }}>WS 反向通道</button>
               <button className={btnCls(regMode === 'http')} onClick={() => { setRegMode('http'); reset() }}>HTTP 直连</button>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">采集模式</span>
+            <span className="text-xs text-zinc-400 w-16 shrink-0">采集模式</span>
             <div className="flex gap-1.5">
               <button className={btnCls(agentMode === 'bridge')} onClick={() => { setAgentMode('bridge'); reset() }}>Bridge</button>
               <button className={btnCls(agentMode === 'cdp')} onClick={() => { setAgentMode('cdp'); reset() }}>CDP</button>
@@ -182,7 +182,7 @@ function InstallWizardModal({ onClose, agentImageTag }: { onClose: () => void; a
           </div>
           {method === 'docker' && (
             <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">网络模式</span>
+              <span className="text-xs text-zinc-400 w-16 shrink-0">网络模式</span>
               <div className="flex gap-1.5">
                 <button className={btnCls(dockerNetwork === 'bridge')} onClick={() => { setDockerNetwork('bridge'); reset() }}>Bridge（默认）</button>
                 <button className={btnCls(dockerNetwork === 'host')} onClick={() => { setDockerNetwork('host'); reset() }}>Host（Linux）</button>
@@ -191,14 +191,14 @@ function InstallWizardModal({ onClose, agentImageTag }: { onClose: () => void; a
           )}
           {method === 'docker' && (
             <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-500 dark:text-gray-400 w-16 shrink-0">Chrome</span>
+              <span className="text-xs text-zinc-400 w-16 shrink-0">Chrome</span>
               <div className="flex gap-1.5">
                 <button className={btnCls(!installChrome)} onClick={() => { setInstallChrome(false); reset() }}>宿主机 Chrome（~100 MB）</button>
                 <button className={btnCls(installChrome)} onClick={() => { setInstallChrome(true); reset() }}>内置 Chrome（~450 MB）</button>
               </div>
             </div>
           )}
-          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2 text-xs text-blue-700 dark:text-blue-300 space-y-1">
+          <div className="bg-primary-500/10 rounded-lg px-3 py-2 text-xs text-primary-400 space-y-1">
             <p>{regModeHint[regMode]}</p>
             <p>{agentModeHint[agentMode]}</p>
             {method === 'docker' && dockerNetwork === 'host' && (
@@ -213,20 +213,20 @@ function InstallWizardModal({ onClose, agentImageTag }: { onClose: () => void; a
             )}
           </div>
           <div className="relative">
-            <pre className="bg-gray-900 text-gray-100 rounded-lg px-4 py-3 text-xs font-mono overflow-x-auto whitespace-pre">{cmd}</pre>
+            <pre className="border border-white/10 bg-black/40 text-zinc-100 rounded-lg px-4 py-3 text-xs font-code overflow-x-auto whitespace-pre">{cmd}</pre>
             <button
               onClick={handleCopy}
-              className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+              className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-sm text-xs bg-white/8 hover:bg-white/[0.14] text-zinc-300 transition-colors"
             >
               {copied ? <Check size={12} /> : <Copy size={12} />}
               {copied ? '已复制' : '复制'}
             </button>
           </div>
         </div>
-        <div className="p-5 border-t border-gray-100 dark:border-gray-700 flex justify-end">
+        <div className="p-5 border-t border-white/6 flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300"
+            className="px-4 py-2 text-sm rounded-lg border border-white/8 hover:bg-white/4 text-zinc-300"
           >
             关闭
           </button>
@@ -252,13 +252,13 @@ function NodeEventTimeline({ nodeId }: { nodeId: string }) {
     return t('browsers.eventOffline')
   }
   const eventDot = (event: EdgeNodeEvent['event']) => {
-    if (event === 'registered') return 'bg-blue-500'
-    if (event === 'online') return 'bg-green-500'
-    return 'bg-gray-400'
+    if (event === 'registered') return 'bg-primary-500'
+    if (event === 'online') return 'bg-emerald-500'
+    return 'bg-zinc-500'
   }
 
-  if (isLoading) return <div className="mt-3 text-xs text-gray-400">{t('common.loading')}</div>
-  if (events.length === 0) return <div className="mt-3 text-xs text-gray-400">{t('common.noData')}</div>
+  if (isLoading) return <div className="mt-3 text-xs text-zinc-400">{t('common.loading')}</div>
+  if (events.length === 0) return <div className="mt-3 text-xs text-zinc-400">{t('common.noData')}</div>
 
   return (
     <div className="mt-3 space-y-2">
@@ -266,10 +266,10 @@ function NodeEventTimeline({ nodeId }: { nodeId: string }) {
         <div key={ev.id} className="flex items-start gap-2.5">
           <span className={`w-2 h-2 rounded-full mt-0.5 shrink-0 ${eventDot(ev.event)}`} />
           <div className="flex-1 min-w-0">
-            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{eventLabel(ev.event)}</span>
-            {ev.ip && <span className="ml-2 text-xs text-gray-400 font-mono">{ev.ip}</span>}
+            <span className="text-xs font-medium text-zinc-300">{eventLabel(ev.event)}</span>
+            {ev.ip && <span className="ml-2 text-xs text-zinc-400 font-code">{ev.ip}</span>}
           </div>
-          <span className="text-xs text-gray-400 shrink-0">{timeAgo(ev.created_at)}</span>
+          <span className="text-xs text-zinc-400 shrink-0">{timeAgo(ev.created_at)}</span>
         </div>
       ))}
     </div>
@@ -299,10 +299,10 @@ function NodeStatsPanel({ nodeId }: { nodeId: string }) {
             key={r}
             onClick={() => setRange(r)}
             className={[
-              'px-2 py-0.5 rounded text-xs font-medium transition-colors',
+              'px-2 py-0.5 rounded-sm text-xs font-medium transition-colors',
               range === r
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600',
+                ? 'bg-primary-500/80 text-white'
+                : 'bg-white/6 text-zinc-400 hover:bg-white/10',
             ].join(' ')}
           >
             {STAT_RANGE_LABELS[r]}
@@ -310,24 +310,24 @@ function NodeStatsPanel({ nodeId }: { nodeId: string }) {
         ))}
       </div>
       {isLoading ? (
-        <p className="text-xs text-gray-400">加载中…</p>
+        <p className="text-xs text-zinc-400">加载中…</p>
       ) : data ? (
         <div className="grid grid-cols-4 gap-2">
           {[
             { label: '总执行', value: data.total },
-            { label: '成功', value: data.success, cls: 'text-green-600 dark:text-green-400' },
-            { label: '失败', value: data.failed, cls: 'text-red-500 dark:text-red-400' },
-            { label: '成功率', value: `${data.success_rate}%`, cls: 'text-blue-600 dark:text-blue-400' },
+            { label: '成功', value: data.success, cls: 'text-emerald-400' },
+            { label: '失败', value: data.failed, cls: 'text-red-400' },
+            { label: '成功率', value: `${data.success_rate}%`, cls: 'text-primary-400' },
           ].map(({ label, value, cls }) => (
-            <div key={label} className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2 text-center">
-              <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-              <p className={`text-sm font-semibold ${cls ?? 'text-gray-800 dark:text-gray-100'}`}>{value}</p>
+            <div key={label} className="bg-white/4 rounded-lg p-2 text-center">
+              <p className="text-xs text-zinc-400 mb-0.5">{label}</p>
+              <p className={`text-sm font-semibold ${cls ?? 'text-zinc-100'}`}>{value}</p>
             </div>
           ))}
         </div>
       ) : null}
       {data && data.total > 0 && (
-        <p className="text-xs text-gray-400">累计采集 {data.records_collected} 条记录</p>
+        <p className="text-xs text-zinc-400">累计采集 {data.records_collected} 条记录</p>
       )}
     </div>
   )
@@ -349,46 +349,46 @@ function NodeCard({ node, wsConnectedSet, onDelete, isDeletePending }: NodeCardP
   const isOnline = node.status === 'online' || (isWs && wsConnectedSet.has(node.url))
 
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 p-4">
+    <div className="border border-white/8 bg-black/20 p-4">
       <div className="flex items-start gap-3">
         <span
-          className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${isOnline ? 'bg-green-500' : 'bg-gray-400'}`}
+          className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${isOnline ? 'bg-emerald-500' : 'bg-zinc-500'}`}
           title={isOnline ? '在线' : '离线'}
         />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-sm text-gray-900 dark:text-white truncate max-w-[200px]" title={node.url}>
+            <span className="font-medium text-sm text-zinc-100 truncate max-w-[200px]" title={node.url}>
               {node.url}
             </span>
             {node.label && node.label !== node.url && (
-              <span className="text-xs text-gray-400">({node.label})</span>
+              <span className="text-xs text-zinc-400">({node.label})</span>
             )}
             <span className={[
-              'px-1.5 py-0.5 rounded text-xs font-medium',
+              'px-1.5 py-0.5 rounded-sm text-xs font-medium',
               isWs
-                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300'
-                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+                ? 'border border-violet-500/40 bg-violet-500/10 text-violet-300'
+                : 'border border-primary-500/40 bg-primary-500/10 text-primary-300',
             ].join(' ')}>
               {isWs ? t('browsers.protocolWs') : t('browsers.protocolHttp')}
             </span>
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className={[
-              'px-1.5 py-0.5 rounded text-xs font-medium',
+              'px-1.5 py-0.5 rounded-sm text-xs font-medium',
               node.node_type === 'shell'
-                ? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+                ? 'border border-white/10 bg-white/6 text-zinc-300'
+                : 'border border-primary-500/40 bg-primary-500/10 text-primary-300',
             ].join(' ')}>
               {node.node_type === 'shell' ? 'Shell' : 'Docker'}
             </span>
-            <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+            <span className="px-1.5 py-0.5 rounded-sm text-xs font-medium border border-amber-500/40 bg-amber-500/10 text-amber-300">
               {node.mode}
             </span>
-            {node.ip && <span className="text-xs text-gray-400 font-mono">{node.ip}</span>}
-            <span className={`text-xs font-medium ${isOnline ? 'text-green-600 dark:text-green-400' : 'text-gray-400'}`}>
+            {node.ip && <span className="text-xs text-zinc-400 font-code">{node.ip}</span>}
+            <span className={`text-xs font-medium ${isOnline ? 'text-emerald-400' : 'text-zinc-400'}`}>
               {isOnline ? '● 在线' : '○ 离线'}
             </span>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-zinc-400">
               {t('browsers.lastSeen')}: {node.last_seen_at ? timeAgo(node.last_seen_at) : t('browsers.never')}
             </span>
           </div>
@@ -399,10 +399,10 @@ function NodeCard({ node, wsConnectedSet, onDelete, isDeletePending }: NodeCardP
           <button
             onClick={() => setPanel((v) => (v === 'stats' ? 'none' : 'stats'))}
             className={[
-              'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
+              'flex items-center gap-1 px-2 py-1 rounded-sm text-xs transition-colors',
               panel === 'stats'
-                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700',
+                ? 'bg-primary-500/15 text-primary-400'
+                : 'text-zinc-400 hover:bg-white/4',
             ].join(' ')}
           >
             {panel === 'stats' ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -411,10 +411,10 @@ function NodeCard({ node, wsConnectedSet, onDelete, isDeletePending }: NodeCardP
           <button
             onClick={() => setPanel((v) => (v === 'history' ? 'none' : 'history'))}
             className={[
-              'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
+              'flex items-center gap-1 px-2 py-1 rounded-sm text-xs transition-colors',
               panel === 'history'
-                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700',
+                ? 'bg-primary-500/15 text-primary-400'
+                : 'text-zinc-400 hover:bg-white/4',
             ].join(' ')}
           >
             {panel === 'history' ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -423,7 +423,7 @@ function NodeCard({ node, wsConnectedSet, onDelete, isDeletePending }: NodeCardP
           <button
             onClick={onDelete}
             disabled={isDeletePending}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 px-2 py-1 rounded-sm text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
           >
             <Trash2 size={13} />
           </button>
@@ -470,17 +470,17 @@ function SiteDropdown({ boundSites, onSelect, isPending }: SiteDropdownProps) {
       <button
         onClick={() => setOpen((o) => !o)}
         disabled={isPending}
-        className="flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors disabled:opacity-50"
+        className="flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-white/8 text-zinc-400 hover:border-primary-500/50 hover:text-primary-400 transition-colors disabled:opacity-50"
       >
         <Plus size={11} />
         {t('browsers.addSite')}
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg w-48 overflow-hidden">
-          <div className="p-2 border-b border-gray-100 dark:border-gray-700">
+        <div className="absolute left-0 top-full mt-1 z-50 border border-white/8 bg-black/20 rounded-lg shadow-lg w-48 overflow-hidden">
+          <div className="p-2 border-b border-white/6">
             <input
               autoFocus
-              className="w-full px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-transparent dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-2 py-1 text-xs rounded-sm border border-white/8 bg-transparent text-zinc-100 focus:outline-hidden focus:ring-1 focus:ring-primary-500"
               placeholder={t('browsers.searchSite')}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -488,15 +488,15 @@ function SiteDropdown({ boundSites, onSelect, isPending }: SiteDropdownProps) {
           </div>
           <ul className="max-h-52 overflow-y-auto py-1">
             {available.length === 0 ? (
-              <li className="px-3 py-2 text-xs text-gray-400">{t('browsers.noAvailable')}</li>
+              <li className="px-3 py-2 text-xs text-zinc-400">{t('browsers.noAvailable')}</li>
             ) : available.map(([key, label]) => (
               <li key={key}>
                 <button
                   onClick={() => { onSelect(key); setOpen(false); setQuery('') }}
-                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between"
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-white/4 flex items-center justify-between"
                 >
-                  <span className="font-medium dark:text-white">{label}</span>
-                  <span className="text-gray-400 font-mono">{key}</span>
+                  <span className="font-medium text-zinc-100">{label}</span>
+                  <span className="text-zinc-400 font-code">{key}</span>
                 </button>
               </li>
             ))}
@@ -517,20 +517,20 @@ function StatusBadge({ containerStatus, available, isStarting }: {
     return (
       <span className="inline-flex items-center gap-1 text-xs">
         <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse shrink-0" />
-        <span className="text-orange-600 dark:text-orange-400">{t('browsers.statusStarting')}</span>
+        <span className="text-orange-400">{t('browsers.statusStarting')}</span>
       </span>
     )
   }
   if (containerStatus === 'running') {
     return available ? (
       <span className="inline-flex items-center gap-1 text-xs">
-        <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-        <span className="text-green-600 dark:text-green-400">{t('browsers.statusIdle')}</span>
+        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+        <span className="text-emerald-400">{t('browsers.statusIdle')}</span>
       </span>
     ) : (
       <span className="inline-flex items-center gap-1 text-xs">
         <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-        <span className="text-amber-600 dark:text-amber-400">{t('browsers.statusBusy')}</span>
+        <span className="text-amber-400">{t('browsers.statusBusy')}</span>
       </span>
     )
   }
@@ -538,22 +538,22 @@ function StatusBadge({ containerStatus, available, isStarting }: {
     return (
       <span className="inline-flex items-center gap-1 text-xs">
         <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse shrink-0" />
-        <span className="text-orange-600 dark:text-orange-400">{t('browsers.statusStarting')}</span>
+        <span className="text-orange-400">{t('browsers.statusStarting')}</span>
       </span>
     )
   }
   if (containerStatus === 'exited' || containerStatus === 'dead') {
     return (
       <span className="inline-flex items-center gap-1 text-xs">
-        <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />
-        <span className="text-gray-500 dark:text-gray-400">{t('browsers.statusOffline')}</span>
+        <span className="w-2 h-2 rounded-full bg-zinc-500 shrink-0" />
+        <span className="text-zinc-400">{t('browsers.statusOffline')}</span>
       </span>
     )
   }
   return (
     <span className="inline-flex items-center gap-1 text-xs">
-      <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse shrink-0" />
-      <span className="text-yellow-600 dark:text-yellow-400">{t('browsers.statusPending')}</span>
+      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+      <span className="text-amber-400">{t('browsers.statusPending')}</span>
     </span>
   )
 }
@@ -576,7 +576,7 @@ function ModeToggle({ endpoint, onSuccess, isDockerEndpoint }: {
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-gray-600 text-xs font-medium">
+      <div className="flex rounded-md overflow-hidden border border-white/8 text-xs font-medium">
         {(['bridge', 'cdp'] as const).map((m) => (
           <button
             key={m}
@@ -586,8 +586,8 @@ function ModeToggle({ endpoint, onSuccess, isDockerEndpoint }: {
             className={[
               'px-2.5 py-1 transition-colors',
               mode === m
-                ? m === 'bridge' ? 'bg-blue-600 text-white' : 'bg-amber-500 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700',
+                ? m === 'bridge' ? 'bg-primary-500/80 text-white' : 'bg-amber-500/80 text-white'
+                : 'bg-black/20 text-zinc-400 hover:bg-white/4',
             ].join(' ')}
           >
             {t(`workers.mode${m.charAt(0).toUpperCase() + m.slice(1)}`)}
@@ -595,7 +595,7 @@ function ModeToggle({ endpoint, onSuccess, isDockerEndpoint }: {
         ))}
       </div>
       {!isDockerEndpoint && mode === 'cdp' && (
-        <span className="text-xs text-amber-600 dark:text-amber-400 whitespace-nowrap">
+        <span className="text-xs text-amber-400 whitespace-nowrap">
           ⚠ CDP 会启动新 Chrome，本地请用 Bridge
         </span>
       )}
@@ -646,24 +646,24 @@ function InstanceCard({
 
   return (
     <Card>
-      <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100 dark:border-gray-700">
+      <div className="flex items-center gap-2 mb-3 pb-3 border-b border-white/6">
         {isDockerEndpoint
           ? <StatusBadge containerStatus={containerStatus} available={available} isStarting={isStarting} />
-          : <span className={`inline-flex items-center gap-1 text-xs ${available ? 'text-green-500' : 'text-gray-400'}`}>
-              <span className={`w-2 h-2 rounded-full shrink-0 ${available ? 'bg-green-500' : 'bg-gray-400'}`} />
+          : <span className={`inline-flex items-center gap-1 text-xs ${available ? 'text-emerald-500' : 'text-zinc-400'}`}>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${available ? 'bg-emerald-500' : 'bg-zinc-500'}`} />
               {available ? '在线' : '空闲'}
             </span>
         }
-        <span className="font-semibold text-sm dark:text-white">
+        <span className="font-semibold text-sm text-zinc-100">
           {isDockerEndpoint ? label : '本地 Chrome'}
         </span>
-        {!isDockerEndpoint && <span className="text-xs text-gray-400 font-mono">{label}</span>}
+        {!isDockerEndpoint && <span className="text-xs text-zinc-400 font-code">{label}</span>}
         {isDockerEndpoint && (
           <a
             href={novncUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs text-blue-500 hover:underline font-mono"
+            className="flex items-center gap-1 text-xs text-primary-400 hover:underline font-code"
           >
             :{novncPort ?? chromeNovncPort(url)}
             <ExternalLink size={11} />
@@ -671,16 +671,16 @@ function InstanceCard({
         )}
         <div className="ml-auto flex items-center gap-2">
           {endpoint.agent_protocol === 'ws' && (wsConnected ? (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium border border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
               <Wifi size={10} />{t('browsers.statusWsConnected')}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-white/6 text-zinc-400">
               <WifiOff size={10} />{t('browsers.statusWsOffline')}
             </span>
           ))}
           {!!endpoint.agent_url && endpoint.agent_protocol === 'http' && (
-            <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
+            <span className="px-1.5 py-0.5 rounded-sm text-xs font-medium border border-violet-500/40 bg-violet-500/10 text-violet-300">
               HTTP Agent
             </span>
           )}
@@ -689,7 +689,7 @@ function InstanceCard({
             <button
               onClick={onRemove}
               disabled={isRemovePending}
-              className="text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+              className="text-zinc-400 hover:text-red-400 transition-colors disabled:opacity-50"
             >
               <Trash2 size={14} />
             </button>
@@ -698,7 +698,7 @@ function InstanceCard({
       </div>
 
       {/* Agent URL row */}
-      <div className="mb-3 pb-3 border-b border-gray-100 dark:border-gray-700">
+      <div className="mb-3 pb-3 border-b border-white/6">
         {editingAgentUrl ? (
           <div className="space-y-2">
             <input
@@ -707,18 +707,18 @@ function InstanceCard({
               value={agentUrlDraft}
               onChange={(e) => setAgentUrlDraft(e.target.value)}
               placeholder="http://192.168.1.100:19823"
-              className="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+              className="w-full px-2 py-1 text-xs rounded-sm border border-white/8 bg-black/40 text-zinc-100 focus:outline-hidden focus:ring-1 focus:ring-primary-500 font-code"
             />
             {agentUrlDraft && (
               <div className="flex gap-2">
                 {(['http', 'ws'] as const).map((p) => (
                   <label key={p} className={`flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${
                     agentProtocolDraft === p
-                      ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                      : 'border-gray-200 dark:border-gray-600 text-gray-500 hover:border-gray-300'
+                      ? 'border-primary-500/50 bg-primary-500/10 text-primary-300'
+                      : 'border-white/8 text-zinc-400 hover:border-white/[0.14]'
                   }`}>
                     <input type="radio" name={`protocol-${url}`} value={p} checked={agentProtocolDraft === p}
-                      onChange={() => setAgentProtocolDraft(p)} className="accent-blue-600" />
+                      onChange={() => setAgentProtocolDraft(p)} className="accent-primary-500" />
                     {p === 'http' ? 'HTTP（局域网 / 代理）' : 'WS（反向连接）'}
                   </label>
                 ))}
@@ -728,11 +728,11 @@ function InstanceCard({
               <button
                 onClick={() => saveAgentUrlMutation.mutate({ agent_url: agentUrlDraft, agent_protocol: agentProtocolDraft })}
                 disabled={saveAgentUrlMutation.isPending}
-                className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                className="px-2 py-1 text-xs rounded-sm bg-primary-500/80 text-white hover:bg-primary-500 disabled:opacity-50"
               >保存</button>
               <button
                 onClick={() => { setEditingAgentUrl(false); setAgentUrlDraft(endpoint.agent_url ?? ''); setAgentProtocolDraft(endpoint.agent_protocol === 'ws' ? 'ws' : 'http') }}
-                className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700"
+                className="px-2 py-1 text-xs rounded-sm border border-white/8 text-zinc-400 hover:bg-white/4"
               >取消</button>
             </div>
           </div>
@@ -741,27 +741,27 @@ function InstanceCard({
             onClick={() => { setAgentUrlDraft(endpoint.agent_url ?? ''); setAgentProtocolDraft(endpoint.agent_protocol === 'ws' ? 'ws' : 'http'); setEditingAgentUrl(true) }}
             className="flex items-center gap-1.5 text-xs group"
           >
-            <span className="text-gray-400 shrink-0">Agent:</span>
+            <span className="text-zinc-400 shrink-0">Agent:</span>
             {endpoint.agent_url ? (
               <>
-                <span className="font-mono text-blue-600 dark:text-blue-400 group-hover:underline truncate max-w-[160px]">{endpoint.agent_url}</span>
-                <span className="px-1 py-0.5 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 font-mono">{endpoint.agent_protocol ?? 'http'}</span>
+                <span className="font-code text-primary-400 group-hover:underline truncate max-w-[160px]">{endpoint.agent_url}</span>
+                <span className="px-1 py-0.5 rounded-sm text-xs border border-white/10 bg-black/40 font-code text-zinc-400">{endpoint.agent_protocol ?? 'http'}</span>
               </>
             ) : (
-              <span className="text-gray-400 italic group-hover:text-blue-500">未配置 — 点击设置</span>
+              <span className="text-zinc-400 italic group-hover:text-primary-400">未配置 — 点击设置</span>
             )}
           </button>
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2 min-h-[2rem]">
+      <div className="flex flex-wrap gap-2 min-h-8">
         {bindings.map((b) => (
           <span
             key={b.id}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-primary-500/10 text-primary-300 border border-primary-500/40"
           >
             {SITE_LABELS[b.site] ?? b.site}
-            <button onClick={() => onUnbind(b.id)} className="hover:text-red-500 transition-colors ml-0.5">
+            <button onClick={() => onUnbind(b.id)} className="hover:text-red-400 transition-colors ml-0.5">
               <X size={10} />
             </button>
           </span>
@@ -785,25 +785,25 @@ function SwitchModeModal({ target, onConfirm, onClose, isPending }: {
         title: '切换为本地模式',
         desc: '切换后，所有采集任务将直连本地 Chrome，不再通过 Agent 节点路由。',
         warn: '已注册的 Agent 节点不会被删除，切换回 Agent 模式后仍可继续使用。',
-        btnCls: 'bg-blue-600 hover:bg-blue-700',
+        btnCls: 'bg-primary-500/80 hover:bg-primary-500',
         btnLabel: '切换为本地模式',
       }
     : {
         title: '切换为 Agent 模式',
         desc: '切换后，采集任务将通过已注册的 Agent 节点执行。',
         warn: '请确保至少有一个 Agent 节点在线，否则采集任务将失败。',
-        btnCls: 'bg-purple-600 hover:bg-purple-700',
+        btnCls: 'bg-violet-600 hover:bg-violet-500',
         btnLabel: '切换为 Agent 模式',
       }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold dark:text-white mb-2">{info.title}</h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">{info.desc}</p>
-        <div className="flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2.5 mb-5">
-          <span className="text-amber-500 shrink-0 mt-0.5">⚠</span>
-          <p className="text-xs text-amber-700 dark:text-amber-300">{info.warn}</p>
+      <div className="border border-white/8 bg-black/20 shadow-xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-sm font-semibold text-zinc-100 mb-2">{info.title}</h3>
+        <p className="text-sm text-zinc-400 mb-3">{info.desc}</p>
+        <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/40 rounded-lg px-3 py-2.5 mb-5">
+          <span className="text-amber-400 shrink-0 mt-0.5">⚠</span>
+          <p className="text-xs text-amber-300">{info.warn}</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -816,7 +816,7 @@ function SwitchModeModal({ target, onConfirm, onClose, isPending }: {
           <button
             onClick={onClose}
             disabled={isPending}
-            className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+            className="flex-1 px-3 py-2 text-sm rounded-lg border border-white/8 text-zinc-300 hover:bg-white/4 disabled:opacity-50"
           >
             取消
           </button>
@@ -923,16 +923,16 @@ export default function NodesPage() {
 
       {/* ── 采集模式 ── */}
       {sysConfig && (
-        <div className="mb-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+        <div className="mb-6 telemetry-panel overflow-hidden">
+          <div className="px-4 py-3 border-b border-white/6 flex items-center justify-between">
             <div>
-              <span className="text-sm font-semibold text-gray-800 dark:text-white">{t('browsers.collectionMode')}</span>
-              <span className="ml-2 text-xs text-gray-400">切换后立即生效，影响所有任务的采集路由</span>
+              <span className="text-sm font-semibold text-zinc-100">{t('browsers.collectionMode')}</span>
+              <span className="ml-2 text-xs text-zinc-400">切换后立即生效，影响所有任务的采集路由</span>
             </div>
             <button
               onClick={() => restartMut.mutate()}
               disabled={restartMut.isPending || !!restartMsg}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/8 text-zinc-300 hover:bg-white/4 disabled:opacity-50"
             >
               <RefreshCw size={13} className={restartMsg ? 'animate-spin' : ''} />
               {restartMsg ?? t('browsers.restartApi')}
@@ -944,15 +944,15 @@ export default function NodesPage() {
                 value: 'local' as const,
                 label: '本地模式',
                 desc: '中心直连本地 Chrome（shell 部署），不经过 Agent。适合单机开发或简单采集场景。',
-                activeCls: 'border-blue-500 bg-blue-50 dark:bg-blue-900/20',
-                dotCls: 'bg-blue-500',
+                activeCls: 'border-primary-500/65 bg-primary-500/7.5',
+                dotCls: 'bg-primary-500',
               },
               {
                 value: 'agent' as const,
                 label: 'Agent 模式',
                 desc: '通过 Agent 节点采集，支持本地 Docker 容器或远端多机分布式部署。',
-                activeCls: 'border-purple-500 bg-purple-50 dark:bg-purple-900/20',
-                dotCls: 'bg-purple-500',
+                activeCls: 'border-violet-500/65 bg-violet-500/7.5',
+                dotCls: 'bg-violet-500',
               },
             ] as const).map(({ value, label, desc, activeCls, dotCls }) => {
               const isActive = sysConfig.collection_mode === value
@@ -963,13 +963,13 @@ export default function NodesPage() {
                   onClick={() => !isActive && setPendingMode(value)}
                   className={[
                     'flex items-start gap-3 text-left rounded-lg border-2 px-4 py-3 transition-colors',
-                    isActive ? activeCls : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500',
+                    isActive ? activeCls : 'border-white/8 hover:border-white/16',
                   ].join(' ')}
                 >
-                  <span className={`mt-1 w-3 h-3 rounded-full shrink-0 border-2 ${isActive ? `${dotCls} border-transparent` : 'border-gray-300 dark:border-gray-600'}`} />
+                  <span className={`mt-1 w-3 h-3 rounded-full shrink-0 border-2 ${isActive ? `${dotCls} border-transparent` : 'border-white/[0.14]'}`} />
                   <div className="min-w-0">
-                    <p className={`text-sm font-semibold ${isActive ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>{label}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{desc}</p>
+                    <p className={`text-sm font-semibold ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`}>{label}</p>
+                    <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">{desc}</p>
                   </div>
                 </button>
               )
@@ -982,9 +982,9 @@ export default function NodesPage() {
       {collectionMode === 'local' && (
         <div>
           {localEndpoints.length === 0 ? (
-            <div className="text-center py-12 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl">
-              <p className="text-sm text-gray-500">未检测到本地浏览器端点</p>
-              <p className="text-xs text-gray-400 mt-1">请确保 Chrome 以调试模式启动（Bridge 或 CDP）</p>
+            <div className="text-center py-12 border border-dashed border-white/8">
+              <p className="text-sm text-zinc-400">未检测到本地浏览器端点</p>
+              <p className="text-xs text-zinc-400 mt-1">请确保 Chrome 以调试模式启动（Bridge 或 CDP）</p>
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1013,24 +1013,24 @@ export default function NodesPage() {
         <div>
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h2 className="text-base font-semibold text-gray-800 dark:text-white">Agent 节点</h2>
-              <p className="text-xs text-gray-500 mt-0.5">已注册的 Agent 节点（本地或远端）</p>
+              <h2 className="text-base font-semibold text-zinc-100">Agent 节点</h2>
+              <p className="text-xs text-zinc-400 mt-0.5">已注册的 Agent 节点（本地或远端）</p>
             </div>
             <button
               onClick={() => setShowWizard(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-primary-500/80 text-white hover:bg-primary-500"
             >
               <Plus size={14} />
               {t('browsers.addNode')}
             </button>
           </div>
           {nodes.length === 0 ? (
-            <div className="text-center py-12 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl">
-              <p className="text-sm text-gray-500">{t('browsers.noNodes')}</p>
-              <p className="text-xs text-gray-400 mt-1">{t('browsers.noNodesHint')}</p>
+            <div className="text-center py-12 border border-dashed border-white/8">
+              <p className="text-sm text-zinc-400">{t('browsers.noNodes')}</p>
+              <p className="text-xs text-zinc-400 mt-1">{t('browsers.noNodesHint')}</p>
               <button
                 onClick={() => setShowWizard(true)}
-                className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 mx-auto"
+                className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm bg-primary-500/80 text-white hover:bg-primary-500 mx-auto"
               >
                 <Plus size={14} />
                 {t('browsers.addNode')}

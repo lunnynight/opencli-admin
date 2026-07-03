@@ -33,7 +33,7 @@ import {
   type Node,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Boxes, Network, Play, Sparkles, Trash2 } from 'lucide-react'
+import { Boxes, FlaskConical, Loader2, Network, Play, Sparkles, Square, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -49,12 +49,14 @@ import {
 import { instantiateGraph, type AgentGraph } from '../agent/graph'
 import { getNode, instantiate, listNodes } from '../registry'
 import { runGraph } from '../runtime/engine'
+import { applyRunEvent, summarizeRun, toRunLogRows, EMPTY_RUN_STATE, type RunStateMap } from '../runtime/runLog'
 import type { ConfigValues, NodeCategory, NodeSpec } from '../spec'
 import { iconByName } from './atoms'
 import { elkLayout } from './elkLayout'
 import { NodeInspector } from './NodeInspector'
 import { NodeSearchMenu } from './NodeSearchMenu'
 import { nodeTypesForXyflow } from './nodeTypes'
+import { RunLogPanel } from './RunLogPanel'
 
 const CATEGORY_LABEL: Record<NodeCategory, string> = {
   source: '源', transform: '变换', sink: '汇', control: '控制', display: '展示', agent: '智能体', custom: '其它',
@@ -74,6 +76,16 @@ function makeNode(type: string, position: { x: number; y: number }, seq: number)
 function stripTransient(n: Node): Node {
   const { className: _c, selected: _s, dragging: _d, ...rest } = n
   return rest as Node
+}
+
+// Run log rows only carry a nodeId (the engine is React-free); resolve a
+// human title from the live xyflow node list, falling back to the spec title
+// for the node's type, then the raw id if the node was since deleted.
+function nodeTitleFor(nodes: Node[], nodeId: string): string {
+  const n = nodes.find((nn) => nn.id === nodeId)
+  if (!n) return nodeId
+  const spec = getNode(String(n.type))
+  return spec?.title ?? String(n.type)
 }
 
 function centroid(ns: Node[]): { x: number; y: number } {
@@ -98,7 +110,7 @@ function PaletteChip({ spec, color, onClick }: { spec: NodeSpec; color: string; 
       onClick={onClick}
       {...listeners}
       {...attributes}
-      className={`flex w-full cursor-grab items-center gap-2 px-3 py-1.5 text-left text-[12px] text-zinc-300 transition hover:bg-white/[0.05] hover:text-white active:cursor-grabbing ${isDragging ? 'opacity-40' : ''}`}
+      className={`flex w-full cursor-grab items-center gap-2 px-3 py-1.5 text-left text-xs text-zinc-300 transition hover:bg-white/5 hover:text-white active:cursor-grabbing ${isDragging ? 'opacity-40' : ''}`}
     >
       <Icon className="h-3.5 w-3.5 shrink-0" style={{ color }} />
       <span className="truncate">{spec.title}</span>
@@ -131,6 +143,15 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
   const [search, setSearch] = useState<{ rx: number; ry: number; cx: number; cy: number } | null>(null)
   const [dragType, setDragType] = useState<string | null>(null)
   const [laying, setLaying] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [runState, setRunState] = useState<RunStateMap>(EMPTY_RUN_STATE)
+  // Ref mirror of runState for the run observer: events arrive from async
+  // engine code, and accumulating on the ref lets us call xyflow's
+  // updateNodeData OUTSIDE the setState updater (calling it inside the
+  // updater is a setState-during-render violation against BatchProvider).
+  const runStateRef = useRef<RunStateMap>(EMPTY_RUN_STATE)
+  const runSeq = useRef(0)
+  const abortRef = useRef<{ aborted: boolean } | null>(null)
 
   const { setNodeRef: setDropRef } = useDroppable({ id: 'canvas' })
   const setWrap = useCallback(
@@ -146,14 +167,14 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
   const add = useCallback(
     (type: string, position: { x: number; y: number }) => {
       const n = makeNode(type, position, seq.current++)
-      if (n) setNodes((nds) => [...nds, n])
+      if (n) setNodes((nds: Node[]) => [...nds, n])
     },
     [setNodes],
   )
 
   const onConnect = useCallback(
     (params: Connection) =>
-      setEdges((eds) => addEdge({ ...params, type: 'default', animated: true, markerEnd: { type: MarkerType.ArrowClosed } }, eds)),
+      setEdges((eds: Edge[]) => addEdge({ ...params, type: 'default', animated: true, markerEnd: { type: MarkerType.ArrowClosed } }, eds)),
     [setEdges],
   )
 
@@ -199,12 +220,12 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
   const onNodeDrag = useCallback(
     (_: unknown, node: Node) => {
       const hits = new Set(getIntersectingNodes(node).map((n) => n.id))
-      setNodes((nds) => nds.map((n) => ({ ...n, className: hits.has(n.id) ? 'kit-collide' : '' })))
+      setNodes((nds: Node[]) => nds.map((n) => ({ ...n, className: hits.has(n.id) ? 'kit-collide' : '' })))
     },
     [getIntersectingNodes, setNodes],
   )
   const onNodeDragStop = useCallback(() => {
-    setNodes((nds) => nds.map((n) => (n.className ? { ...n, className: '' } : n)))
+    setNodes((nds: Node[]) => nds.map((n) => (n.className ? { ...n, className: '' } : n)))
   }, [setNodes])
 
   // ── Macro: collapse a multi-node selection into one reusable node ───────────
@@ -252,7 +273,7 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
         sourceHandle: `${e.source}:${e.sourceHandle ?? 'out'}`,
       })),
     ]
-    setNodes((nds) => [...nds.filter((n) => !ids.has(n.id)), macroNode])
+    setNodes((nds: Node[]) => [...nds.filter((n) => !ids.has(n.id)), macroNode])
     setEdges(rewired)
     toast.success(`已组成宏「${name}」· ${subNodes.length} 节点（双击展开）`)
   }, [selected, edges, setNodes, setEdges])
@@ -278,12 +299,23 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
     [expandMacroNode],
   )
 
-  // run the graph through the self-built P0 runtime
+  // Push the latest runState entry for one node onto its xyflow node.data so
+  // KitNode can render it — mirrors how config edits already flow (updateNodeData).
+  const pushRunStateToNode = useCallback(
+    (nodeId: string, map: RunStateMap) => {
+      updateNodeData(nodeId, { runState: map[nodeId] })
+    },
+    [updateNodeData],
+  )
+
+  // run the graph through the self-built P0 runtime, observing per-node state
+  // transitions into runState (drives KitNode borders + the run log panel).
   const runNow = useCallback(async () => {
     if (nodes.length === 0) {
       toast.message('画布为空，先加几个节点')
       return
     }
+    if (running) return
     // Flatten macros → atoms before running; the engine is macro-blind by design.
     const flat = flattenForRun(nodes, edges)
     const rn = flat.nodes.map((n) => ({
@@ -292,12 +324,40 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
       config: ((n.data as { config?: ConfigValues })?.config ?? {}) as ConfigValues,
     }))
     const re = flat.edges.map((e) => ({ source: e.source, sourceHandle: e.sourceHandle, target: e.target, targetHandle: e.targetHandle }))
-    const res = await runGraph(rn, re)
-    const errCount = Object.keys(res.errors).length
-    if (errCount) toast.error(`运行完成 · ${errCount} 个节点出错（看 console）`)
-    else toast.success(`运行完成 · ${res.order.length} 节点 · artifact ${Object.keys(res.artifact).length} 项`)
-    console.log('[node-kit runGraph]', res)
-  }, [nodes, edges])
+
+    // fresh run: clear the panel + every node's stale border before starting
+    runStateRef.current = EMPTY_RUN_STATE
+    setRunState(EMPTY_RUN_STATE)
+    for (const n of rn) pushRunStateToNode(n.id, EMPTY_RUN_STATE)
+    runSeq.current = 0
+    const signal = { aborted: false }
+    abortRef.current = signal
+    setRunning(true)
+
+    try {
+      const res = await runGraph(rn, re, {
+        signal,
+        observer: (nodeId, state, detail) => {
+          const seq = runSeq.current++
+          const next = applyRunEvent(runStateRef.current, nodeId, state, detail, seq)
+          runStateRef.current = next
+          setRunState(next)
+          pushRunStateToNode(nodeId, next)
+        },
+      })
+      const errCount = Object.keys(res.errors).length
+      if (signal.aborted) toast.message('预演已停止 · fixture 数据，非真实采集')
+      else if (errCount) toast.error(`预演完成 · ${errCount} 个节点出错 · fixture 数据，非真实采集`)
+      else toast.success(`预演完成 · ${res.order.length} 节点 · artifact ${Object.keys(res.artifact).length} 项 · fixture 数据，非真实采集`)
+    } finally {
+      setRunning(false)
+      abortRef.current = null
+    }
+  }, [nodes, edges, running, pushRunStateToNode])
+
+  const stopRun = useCallback(() => {
+    if (abortRef.current) abortRef.current.aborted = true
+  }, [])
 
   // ELK auto-layout: snap the scattered graph into a clean left→right dataflow.
   const tidy = useCallback(async () => {
@@ -368,15 +428,15 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
 
   return (
     <DndContext sensors={sensors} onDragStart={(e: DragStartEvent) => setDragType((e.active.data.current?.type as string) ?? null)} onDragEnd={onDragEnd}>
-      <div className="flex h-full overflow-hidden rounded-md border border-white/[0.1] bg-black">
+      <div className="flex h-full overflow-hidden rounded-md border border-white/10 bg-black">
         {/* LEFT palette — ComfyUI-style, dnd-kit draggable */}
-        <div className="w-44 shrink-0 overflow-auto border-r border-white/[0.1] bg-[#0b0c0e] py-2">
+        <div className="thin-scrollbar w-44 shrink-0 overflow-auto border-r border-white/10 bg-ops-panel py-2">
           <p className="px-3 pb-1 font-telemetry text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
             节点 · 拖入或点按
           </p>
           {groups.map(([cat, specs]) => (
             <div key={cat} className="mt-1.5">
-              <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: CATEGORY_COLOR[cat] }}>
+              <p className="px-3 py-1 text-3xs font-semibold uppercase tracking-wide" style={{ color: CATEGORY_COLOR[cat] }}>
                 {CATEGORY_LABEL[cat]}
               </p>
               {specs.map((s) => (
@@ -421,7 +481,7 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
             nodesDraggable
             nodesConnectable
             proOptions={{ hideAttribution: true }}
-            className="bg-[#060608]"
+            className="bg-ops-black"
           >
             <Background variant={BackgroundVariant.Dots} color="#2a2a32" gap={22} size={1.6} />
             <Controls position="bottom-left" showInteractive={false} />
@@ -442,12 +502,18 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
           )}
 
           <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+            <span
+              title="运行按钮跑的是浏览器内 fixture 数据预演，从不调用真实采集 API，也不落库 — 与生产采集完全隔离"
+              className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wide text-amber-200"
+            >
+              <FlaskConical size={12} /> 预演 · fixture 数据，非真实采集
+            </span>
             <button
               type="button"
               onClick={groupIntoMacro}
               disabled={selected.length < 2}
               title="把选中的多个节点折叠成一个可复用宏（双击展开）"
-              className="inline-flex items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-500/20 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-2xs font-semibold text-violet-100 transition hover:bg-violet-500/20 disabled:opacity-40"
             >
               <Boxes size={12} /> 组成宏{selected.length >= 2 ? ` (${selected.length})` : ''}
             </button>
@@ -455,7 +521,7 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
               type="button"
               onClick={importAgentGraph}
               title="粘贴 AI 产出的节点图 JSON，校验后落到画布"
-              className="inline-flex items-center gap-1 rounded-md border border-fuchsia-500/40 bg-fuchsia-500/10 px-2.5 py-1 text-[11px] font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/20"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-2xs font-semibold text-violet-100 transition hover:bg-violet-500/20"
             >
               <Sparkles size={12} /> AI 产图
             </button>
@@ -464,28 +530,42 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
               onClick={tidy}
               disabled={laying}
               title="按数据流自动排版 (ELK)"
-              className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-100 transition hover:bg-sky-500/20 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-2xs font-semibold text-sky-100 transition hover:bg-sky-500/20 disabled:opacity-50"
             >
               <Network size={12} /> {laying ? '布局中…' : '自动布局'}
             </button>
             <button
               type="button"
               onClick={runNow}
-              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-500/20"
+              disabled={running}
+              title="预演：仅在浏览器内跑 fixture 数据，不调用采集 API，不写记录"
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-2xs font-semibold text-emerald-100 transition hover:bg-emerald-500/20 disabled:opacity-50"
             >
-              <Play size={12} /> 运行
+              {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} {running ? '预演中…' : '预演运行'}
             </button>
+            {running && (
+              <button
+                type="button"
+                onClick={stopRun}
+                title="在当前节点执行完后停止后续节点"
+                className="inline-flex items-center gap-1 rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-2xs font-semibold text-red-100 transition hover:bg-red-500/20"
+              >
+                <Square size={12} /> 停止
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
                 setNodes([])
                 setEdges([])
               }}
-              className="inline-flex items-center gap-1 rounded-md border border-white/12 bg-black/80 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-red-400/40 hover:text-red-200"
+              className="inline-flex items-center gap-1 rounded-md border border-white/12 bg-black/80 px-2 py-1 text-2xs text-zinc-300 transition hover:border-red-400/40 hover:text-red-200"
             >
               <Trash2 size={12} /> 清空
             </button>
           </div>
+
+          <RunLogPanel runState={runState} titleFor={(id) => nodeTitleFor(nodes, id)} />
         </div>
         {selectedOne && <NodeInspector node={selectedOne} onField={setSelectedField} />}
       </div>
@@ -493,7 +573,7 @@ function WorkbenchInner({ seed }: { seed?: WorkbenchSeed }) {
       {/* dnd-kit drag ghost */}
       <DragOverlay dropAnimation={null}>
         {dragSpec ? (
-          <div className="flex items-center gap-2 rounded-md border border-sky-500/50 bg-[#0c0d10] px-3 py-1.5 text-[12px] text-zinc-100 shadow-xl">
+          <div className="flex items-center gap-2 rounded-md border border-sky-500/50 bg-ops-raised px-3 py-1.5 text-xs text-zinc-100 shadow-drag">
             {(() => {
               const Icon = iconByName(dragSpec.icon)
               return <Icon className="h-3.5 w-3.5 text-sky-300" />

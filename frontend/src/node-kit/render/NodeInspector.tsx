@@ -20,18 +20,18 @@ export function NodeInspector({
   const fields = spec?.config?.fields ?? []
 
   return (
-    <div className="w-64 shrink-0 overflow-auto border-l border-white/[0.1] bg-[#0b0c0e] p-3">
+    <div className="thin-scrollbar w-64 shrink-0 overflow-auto border-l border-white/10 bg-ops-panel p-3">
       <p className="pb-2 font-telemetry text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
         属性
       </p>
-      <div className="mb-3 border-b border-white/[0.06] pb-2.5">
+      <div className="mb-3 border-b border-white/6 pb-2.5">
         <div className="truncate text-sm font-semibold text-white" title={spec?.title}>
           {spec?.title ?? String(node.type)}
         </div>
-        <div className="truncate text-[11px] text-zinc-500">{spec?.subtitle ?? String(node.type)}</div>
+        <div className="truncate text-2xs text-zinc-500">{spec?.subtitle ?? String(node.type)}</div>
       </div>
       {fields.length === 0 ? (
-        <div className="text-[11px] text-zinc-600">此节点无可配置字段</div>
+        <div className="text-2xs text-zinc-600">此节点无可配置字段</div>
       ) : (
         <div className="grid gap-2.5">
           {fields.map((f) => (

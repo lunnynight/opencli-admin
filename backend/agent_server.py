@@ -30,6 +30,12 @@ Environment variables:
                             Leave empty to skip auto-registration.
     HTTP_PROXY              HTTP proxy for outbound requests (agent → center)
     HTTPS_PROXY             HTTPS proxy for outbound requests (agent → center)
+    AGENT_API_TOKEN         Fleet auth bearer token (ADR-0005) attached to both the
+                            HTTP register call and the WS reverse-channel handshake.
+                            Preferred name for this process; takes priority.
+    API_AUTH_TOKEN          Fallback token env var — a node sharing the center's
+                            process environment (e.g. same .env) just works without
+                            a separate AGENT_API_TOKEN. Ignored if AGENT_API_TOKEN is set.
     OPENCLI_BRIDGE_BIN      Path to opencli 1.0 binary (default: /opt/opencli-bridge/bin/opencli)
     OPENCLI_CDP_BIN         Path to opencli 0.9 binary (default: /opt/opencli-cdp/bin/opencli)
     OPENCLI_CDP_ENDPOINT    Default Chrome CDP endpoint (default: http://localhost:19222)
@@ -53,6 +59,15 @@ from urllib.parse import urlparse
 import yaml
 from fastapi import FastAPI
 from pydantic import BaseModel
+
+# Imported directly from the registry submodule (not the `backend.agent_runtimes`
+# package __init__) so this module's import graph is pinned to what registry.py
+# itself pulls in — stdlib only, verified against pi_adapter.py's imports (also
+# stdlib-only). agent_server.py runs standalone on edge nodes with a minimal
+# dependency set (see module docstring); this avoids depending on the package
+# __init__ staying lightweight as more adapters are added later.
+from backend.agent_runtimes.registry import available_runtimes, get_runtime
+from backend.agent_runtimes.base import AgentTask, RuntimeInvocationError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger("agent_server")
@@ -84,6 +99,20 @@ _OPENCLI_TIMEOUT = int(os.environ.get("OPENCLI_TIMEOUT", "120"))
 # Outbound proxy for agent → center communication (optional)
 _HTTP_PROXY = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
 _HTTPS_PROXY = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+# Fleet auth token (ADR-0005): AGENT_API_TOKEN preferred, API_AUTH_TOKEN accepted
+# as a fallback for nodes that share the center's environment.
+_AGENT_API_TOKEN = os.environ.get("AGENT_API_TOKEN") or os.environ.get("API_AUTH_TOKEN") or ""
+
+
+def _auth_headers() -> dict[str, str]:
+    """Bearer-auth header for center requests, or {} when no token is configured.
+
+    Reads the module global at call time (rather than closing over it) so
+    tests can monkeypatch backend.agent_server._AGENT_API_TOKEN directly.
+    """
+    if not _AGENT_API_TOKEN:
+        return {}
+    return {"Authorization": f"Bearer {_AGENT_API_TOKEN}"}
 
 
 def _detect_advertise_url() -> str:
@@ -125,23 +154,24 @@ async def _register_with_center(advertise_url: str) -> None:
         try:
             # httpx >= 0.28 removed 'proxies'; use 'proxy' (single URL) or mounts
             client_kwargs: dict = {"timeout": 10}
+            headers = _auth_headers()
             if proxies:
                 proxy_url = proxies.get("https://") or proxies.get("http://")
                 try:
                     client_kwargs["proxy"] = proxy_url
                     async with httpx.AsyncClient(**client_kwargs) as client:
-                        resp = await client.post(url, json=payload)
+                        resp = await client.post(url, json=payload, headers=headers)
                         resp.raise_for_status()
                 except TypeError:
                     # Older httpx: fall back to 'proxies'
                     client_kwargs.pop("proxy", None)
                     client_kwargs["proxies"] = proxies
                     async with httpx.AsyncClient(**client_kwargs) as client:
-                        resp = await client.post(url, json=payload)
+                        resp = await client.post(url, json=payload, headers=headers)
                         resp.raise_for_status()
             else:
                 async with httpx.AsyncClient(**client_kwargs) as client:
-                    resp = await client.post(url, json=payload)
+                    resp = await client.post(url, json=payload, headers=headers)
                     resp.raise_for_status()
             logger.info("Registered with center %s as %s", _CENTRAL_API_URL, advertise_url)
             return
@@ -176,6 +206,96 @@ async def _handle_ws_collect(ws, msg: dict) -> None:
         logger.error("WS: failed to send result for request_id=%s: %s", request_id, exc)
 
 
+async def _handle_ws_agent_task(ws, msg: dict) -> None:
+    """Execute an agent_task received over the WS channel: run the requested
+    runtime adapter, streaming each RuntimeEvent back as an 'agent_event'
+    frame, and finish with exactly one 'agent_result' frame carrying the
+    terminal done/error event.
+
+    Never raises out of this function — a single task crashing must not kill
+    the WS receive loop (the caller fires this via asyncio.create_task).
+    """
+    request_id = msg.get("request_id", "")
+
+    async def _send_result(result: dict) -> None:
+        try:
+            await ws.send(json.dumps({
+                "type": "agent_result",
+                "request_id": request_id,
+                "result": result,
+            }))
+        except Exception as exc:
+            logger.error("WS: failed to send agent_result for request_id=%s: %s", request_id, exc)
+
+    runtime_type = msg.get("runtime", "")
+    # Everything below is one outer try/except: get_runtime() lookup, adapter
+    # construction of AgentTask, and the invoke() stream are all treated the
+    # same way — any exception, of any type, must resolve the center's
+    # pending future with an error result rather than propagate. The caller
+    # fires this coroutine via asyncio.create_task, so an uncaught exception
+    # here would otherwise vanish into an unretrieved task exception and the
+    # center would hang until its own send_agent_task timeout.
+    try:
+        try:
+            adapter = get_runtime(runtime_type)
+        except ValueError as exc:
+            logger.warning("WS agent_task request_id=%s: unknown runtime %r: %s",
+                            request_id, runtime_type, exc)
+            await _send_result({
+                "type": "error",
+                "task_id": request_id,
+                "message": str(exc),
+                "error_type": "ValueError",
+            })
+            return
+
+        task = AgentTask(
+            task_id=request_id,
+            workflow=msg.get("workflow", ""),
+            input=msg.get("input") or {},
+            config=msg.get("config") or {},
+            session_id=msg.get("session_id"),
+        )
+
+        terminal_event: dict | None = None
+        async for event in adapter.invoke(task):
+            terminal_event = event
+            try:
+                await ws.send(json.dumps({
+                    "type": "agent_event",
+                    "request_id": request_id,
+                    "event": event,
+                }))
+            except Exception as exc:
+                logger.error("WS: failed to send agent_event for request_id=%s: %s", request_id, exc)
+        if terminal_event is None:
+            # Contract violation (adapter yielded nothing) — still must resolve
+            # the center's pending future rather than hang it until timeout.
+            terminal_event = {
+                "type": "error",
+                "task_id": request_id,
+                "message": f"runtime {runtime_type!r} adapter yielded no events",
+                "error_type": "RuntimeInvocationError",
+            }
+        await _send_result(terminal_event)
+    except RuntimeInvocationError as exc:
+        logger.exception("WS agent_task request_id=%s: adapter invocation error: %s", request_id, exc)
+        await _send_result({
+            "type": "error",
+            "task_id": request_id,
+            "message": str(exc),
+            "error_type": exc.error_type or type(exc).__name__,
+        })
+    except Exception as exc:
+        logger.exception("WS agent_task request_id=%s: unexpected error: %s", request_id, exc)
+        await _send_result({
+            "type": "error",
+            "task_id": request_id,
+            "message": str(exc),
+            "error_type": type(exc).__name__,
+        })
+
+
 async def _register_via_ws(advertise_url: str) -> None:
     """Initiate persistent reverse WebSocket to center and handle collect tasks.
 
@@ -192,12 +312,16 @@ async def _register_via_ws(advertise_url: str) -> None:
         + "/api/v1/nodes/ws"
     )
     _proxy = _HTTPS_PROXY or _HTTP_PROXY or None
+    # Computed once (not per reconnect attempt): available_runtimes() does a
+    # handful of cheap shutil.which() checks, not worth repeating on every
+    # reconnect. A node's installed runtimes don't change without a restart.
     register_payload = json.dumps({
         "type": "register",
         "agent_url": advertise_url,
         "mode": _AGENT_MODE,
         "node_type": _AGENT_DEPLOY_TYPE,
         "label": _AGENT_LABEL,
+        "runtimes": available_runtimes(),
     })
 
     attempt = 0
@@ -208,7 +332,20 @@ async def _register_via_ws(advertise_url: str) -> None:
             connect_kwargs: dict = {"ping_interval": 30, "ping_timeout": 10}
             if _proxy:
                 connect_kwargs["proxy"] = _proxy
-            async with websockets.connect(ws_url, **connect_kwargs) as ws:
+            headers = _auth_headers()
+            if headers:
+                try:
+                    # websockets >= 14 renamed extra_headers -> additional_headers.
+                    connector = websockets.connect(
+                        ws_url, additional_headers=headers, **connect_kwargs
+                    )
+                except TypeError:
+                    connector = websockets.connect(
+                        ws_url, extra_headers=headers, **connect_kwargs
+                    )
+            else:
+                connector = websockets.connect(ws_url, **connect_kwargs)
+            async with connector as ws:
                 attempt = 0  # reset on successful connect
                 await ws.send(register_payload)
 
@@ -228,6 +365,8 @@ async def _register_via_ws(advertise_url: str) -> None:
                     msg_type = msg.get("type")
                     if msg_type == "collect":
                         asyncio.create_task(_handle_ws_collect(ws, msg))
+                    elif msg_type == "agent_task":
+                        asyncio.create_task(_handle_ws_agent_task(ws, msg))
                     elif msg_type == "ping":
                         await ws.send(json.dumps({"type": "pong"}))
                     elif msg_type == "pong":

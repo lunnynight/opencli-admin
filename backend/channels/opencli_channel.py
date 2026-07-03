@@ -482,7 +482,11 @@ class OpenCLIChannel(AbstractChannel):
         via CDP) only runs in local cdp/bridge mode — agent mode dispatches
         to a remote node with its own registration/health concern, and a
         bridge-mode endpoint has no local /json/version to hit. Acquires a
-        pool slot only for the duration of the probe, not held afterward."""
+        pool slot only for the duration of the probe, not held afterward.
+        When `config.site` has a browser binding (same lookup pipeline.py
+        does before collect()), the probe targets that bound endpoint
+        instead of an arbitrary pool member, so multi-endpoint pools give a
+        result that reflects this source's actual endpoint."""
         if not (shutil.which(_OPENCLI_BIN) or os.path.isfile(_OPENCLI_BIN)):
             return False
 
@@ -496,8 +500,18 @@ class OpenCLIChannel(AbstractChannel):
         except RuntimeError:
             return True  # pool not initialized yet (e.g. tested standalone) — binary check stands
 
+        acquire_endpoint: str | None = None
+        site = (config or {}).get("site")
+        if site:
+            from backend.database import AsyncSessionLocal
+            from backend.services import browser_service
+            async with AsyncSessionLocal() as session:
+                binding = await browser_service.get_binding_by_site(session, site)
+                if binding:
+                    acquire_endpoint = binding.browser_endpoint
+
         try:
-            async with pool.acquire() as cdp_endpoint:
+            async with pool.acquire(endpoint=acquire_endpoint) as cdp_endpoint:
                 if pool.get_mode(cdp_endpoint) != "cdp":
                     return True  # bridge mode: reachability is the daemon's concern, not ours
                 import httpx

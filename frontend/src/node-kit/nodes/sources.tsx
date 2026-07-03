@@ -1,7 +1,45 @@
 // Source atoms — one per real backend collection channel (backend/channels/*).
 // Config fields mirror each channel's config.get(...) so a node = that channel.
+//
+// C0 (Control Room v0, docs/CONTROL_THEORY_ARCHITECTURE.md §0): every source
+// node polls GET /sources/{id}/control-state (TanStack Query, refetchInterval
+// — no websocket in v0) and renders ControlBadge + SensorCoverageBadge on top
+// of its config body, so a source with incomplete sensors can never look like
+// a plain green "healthy" node. The polling body only activates once the host
+// stamps `config.__entityId` with a real source id (the same convention
+// collection.tsx's `entityId()` helper uses) — a freshly-dropped, unconfigured
+// palette node has no id yet and simply shows no control facts.
 import { defineNode } from '../define'
-import type { NodeSpec } from '../spec'
+import { SourceControlStrip } from '../render/controlState'
+import type { NodeRenderContext, NodeSpec } from '../spec'
+
+/** Shared render body: config fields (same as AutoBody would draw) + the C0
+ *  control-state strip (SourceControlStrip — shared with collection.source so
+ *  the "never a fake healthy" guarantee lives in exactly one place). */
+function SourceBody(ctx: NodeRenderContext) {
+  const sourceId = String(ctx.config.__entityId ?? '')
+  const fields = ctx.spec.config?.fields ?? []
+
+  return (
+    <div className="grid gap-1.5">
+      {fields.map((f) => (
+        <div key={f.key} className="flex items-center justify-between gap-2 border border-white/6 bg-white/2.5 px-2 py-1 text-2xs">
+          <span className="shrink-0 text-zinc-600">{f.label ?? f.key}</span>
+          <span className="truncate font-medium text-zinc-300">
+            {formatConfigValue(ctx.config[f.key])}
+          </span>
+        </div>
+      ))}
+      <SourceControlStrip sourceId={sourceId} />
+    </div>
+  )
+}
+
+function formatConfigValue(v: unknown): string {
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
 
 const webScraper = defineNode({
   type: 'source.web_scraper',
@@ -19,6 +57,7 @@ const webScraper = defineNode({
       { key: 'timeout', type: 'number', label: '超时(s)', default: 30 },
     ],
   },
+  render: SourceBody,
 })
 
 const rss = defineNode({
@@ -35,6 +74,7 @@ const rss = defineNode({
       { key: 'timeout', type: 'number', label: '超时(s)', default: 30 },
     ],
   },
+  render: SourceBody,
 })
 
 const api = defineNode({
@@ -59,6 +99,7 @@ const api = defineNode({
       { key: 'timeout', type: 'number', label: '超时(s)', default: 30 },
     ],
   },
+  render: SourceBody,
 })
 
 const cli = defineNode({
@@ -80,6 +121,7 @@ const cli = defineNode({
       { key: 'timeout', type: 'number', label: '超时(s)', default: 60 },
     ],
   },
+  render: SourceBody,
 })
 
 const opencli = defineNode({
@@ -98,6 +140,7 @@ const opencli = defineNode({
       { key: 'positional_args', type: 'json', label: '位置参数' },
     ],
   },
+  render: SourceBody,
 })
 
 export const SOURCE_NODES: NodeSpec<any>[] = [webScraper, rss, api, cli, opencli]

@@ -10,26 +10,27 @@ import Card from '../components/Card'
 import DataTable from '../components/DataTable'
 import PageHeader from '../components/PageHeader'
 import { COMMANDS_BY_SITE, SITE_EXTRA_FIELDS, SITE_LABELS, SITE_STANDARD_FIELDS } from '../components/ChannelConfigForm'
+import { Button } from '../components/ui/button'
 import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
 
 const PROCESSOR_COLORS: Record<string, string> = {
-  claude: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-  openai: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  local:  'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  claude: 'border border-violet-500/40 bg-violet-500/10 text-violet-300',
+  openai: 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+  local:  'border border-amber-500/40 bg-amber-500/10 text-amber-300',
 }
 
 function ProcessorBadge({ type, processorType }: { type: string; processorType?: string }) {
-  const cls = PROCESSOR_COLORS[processorType ?? type] ?? 'bg-gray-100 text-gray-700'
+  const cls = PROCESSOR_COLORS[processorType ?? type] ?? 'border border-white/8 text-zinc-300'
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium ${cls}`}>
       {type}
     </span>
   )
 }
 
 const inputCls =
-  'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-const labelCls = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'
+  'w-full border border-white/8 rounded-lg px-3 py-2 text-sm bg-black/20 text-zinc-100 focus:outline-hidden focus:ring-2 focus:ring-primary-500'
+const labelCls = 'block text-sm font-medium text-zinc-300 mb-1'
 
 // Provider definitions: maps to processor_type + pre-filled config
 type Provider = {
@@ -283,9 +284,9 @@ function AgentModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-        <div className="p-6 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-lg font-semibold dark:text-white">
+      <div className="border border-white/8 bg-black/20 shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-white/6">
+          <h2 className="text-lg font-semibold text-zinc-100">
             {isEdit ? t('agents.editTitle') : t('agents.addTitle')}
           </h2>
         </div>
@@ -316,22 +317,22 @@ function AgentModal({
           </div>
 
           {/* Provider + model + credentials */}
-          <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+          <div className="rounded-lg border border-white/8 p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">模型配置</p>
+              <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide">模型配置</p>
               {savedProviders.length > 0 && (
                 <div className="flex items-center gap-1.5 text-xs">
                   <button
                     type="button"
                     onClick={() => setUseSavedProvider(false)}
-                    className={`px-2 py-0.5 rounded-full transition-colors ${!useSavedProvider ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                    className={`px-2 py-0.5 rounded-full transition-colors ${!useSavedProvider ? 'bg-primary-500 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                   >
                     手动配置
                   </button>
                   <button
                     type="button"
                     onClick={() => setUseSavedProvider(true)}
-                    className={`px-2 py-0.5 rounded-full transition-colors ${useSavedProvider ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                    className={`px-2 py-0.5 rounded-full transition-colors ${useSavedProvider ? 'bg-primary-500 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                   >
                     已保存提供商
                   </button>
@@ -358,27 +359,27 @@ function AgentModal({
                   </select>
                 </div>
                 {selectedSavedProvider && (
-                  <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2 text-xs space-y-1">
+                  <div className="bg-black/25 rounded-lg px-3 py-2 text-xs space-y-1">
                     <div className="flex gap-2">
-                      <span className="text-gray-400 w-16">类型</span>
-                      <span className="font-medium dark:text-white">{selectedSavedProvider.provider_type}</span>
+                      <span className="text-zinc-500 w-16">类型</span>
+                      <span className="font-medium text-zinc-100">{selectedSavedProvider.provider_type}</span>
                     </div>
                     {selectedSavedProvider.base_url && (
                       <div className="flex gap-2">
-                        <span className="text-gray-400 w-16">Base URL</span>
-                        <span className="font-mono text-gray-600 dark:text-gray-300 truncate">{selectedSavedProvider.base_url}</span>
+                        <span className="text-zinc-500 w-16">Base URL</span>
+                        <span className="font-mono text-zinc-300 truncate">{selectedSavedProvider.base_url}</span>
                       </div>
                     )}
                     <div className="flex gap-2">
-                      <span className="text-gray-400 w-16">API Key</span>
-                      <span className="text-gray-600 dark:text-gray-300">{selectedSavedProvider.api_key ? '••••••••' : '未配置（读环境变量）'}</span>
+                      <span className="text-zinc-500 w-16">API Key</span>
+                      <span className="text-zinc-300">{selectedSavedProvider.api_key ? '••••••••' : '未配置（读环境变量）'}</span>
                     </div>
                   </div>
                 )}
                 <div>
                   <label className={labelCls}>
                     {t('agents.model')}
-                    <span className="ml-1 text-gray-400 font-normal text-[11px]">（留空使用提供商默认）</span>
+                    <span className="ml-1 text-zinc-500 font-normal text-2xs">（留空使用提供商默认）</span>
                   </label>
                   <input
                     className={inputCls}
@@ -421,7 +422,7 @@ function AgentModal({
                       <div>
                         <label className={labelCls}>
                           API Key
-                          <span className="ml-1 text-gray-400 font-normal text-[11px]">（可选，留空读环境变量）</span>
+                          <span className="ml-1 text-zinc-500 font-normal text-2xs">（可选，留空读环境变量）</span>
                         </label>
                         <input
                           className={inputCls}
@@ -447,7 +448,7 @@ function AgentModal({
                 )}
 
                 {!provider.needs_api_key && !provider.base_url_editable && provider.base_url && (
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-zinc-500">
                     接入点：<code className="font-mono">{provider.base_url}</code>
                   </p>
                 )}
@@ -465,13 +466,13 @@ function AgentModal({
 
             {/* Preset template chips */}
             <div className="flex flex-wrap gap-1.5">
-              <span className="text-xs text-gray-400 self-center mr-1">预设：</span>
+              <span className="text-xs text-zinc-500 self-center mr-1">预设：</span>
               {PROMPT_PRESETS.map((p) => (
                 <button
                   key={p.key}
                   type="button"
                   onClick={() => setPromptTemplate(p.template)}
-                  className="px-2.5 py-1 text-xs rounded-full border border-blue-300 text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
+                  className="px-2.5 py-1 text-xs rounded-full border border-primary-500/40 text-primary-300 hover:bg-primary-500/10 transition-colors"
                 >
                   {p.label}
                 </button>
@@ -488,11 +489,11 @@ function AgentModal({
             />
 
             {/* Placeholder reference panel */}
-            <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 p-3 space-y-2.5">
+            <div className="rounded-lg border border-white/8 bg-black/25 p-3 space-y-2.5">
               {/* Site picker */}
               <div className="flex gap-2">
                 <select
-                  className="flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs dark:bg-gray-700 dark:text-white"
+                  className="flex-1 border border-white/8 rounded-sm px-2 py-1 text-xs bg-black/20 text-zinc-100"
                   value={selectedSite}
                   onChange={(e) => handleSiteChange(e.target.value)}
                 >
@@ -509,7 +510,7 @@ function AgentModal({
                 </select>
                 {siteCommands.length > 0 && (
                   <select
-                    className="flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs dark:bg-gray-700 dark:text-white"
+                    className="flex-1 border border-white/8 rounded-sm px-2 py-1 text-xs bg-black/20 text-zinc-100"
                     value={selectedCommand}
                     onChange={(e) => setSelectedCommand(e.target.value)}
                   >
@@ -524,10 +525,10 @@ function AgentModal({
 
               {/* Standard fields — dim those not available for the selected site */}
               <div>
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                <p className="text-xs font-medium text-zinc-400 mb-1.5">
                   标准字段
                   {siteStandardFields && (
-                    <span className="ml-1 font-normal text-gray-400">（划线表示该站点无此字段）</span>
+                    <span className="ml-1 font-normal text-zinc-500">（划线表示该站点无此字段）</span>
                   )}
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -542,12 +543,12 @@ function AgentModal({
                         title={available ? `插入 {{${f}}}` : '该站点无此字段'}
                         className={`px-2 py-1 text-xs rounded border transition-colors text-left ${
                           available
-                            ? 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 cursor-pointer'
-                            : 'bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                            ? 'bg-black/20 border-white/8 text-zinc-300 hover:border-primary-400 hover:text-primary-300 cursor-pointer'
+                            : 'bg-black/10 border-white/6 text-zinc-600 cursor-not-allowed'
                         }`}
                       >
                         <span className={`block font-mono leading-tight ${!available ? 'line-through' : ''}`}>{`{{${f}}}`}</span>
-                        <span className="block text-[10px] leading-tight mt-0.5 font-sans opacity-70">{FIELD_LABELS[f] ?? ''}</span>
+                        <span className="block text-3xs leading-tight mt-0.5 font-sans opacity-70">{FIELD_LABELS[f] ?? ''}</span>
                       </button>
                     )
                   })}
@@ -557,7 +558,7 @@ function AgentModal({
               {/* Extra fields — only shown when site is selected */}
               {siteKey && (
                 <div>
-                  <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">扩展字段</p>
+                  <p className="text-xs font-medium text-zinc-400 mb-1.5">扩展字段</p>
                   {extraFields.length > 0 ? (
                     <div className="flex flex-wrap gap-1.5">
                       {extraFields.map((f) => (
@@ -565,15 +566,15 @@ function AgentModal({
                           key={f}
                           type="button"
                           onClick={() => insertPlaceholder(`{{extra_${f}}}`)}
-                          className="px-2 py-1 text-xs rounded bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:border-amber-500 hover:text-amber-600 transition-colors text-left"
+                          className="px-2 py-1 text-xs rounded-sm bg-black/20 border border-amber-500/40 text-amber-300 hover:border-amber-400 hover:text-amber-200 transition-colors text-left"
                         >
                           <span className="block font-mono leading-tight">{`{{extra_${f}}}`}</span>
-                          <span className="block text-[10px] leading-tight mt-0.5 font-sans opacity-70">{FIELD_LABELS[f] ?? ''}</span>
+                          <span className="block text-3xs leading-tight mt-0.5 font-sans opacity-70">{FIELD_LABELS[f] ?? ''}</span>
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-xs text-gray-400">无扩展字段</p>
+                    <p className="text-xs text-zinc-500">无扩展字段</p>
                   )}
                 </div>
               )}
@@ -581,20 +582,13 @@ function AgentModal({
           </div>
         </div>
 
-        <div className="p-6 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
-          >
+        <div className="p-6 border-t border-white/6 flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!name.trim() || !promptTemplate.trim()}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-          >
+          </Button>
+          <Button onClick={handleSubmit} disabled={!name.trim() || !promptTemplate.trim()}>
             {isEdit ? t('common.save') : t('common.create')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -646,12 +640,9 @@ export default function AgentsPage() {
         title={t('agents.title')}
         description={t('agents.description')}
         action={
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
-          >
+          <Button onClick={() => setShowAdd(true)}>
             <Plus size={16} /> {t('agents.addAgent')}
-          </button>
+          </Button>
         }
       />
 
@@ -668,7 +659,7 @@ export default function AgentsPage() {
               render: (a) => (
                 <div>
                   <p className="font-medium">{a.name}</p>
-                  {a.description && <p className="text-xs text-gray-400">{a.description}</p>}
+                  {a.description && <p className="text-xs text-zinc-500">{a.description}</p>}
                 </div>
               ),
             },
@@ -690,7 +681,7 @@ export default function AgentsPage() {
               header: t('agents.model'),
               width: '160px',
               render: (a) => (
-                <span className="text-xs font-mono text-gray-600 dark:text-gray-300">
+                <span className="text-xs font-mono text-zinc-300">
                   {a.model ?? '—'}
                 </span>
               ),
@@ -699,7 +690,7 @@ export default function AgentsPage() {
               key: 'prompt',
               header: t('agents.promptTemplate'),
               render: (a) => (
-                <p className="text-xs text-gray-500 truncate max-w-xs">
+                <p className="text-xs text-zinc-400 truncate max-w-xs">
                   {a.prompt_template || '—'}
                 </p>
               ),
@@ -709,7 +700,7 @@ export default function AgentsPage() {
               header: t('common.status'),
               width: '70px',
               render: (a) => (
-                <span className={`text-xs font-medium ${a.enabled ? 'text-green-600' : 'text-gray-400'}`}>
+                <span className={`text-xs font-medium ${a.enabled ? 'text-emerald-400' : 'text-zinc-500'}`}>
                   {a.enabled ? t('common.enabled') : t('common.disabled')}
                 </span>
               ),
@@ -722,14 +713,14 @@ export default function AgentsPage() {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => toggleMut.mutate({ id: a.id, enabled: !a.enabled })}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500"
+                    className="flex items-center gap-1 px-2 py-1 rounded-sm text-xs hover:bg-white/4 text-zinc-500"
                   >
                     {a.enabled ? <ToggleRight size={12} /> : <ToggleLeft size={12} />}
                     {a.enabled ? t('common.disable') : t('common.enable')}
                   </button>
                   <button
                     onClick={() => setEditAgent(a)}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600"
+                    className="flex items-center gap-1 px-2 py-1 rounded-sm text-xs hover:bg-primary-500/10 text-primary-300"
                   >
                     <Pencil size={12} /> 编辑
                   </button>
@@ -737,7 +728,7 @@ export default function AgentsPage() {
                     onClick={() => {
                       if (confirm(t('agents.confirmDelete', { name: a.name }))) deleteMut.mutate(a.id)
                     }}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500"
+                    className="flex items-center gap-1 px-2 py-1 rounded-sm text-xs hover:bg-red-500/10 text-red-400"
                   >
                     <Trash2 size={12} />
                   </button>

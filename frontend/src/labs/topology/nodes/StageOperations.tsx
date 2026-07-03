@@ -229,7 +229,7 @@ function RecordsPanel({ items, onChanged }: { items: CollectedRecord[]; onChange
           const title = recordTitle(record)
           const open = openId === record.id
           return (
-            <div key={record.id} className="border border-white/[0.08] bg-white/[0.02]">
+            <div key={record.id} className="border border-white/8 bg-white/2">
               <OpsRow
                 title={title}
                 subtitle={record.status}
@@ -247,7 +247,7 @@ function RecordsPanel({ items, onChanged }: { items: CollectedRecord[]; onChange
                 <IconAction icon={Trash2} label="删除" busy={busy === `record:del:${record.id}`} onClick={() => remove(record)} tone="danger" />
               </OpsRow>
               {open && (
-                <pre className="max-h-44 overflow-auto border-t border-white/[0.08] bg-black/50 p-2 font-code text-[10px] leading-4 text-zinc-400">
+                <pre className="max-h-44 overflow-auto border-t border-white/8 bg-black/50 p-2 font-code text-3xs leading-4 text-zinc-400">
                   {JSON.stringify(record.normalized_data ?? record.raw_data ?? {}, null, 2)}
                 </pre>
               )}
@@ -309,16 +309,16 @@ function OpsSection({
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <p className="telemetry-label">{title}</p>
-          <span className="border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-code text-[10px] text-zinc-500">{count}</span>
+          <span className="border border-white/10 bg-white/4 px-1.5 py-0.5 font-code text-3xs text-zinc-500">{count}</span>
         </div>
         <Link
           to={fullPage}
-          className="inline-flex items-center gap-1 text-[11px] text-zinc-500 transition hover:text-zinc-200"
+          className="inline-flex items-center gap-1 text-2xs text-zinc-500 transition hover:text-zinc-200"
         >
           完整页 <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
-      {hint && <p className="text-[11px] text-zinc-600">{hint}</p>}
+      {hint && <p className="text-2xs text-zinc-600">{hint}</p>}
       <div className="space-y-1.5">{children}</div>
     </section>
   )
@@ -345,7 +345,7 @@ function OpsRow({
     <div
       className={cn(
         'flex items-center gap-2 px-2.5 py-2',
-        !flat && 'border border-white/[0.08] bg-white/[0.02]',
+        !flat && 'border border-white/8 bg-white/2',
       )}
     >
       <span className={cn('h-2 w-2 shrink-0 rounded-full', dotClass(health))} />
@@ -358,7 +358,7 @@ function OpsRow({
         <span className="block truncate text-xs font-semibold text-zinc-100" title={title}>
           {title}
         </span>
-        <span className="block truncate text-[10px] text-zinc-500" title={subtitle}>
+        <span className="block truncate text-3xs text-zinc-500" title={subtitle}>
           {subtitle}
         </span>
       </button>
@@ -392,7 +392,7 @@ function IconAction({
       ? 'hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-200'
       : tone === 'action'
         ? 'hover:border-sky-400/40 hover:bg-sky-400/10 hover:text-sky-200'
-        : 'hover:border-white/25 hover:bg-white/[0.06] hover:text-zinc-100'
+        : 'hover:border-white/25 hover:bg-white/6 hover:text-zinc-100'
   return (
     <button
       type="button"
@@ -401,7 +401,7 @@ function IconAction({
       title={label}
       className={cn(
         'grid h-7 w-7 place-items-center border text-zinc-400 transition disabled:opacity-50',
-        active ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200' : 'border-white/10 bg-white/[0.02]',
+        active ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200' : 'border-white/10 bg-white/2',
         toneClass,
       )}
     >
@@ -412,7 +412,7 @@ function IconAction({
 
 function EmptyHint({ label, to }: { label: string; to?: string }) {
   return (
-    <div className="border border-dashed border-white/[0.1] bg-black/20 px-3 py-4 text-center text-[11px] text-zinc-600">
+    <div className="border border-dashed border-white/10 bg-black/20 px-3 py-4 text-center text-2xs text-zinc-600">
       {label}
       {to && (
         <Link to={to} className="ml-1 text-zinc-400 underline-offset-2 hover:underline">
@@ -451,7 +451,7 @@ function dotClass(health: HealthTone) {
     active: 'bg-sky-400',
     warning: 'bg-amber-400',
     failed: 'bg-red-400',
-    disabled: 'bg-slate-500',
+    disabled: 'bg-zinc-500',
     unknown: 'bg-zinc-500',
   }
   return classes[health]

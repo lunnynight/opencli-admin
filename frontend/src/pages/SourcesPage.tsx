@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useState, useEffect, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -174,14 +174,14 @@ const CHANNEL_META: Record<ChannelType, {
 function ChannelTypeBadge({ type }: { type: string }) {
   const meta = CHANNEL_META[type as ChannelType]
   return (
-    <Badge className={cn('border', meta?.tone ?? 'border-white/14 bg-white/[0.04] text-zinc-300')} variant="outline">
+    <Badge className={cn('border', meta?.tone ?? 'border-white/14 bg-white/4 text-zinc-300')} variant="outline">
       {meta?.short ?? type}
     </Badge>
   )
 }
 
 const inputCls =
-  'w-full border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-600 focus:border-primary-500/70 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50'
+  'w-full border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-hidden transition-colors placeholder:text-zinc-600 focus:border-primary-500/70 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50'
 const labelCls = 'telemetry-label mb-1 block'
 
 function defaultConfigForType(type: ChannelType): Record<string, unknown> {
@@ -259,7 +259,7 @@ function SourceModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
       <div className="flex max-h-[90vh] w-full max-w-3xl flex-col border border-white/10 bg-zinc-950 shadow-2xl">
         <div className="border-b border-white/10 p-5">
           <p className="telemetry-label">{isEdit ? 'EDIT NODE' : 'NEW NODE'}</p>
@@ -449,9 +449,9 @@ function TriggerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg">
-        <div className="p-6 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-lg font-semibold dark:text-white">{t('agents.triggerTitle')}</h2>
+      <div className="telemetry-panel w-full max-w-lg">
+        <div className="p-6 border-b border-white/6">
+          <h2 className="text-lg font-semibold text-zinc-100">{t('agents.triggerTitle')}</h2>
         </div>
         <div className="p-6 space-y-4">
           <div>
@@ -474,7 +474,7 @@ function TriggerModal({
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <label className={labelCls} style={{ marginBottom: 0 }}>采集节点</label>
-                <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">Agent 模式</span>
+                <span className="px-1.5 py-0.5 rounded-sm text-xs font-medium border border-violet-500/40 bg-violet-500/10 text-violet-300">Agent 模式</span>
               </div>
               <div className="space-y-2">
                 {agentEndpoints.map((ep) => {
@@ -486,28 +486,28 @@ function TriggerModal({
                       key={ep.url}
                       className={`flex gap-3 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors ${
                         selectedAgentEndpoints.has(ep.url)
-                          ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-500'
-                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                          ? 'border-primary-500/70 bg-primary-500/10'
+                          : 'border-white/8 hover:border-white/16'
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={selectedAgentEndpoints.has(ep.url)}
                         onChange={() => toggleAgentEndpoint(ep.url)}
-                        className="accent-blue-600 shrink-0 mt-0.5"
+                        className="accent-primary-500 shrink-0 mt-0.5"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-sm font-medium font-mono ${isConnected ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400'}`}>
+                          <span className={`text-sm font-medium font-mono ${isConnected ? 'text-zinc-300' : 'text-zinc-500'}`}>
                             {label}
                           </span>
-                          <span className={`text-xs ${isConnected ? 'text-green-500' : 'text-red-400'}`}>
+                          <span className={`text-xs ${isConnected ? 'text-emerald-500' : 'text-red-400'}`}>
                             {isConnected ? '● 在线' : '○ 离线'}
                           </span>
                           <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
                             isWs
-                              ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300'
-                              : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                              ? 'border border-violet-500/40 bg-violet-500/10 text-violet-300'
+                              : 'border border-primary-500/40 bg-primary-500/10 text-primary-300'
                           }`}>
                             {isWs ? 'WS' : 'HTTP'}
                           </span>
@@ -517,7 +517,7 @@ function TriggerModal({
                   )
                 })}
               </div>
-              <p className="mt-1 text-xs text-gray-400">
+              <p className="mt-1 text-xs text-zinc-400">
                 {selectedAgentEndpoints.size === 0
                   ? '未选择则自动分配'
                   : `已选 ${selectedAgentEndpoints.size} 个节点，将触发 ${selectedAgentEndpoints.size} 个任务`}
@@ -529,7 +529,7 @@ function TriggerModal({
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <label className={labelCls} style={{ marginBottom: 0 }}>{t('channelConfig.chromeEndpoint')}</label>
-                <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">本地模式</span>
+                <span className="px-1.5 py-0.5 rounded-sm text-xs font-medium border border-primary-500/40 bg-primary-500/10 text-primary-300">本地模式</span>
               </div>
               <div className="space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer py-1">
@@ -539,9 +539,9 @@ function TriggerModal({
                     value=""
                     checked={chromeEndpoint === ''}
                     onChange={() => setChromeEndpoint('')}
-                    className="accent-blue-600 shrink-0"
+                    className="accent-primary-500 shrink-0"
                   />
-                  <span className="text-sm text-gray-600 dark:text-gray-300">{t('channelConfig.chromeEndpointAny')}</span>
+                  <span className="text-sm text-zinc-300">{t('channelConfig.chromeEndpointAny')}</span>
                 </label>
                 {chromeEndpoints.map((ep) => {
                   const novncPort = ep.novnc_port ?? chromeNovncPort(ep.url)
@@ -553,8 +553,8 @@ function TriggerModal({
                       key={ep.url}
                       className={`flex gap-3 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors ${
                         chromeEndpoint === ep.url
-                          ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-500'
-                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                          ? 'border-primary-500/70 bg-primary-500/10'
+                          : 'border-white/8 hover:border-white/16'
                       }`}
                     >
                       <input
@@ -563,35 +563,35 @@ function TriggerModal({
                         value={ep.url}
                         checked={chromeEndpoint === ep.url}
                         onChange={() => setChromeEndpoint(ep.url)}
-                        className="accent-blue-600 shrink-0 mt-0.5"
+                        className="accent-primary-500 shrink-0 mt-0.5"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-sm font-medium ${ep.available ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400'}`}>
+                          <span className={`text-sm font-medium ${ep.available ? 'text-zinc-300' : 'text-zinc-500'}`}>
                             {label}
                           </span>
-                          <span className={`text-xs ${ep.available ? 'text-green-500' : 'text-red-400'}`}>
+                          <span className={`text-xs ${ep.available ? 'text-emerald-500' : 'text-red-400'}`}>
                             {ep.available ? '● 在线' : '○ 离线'}
                           </span>
-                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${ep.mode === 'bridge' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+                          <span className={`px-1.5 py-0.5 rounded-sm text-xs font-medium ${ep.mode === 'bridge' ? 'border border-primary-500/40 bg-primary-500/10 text-primary-300' : 'border border-amber-500/40 bg-amber-500/10 text-amber-300'}`}>
                             {ep.mode === 'bridge' ? 'Bridge' : 'CDP'}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                           {boundSites.map((site) => (
-                            <span key={site} className="px-1.5 py-0.5 rounded text-xs bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                            <span key={site} className="px-1.5 py-0.5 rounded-sm text-xs border border-violet-500/40 bg-violet-500/10 text-violet-300">
                               {SITE_LABELS[site] ?? site}
                             </span>
                           ))}
                           {boundSites.length === 0 && (
-                            <span className="text-xs text-gray-400">暂无绑定站点</span>
+                            <span className="text-xs text-zinc-500">暂无绑定站点</span>
                           )}
                           <a
                             href={novncUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="ml-auto text-xs text-blue-500 hover:underline font-mono shrink-0"
+                            className="ml-auto text-xs text-primary-400 hover:underline font-mono shrink-0"
                           >
                             noVNC ↗
                           </a>
@@ -601,20 +601,17 @@ function TriggerModal({
                   )
                 })}
               </div>
-              <p className="mt-1 text-xs text-gray-400">{t('channelConfig.chromeEndpointHint')}</p>
+              <p className="mt-1 text-xs text-zinc-400">{t('channelConfig.chromeEndpointHint')}</p>
             </div>
           )}
         </div>
-        <div className="p-6 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
-          >
+        <div className="p-6 border-t border-white/6 flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
-          </button>
+          </Button>
           <button
             onClick={handleTrigger}
-            className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700"
+            className="px-4 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
           >
             {triggerLabel}
           </button>
@@ -666,6 +663,9 @@ function sourceTarget(source: DataSource) {
   if (source.channel_type === 'web_scraper') {
     return String(config.url ?? config.start_url ?? config.startUrl ?? CHANNEL_META.web_scraper.hint)
   }
+  if (source.channel_type === 'crawl4ai') {
+    return String(config.url ?? CHANNEL_META.crawl4ai.hint)
+  }
   if (source.channel_type === 'skill') {
     if (config.domain || config.capability) {
       return [config.domain, config.capability].filter(Boolean).join(' / ')
@@ -714,9 +714,9 @@ function SourceNode({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group relative cursor-pointer border bg-black/30 p-4 outline-none transition-colors',
-        'hover:border-primary-500/45 hover:bg-white/[0.045] focus-visible:border-primary-500/60 focus-visible:ring-2 focus-visible:ring-primary-500/20',
-        selected ? 'border-primary-500/65 bg-primary-500/[0.075]' : 'border-white/10',
+        'group relative cursor-pointer border bg-black/30 p-4 outline-hidden transition-colors',
+        'hover:border-primary-500/45 hover:bg-white/4.5 focus-visible:border-primary-500/60 focus-visible:ring-2 focus-visible:ring-primary-500/20',
+        selected ? 'border-primary-500/65 bg-primary-500/7.5' : 'border-white/10',
       )}
     >
       <span className={cn('absolute -left-1 top-7 h-2 w-2 border bg-zinc-950', selected ? 'border-primary-400' : 'border-white/20')} />
@@ -910,7 +910,7 @@ function SourceInspector({
 
         <div className="border border-white/10 bg-white/[0.035] p-3">
           <p className="telemetry-label">Target</p>
-          <p className="mt-2 break-words font-mono text-xs text-zinc-300">{target}</p>
+          <p className="mt-2 wrap-break-word font-mono text-xs text-zinc-300">{target}</p>
           {source.description && (
             <p className="mt-3 border-t border-white/10 pt-3 text-sm text-zinc-400">
               {source.description}
@@ -1072,6 +1072,7 @@ function LegacySourcesPage() {
   const toggleMut = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => updateSource(id, { enabled }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sources'] }),
+    onError: (err) => toast.error(err instanceof Error ? err.message : '更新失败'),
   })
 
   const deleteMut = useMutation({
@@ -1208,14 +1209,14 @@ function LegacySourcesPage() {
                       setPage(1)
                     }}
                     className={cn(
-                      'inline-flex h-9 items-center gap-2 border px-3 font-telemetry text-[10px] font-semibold uppercase tracking-[0.12em] transition-colors',
+                      'inline-flex h-9 items-center gap-2 border px-3 font-telemetry text-3xs font-semibold uppercase tracking-[0.12em] transition-colors',
                       channelFilter === chip.value
                         ? 'border-primary-500/70 bg-primary-500/16 text-white'
                         : 'border-white/10 bg-black/20 text-zinc-400 hover:border-white/22 hover:text-zinc-100',
                     )}
                   >
                     {chip.label}
-                    <span className="font-mono text-[10px] text-zinc-500">{chip.count}</span>
+                    <span className="font-mono text-3xs text-zinc-500">{chip.count}</span>
                   </button>
                 ))}
               </div>
@@ -1230,13 +1231,13 @@ function LegacySourcesPage() {
                     key={type}
                     type="button"
                     onClick={() => openAddModal(type)}
-                    className="group flex min-h-20 flex-col items-start justify-between border border-white/10 bg-black/25 p-3 text-left transition-colors hover:border-primary-500/45 hover:bg-white/[0.045]"
+                    className="group flex min-h-20 flex-col items-start justify-between border border-white/10 bg-black/25 p-3 text-left transition-colors hover:border-primary-500/45 hover:bg-white/4.5"
                   >
                     <span className={cn('grid h-8 w-8 place-items-center border transition-colors', nodeMeta.tone)}>
                       <Icon size={15} />
                     </span>
                     <span className="mt-3 text-xs font-semibold text-zinc-200">{nodeMeta.label}</span>
-                    <span className="mt-1 text-[11px] text-zinc-600">{nodeMeta.hint}</span>
+                    <span className="mt-1 text-2xs text-zinc-600">{nodeMeta.hint}</span>
                   </button>
                 )
               })}
@@ -1380,12 +1381,12 @@ function WorkflowNodeView({ data, selected }: NodeProps<WorkflowFlowNode>) {
   return (
     <div
       className={cn(
-        'relative w-[270px] rounded-lg border bg-zinc-950/95 p-3 text-left shadow-xl backdrop-blur transition-colors',
+        'relative w-[270px] rounded-lg border bg-zinc-950/95 p-3 text-left shadow-xl backdrop-blur-sm transition-colors',
         selected ? 'border-primary-400 ring-2 ring-primary-400/25' : 'border-white/10 hover:border-white/25',
       )}
     >
-      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-zinc-950" />
-      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-zinc-950" />
+      <Handle type="target" position={Position.Left} className="h-2.5! w-2.5! border-zinc-950!" />
+      <Handle type="source" position={Position.Right} className="h-2.5! w-2.5! border-zinc-950!" />
 
       <div className="flex items-start gap-3">
         <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-md border', meta?.tone ?? workflowHealthSoftClass(data.health))}>
@@ -1393,7 +1394,7 @@ function WorkflowNodeView({ data, selected }: NodeProps<WorkflowFlowNode>) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-telemetry text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+            <span className="font-telemetry text-3xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
               {workflowKindLabel(data.kind)}
             </span>
             <span className={cn('h-2 w-2 rounded-full', workflowHealthDotClass(data.health))} title={workflowHealthLabel(data.health)} />
@@ -1408,7 +1409,7 @@ function WorkflowNodeView({ data, selected }: NodeProps<WorkflowFlowNode>) {
       </div>
 
       {data.kind === 'source' && stats ? (
-        <div className="mt-3 grid grid-cols-3 gap-1.5 text-[11px]">
+        <div className="mt-3 grid grid-cols-3 gap-1.5 text-2xs">
           <MiniStat label="Tasks" value={stats.taskCount} />
           <MiniStat label="Plans" value={stats.scheduleCount} />
           <MiniStat label="Fail" value={stats.failedTasks} danger={stats.failedTasks > 0} />
@@ -1418,7 +1419,7 @@ function WorkflowNodeView({ data, selected }: NodeProps<WorkflowFlowNode>) {
           {[workflowHealthLabel(data.health), ...data.badges].slice(0, 4).map((badge) => (
             <span
               key={badge}
-              className="max-w-[112px] truncate rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-zinc-300"
+              className="max-w-[112px] truncate rounded-sm border border-white/10 bg-white/4 px-1.5 py-0.5 text-3xs text-zinc-300"
               title={badge}
             >
               {badge}
@@ -1427,7 +1428,7 @@ function WorkflowNodeView({ data, selected }: NodeProps<WorkflowFlowNode>) {
         </div>
       )}
 
-      <div className="mt-3 flex items-center justify-between border-t border-white/10 pt-2 text-[10px] text-zinc-600">
+      <div className="mt-3 flex items-center justify-between border-t border-white/10 pt-2 text-3xs text-zinc-600">
         <span className="font-mono">{data.entityId.slice(0, 8)}</span>
         <span>{workflowHealthLabel(data.health)}</span>
       </div>
@@ -1437,7 +1438,7 @@ function WorkflowNodeView({ data, selected }: NodeProps<WorkflowFlowNode>) {
 
 function MiniStat({ label, value, danger }: { label: string; value: number; danger?: boolean }) {
   return (
-    <div className="rounded border border-white/10 bg-black/25 px-2 py-1.5">
+    <div className="rounded-sm border border-white/10 bg-black/25 px-2 py-1.5">
       <p className="font-telemetry text-[9px] uppercase tracking-[0.12em] text-zinc-600">{label}</p>
       <p className={cn('mt-0.5 font-mono text-xs', danger ? 'text-red-300' : 'text-zinc-200')}>{value}</p>
     </div>
@@ -1478,7 +1479,7 @@ function ScheduleModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
       <div className="w-full max-w-xl border border-white/10 bg-zinc-950 shadow-2xl">
         <div className="border-b border-white/10 p-5">
           <p className="telemetry-label">{isEdit ? 'EDIT PLAN' : 'NEW PLAN'}</p>
@@ -1658,7 +1659,7 @@ function WorkflowInspector({
           />
           <div className="grid gap-2">
             {isTopologyLabEnabled && (
-              <Link className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400" to={`/labs/topology?source=${schedule.source_id}`}>
+              <Link className="inline-flex items-center justify-center gap-2 rounded-md bg-sky-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-sky-400" to={`/labs/topology?source=${schedule.source_id}`}>
                 <ExternalLink size={14} /> 查看全局拓扑
               </Link>
             )}
@@ -1724,7 +1725,7 @@ function WorkflowInspector({
               <Button type="button" onClick={() => onRunAction('')} disabled>无可执行动作</Button>
             )}
             {isTopologyLabEnabled && (
-              <Link className="inline-flex items-center justify-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm font-medium text-zinc-200 hover:bg-white/[0.04]" to={`/labs/topology?source=${source.id}`}>
+              <Link className="inline-flex items-center justify-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm font-medium text-zinc-200 hover:bg-white/4" to={`/labs/topology?source=${source.id}`}>
                 <ExternalLink size={14} /> 查看全局拓扑
               </Link>
             )}
@@ -1755,7 +1756,7 @@ function WorkflowInspector({
 
         <div className="border border-white/10 bg-white/[0.035] p-3">
           <p className="telemetry-label">Target</p>
-          <p className="mt-2 break-words font-mono text-xs text-zinc-300">{sourceTarget(source)}</p>
+          <p className="mt-2 wrap-break-word font-mono text-xs text-zinc-300">{sourceTarget(source)}</p>
           {stats?.nextRunAt && (
             <p className="mt-3 border-t border-white/10 pt-3 text-xs text-zinc-400">
               下次执行：{formatDateTime(stats.nextRunAt)}
@@ -1769,8 +1770,14 @@ function WorkflowInspector({
         </div>
 
         <div className="grid gap-2">
+          <Link
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm font-medium text-zinc-200 hover:bg-white/4"
+            to={`/sources/${source.id}/control-room`}
+          >
+            <Activity size={14} /> 控制室
+          </Link>
           {isTopologyLabEnabled && (
-            <Link className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400" to={`/labs/topology?source=${source.id}`}>
+            <Link className="inline-flex items-center justify-center gap-2 rounded-md bg-sky-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-sky-400" to={`/labs/topology?source=${source.id}`}>
               <ExternalLink size={14} /> 查看全局拓扑
             </Link>
           )}
@@ -1851,7 +1858,7 @@ function InspectorTitle({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-md border', tone ?? 'border-white/10 bg-white/[0.04] text-zinc-300')}>
+      <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-md border', tone ?? 'border-white/10 bg-white/4 text-zinc-300')}>
         <Icon size={17} />
       </span>
       <div className="min-w-0">
@@ -1868,7 +1875,7 @@ function DetailGrid({ items }: { items: Array<[string, string | number | undefin
       {items.map(([label, value]) => (
         <div key={label} className="border border-white/10 bg-black/20 p-3">
           <p className="telemetry-label">{label}</p>
-          <p className="mt-2 break-words font-mono text-zinc-300">{value || 'N/A'}</p>
+          <p className="mt-2 wrap-break-word font-mono text-zinc-300">{value || 'N/A'}</p>
         </div>
       ))}
     </div>
@@ -1931,9 +1938,9 @@ function SourceConfigurationPanel({
       action={(
         <div className="flex flex-wrap gap-2">
           {isTopologyLabEnabled && (
-            <Link to="/labs/topology" className="inline-flex h-9 items-center justify-center gap-2 border border-white/14 bg-black/25 px-3 font-telemetry text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-200 hover:border-white/28 hover:bg-white/[0.075]">
+            <Link to="/plans" className="inline-flex h-9 items-center justify-center gap-2 border border-white/14 bg-black/25 px-3 font-telemetry text-2xs font-semibold uppercase tracking-[0.12em] text-zinc-200 hover:border-white/28 hover:bg-white/7.5">
               <ExternalLink size={14} />
-              拓扑工作台
+              采集画布
             </Link>
           )}
           <Button type="button" size="sm" variant="outline" onClick={onToggleDiagnosticCanvas}>
@@ -1997,7 +2004,7 @@ function SourceConfigurationPanel({
                 <article
                   key={source.id}
                   data-active={selectedSourceId === source.id}
-                  className="min-w-0 border border-white/10 bg-black/20 p-4 data-[active=true]:border-primary-500/65 data-[active=true]:bg-primary-500/[0.075]"
+                  className="min-w-0 border border-white/10 bg-black/20 p-4 data-[active=true]:border-primary-500/65 data-[active=true]:bg-primary-500/7.5"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <button type="button" onClick={() => onSelect(source)} className="flex min-w-0 flex-1 items-start gap-3 text-left">
@@ -2040,6 +2047,12 @@ function SourceConfigurationPanel({
                     </Button>
                     <Button type="button" size="xs" variant="ghost" onClick={() => onToggle(source)}>
                       {source.enabled ? '停用' : '启用'}
+                    </Button>
+                    <Button asChild size="xs" variant="outline">
+                      <Link to={`/sources/${source.id}/control-room`}>
+                        <Activity size={13} />
+                        控制室
+                      </Link>
                     </Button>
                   </div>
 
@@ -2526,14 +2539,14 @@ export default function SourcesPage() {
                     type="button"
                     onClick={() => setChannelFilter(chip.value)}
                     className={cn(
-                      'inline-flex h-9 items-center gap-2 rounded-md border px-3 font-telemetry text-[10px] font-semibold uppercase tracking-[0.12em] transition-colors',
+                      'inline-flex h-9 items-center gap-2 rounded-md border px-3 font-telemetry text-3xs font-semibold uppercase tracking-[0.12em] transition-colors',
                       channelFilter === chip.value
                         ? 'border-primary-500/70 bg-primary-500/16 text-white'
                         : 'border-white/10 bg-black/20 text-zinc-400 hover:border-white/22 hover:text-zinc-100',
                     )}
                   >
                     {chip.label}
-                    <span className="font-mono text-[10px] text-zinc-500">{chip.count}</span>
+                    <span className="font-mono text-3xs text-zinc-500">{chip.count}</span>
                   </button>
                 ))}
               </div>
@@ -2548,13 +2561,13 @@ export default function SourcesPage() {
                     key={type}
                     type="button"
                     onClick={() => openAddModal(type)}
-                    className="group flex min-h-20 flex-col items-start justify-between rounded-md border border-white/10 bg-black/25 p-3 text-left transition-colors hover:border-primary-500/45 hover:bg-white/[0.045]"
+                    className="group flex min-h-20 flex-col items-start justify-between rounded-md border border-white/10 bg-black/25 p-3 text-left transition-colors hover:border-primary-500/45 hover:bg-white/4.5"
                   >
                     <span className={cn('grid h-8 w-8 place-items-center rounded-md border transition-colors', nodeMeta.tone)}>
                       <Icon size={15} />
                     </span>
                     <span className="mt-3 text-xs font-semibold text-zinc-200">{nodeMeta.label}</span>
-                    <span className="mt-1 text-[11px] text-zinc-600">{nodeMeta.hint}</span>
+                    <span className="mt-1 text-2xs text-zinc-600">{nodeMeta.hint}</span>
                   </button>
                 )
               })}
@@ -2585,7 +2598,7 @@ export default function SourcesPage() {
                 edges={flowEdges}
                 nodeTypes={workflowNodeTypes}
                 onNodesChange={handleNodesChange}
-                onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+                onNodeClick={(_: ReactMouseEvent, node: WorkflowFlowNode) => setSelectedNodeId(node.id)}
                 onPaneClick={() => setSelectedNodeId(null)}
                 defaultViewport={{ x: 32, y: 96, zoom: 0.82 }}
                 minZoom={0.28}
@@ -2747,7 +2760,7 @@ function toWorkflowFlowEdges(edges: ReturnType<typeof buildCollectionWorkflow>['
       fontWeight: 700,
     },
     labelBgStyle: {
-      fill: '#09090b',
+      fill: 'var(--oc-bg)',
       fillOpacity: 0.85,
     },
   }))

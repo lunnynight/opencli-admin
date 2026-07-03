@@ -66,7 +66,7 @@ function StatusBadge({ containerStatus, available, isStarting }: StatusBadgeProp
     return (
       <span className="inline-flex items-center gap-1 text-xs">
         <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse shrink-0" />
-        <span className="text-orange-600 dark:text-orange-400">{t('browsers.statusStarting')}</span>
+        <span className="text-orange-400">{t('browsers.statusStarting')}</span>
       </span>
     )
   }
@@ -75,15 +75,15 @@ function StatusBadge({ containerStatus, available, isStarting }: StatusBadgeProp
     if (available) {
       return (
         <span className="inline-flex items-center gap-1 text-xs">
-          <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-          <span className="text-green-600 dark:text-green-400">{t('browsers.statusIdle')}</span>
+          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+          <span className="text-emerald-400">{t('browsers.statusIdle')}</span>
         </span>
       )
     }
     return (
       <span className="inline-flex items-center gap-1 text-xs">
         <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-        <span className="text-amber-600 dark:text-amber-400">{t('browsers.statusBusy')}</span>
+        <span className="text-amber-400">{t('browsers.statusBusy')}</span>
       </span>
     )
   }
@@ -92,7 +92,7 @@ function StatusBadge({ containerStatus, available, isStarting }: StatusBadgeProp
     return (
       <span className="inline-flex items-center gap-1 text-xs">
         <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse shrink-0" />
-        <span className="text-orange-600 dark:text-orange-400">{t('browsers.statusStarting')}</span>
+        <span className="text-orange-400">{t('browsers.statusStarting')}</span>
       </span>
     )
   }
@@ -100,8 +100,8 @@ function StatusBadge({ containerStatus, available, isStarting }: StatusBadgeProp
   if (containerStatus === 'exited' || containerStatus === 'dead') {
     return (
       <span className="inline-flex items-center gap-1 text-xs">
-        <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />
-        <span className="text-gray-500 dark:text-gray-400">{t('browsers.statusOffline')}</span>
+        <span className="w-2 h-2 rounded-full bg-zinc-500 shrink-0" />
+        <span className="text-zinc-400">{t('browsers.statusOffline')}</span>
       </span>
     )
   }
@@ -109,8 +109,8 @@ function StatusBadge({ containerStatus, available, isStarting }: StatusBadgeProp
   // unknown / undefined — pending restart
   return (
     <span className="inline-flex items-center gap-1 text-xs">
-      <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse shrink-0" />
-      <span className="text-yellow-600 dark:text-yellow-400">{t('browsers.statusPending')}</span>
+      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+      <span className="text-amber-400">{t('browsers.statusPending')}</span>
     </span>
   )
 }
@@ -137,7 +137,7 @@ const MODE_OPTIONS: {
     value: 'bridge',
     label: 'Browser Bridge 模式',
     badge: 'Bridge',
-    badgeCls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+    badgeCls: 'border border-primary-500/40 bg-primary-500/10 text-primary-300',
     tech: 'opencli 1.0 · daemon.js + opencli Browser Bridge 扩展',
     desc: 'Chrome 内置 "opencli Browser Bridge" 扩展通过 WebSocket 连接 daemon.js 常驻进程，由 daemon 代理执行浏览器操作。Cookie、登录态由真实 Chrome 保存，容器重启不丢失。',
     pros: ['登录状态持久保留，适合需要账号的站点（B站、小红书等）', '浏览器行为接近真实用户，抗检测能力强', 'daemon 常驻保持连接，任务触发延迟低'],
@@ -146,7 +146,7 @@ const MODE_OPTIONS: {
     value: 'cdp',
     label: 'CDP 直连模式',
     badge: 'CDP',
-    badgeCls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+    badgeCls: 'border border-amber-500/40 bg-amber-500/10 text-amber-300',
     tech: 'opencli 0.9 · Playwright 直连 Chrome DevTools Protocol',
     desc: 'API 容器通过 Playwright 直接连接 Chrome 的 DevTools Protocol 端口（:19222）控制浏览器，不经过扩展或 daemon 中转。',
     pros: ['无需扩展参与，链路更简单，故障点更少', '适合无需登录的公开页面抓取', '每次任务独立连接，状态隔离'],
@@ -168,27 +168,27 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-5"
+        className="border border-white/8 bg-black/20 shadow-xl w-full max-w-md p-5"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-sm font-semibold dark:text-white mb-4">{t('browsers.addInstanceTitle')}</h3>
+        <h3 className="text-sm font-semibold text-zinc-100 mb-4">{t('browsers.addInstanceTitle')}</h3>
 
         {/* Count picker */}
         <div className="flex items-center gap-3 mb-5">
-          <span className="text-xs text-gray-500 dark:text-gray-400 flex-1">{t('browsers.instanceCount')}</span>
+          <span className="text-xs text-zinc-400 flex-1">{t('browsers.instanceCount')}</span>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCount((c) => Math.max(1, c - 1))}
               disabled={count <= 1}
-              className="w-7 h-7 flex items-center justify-center rounded-full border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:border-blue-400"
+              className="w-7 h-7 flex items-center justify-center rounded-full border border-white/8 disabled:opacity-40 hover:border-primary-500/50"
             >
               <Minus size={12} />
             </button>
-            <span className="w-6 text-center text-sm font-medium dark:text-white">{count}</span>
+            <span className="w-6 text-center text-sm font-medium text-zinc-100">{count}</span>
             <button
               onClick={() => setCount((c) => Math.min(10, c + 1))}
               disabled={count >= 10}
-              className="w-7 h-7 flex items-center justify-center rounded-full border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:border-blue-400"
+              className="w-7 h-7 flex items-center justify-center rounded-full border border-white/8 disabled:opacity-40 hover:border-primary-500/50"
             >
               <Plus size={12} />
             </button>
@@ -197,15 +197,15 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
 
         {/* Mode selector */}
         <div className="mb-5">
-          <p className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">控制模式</p>
+          <p className="text-xs font-medium text-zinc-300 mb-2">控制模式</p>
           <div className="flex flex-col gap-2">
             {MODE_OPTIONS.map((opt) => (
               <label
                 key={opt.value}
                 className={`flex gap-3 cursor-pointer rounded-lg border px-3 py-3 transition-colors ${
                   mode === opt.value
-                    ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-500'
-                    : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                    ? 'border-primary-500/65 bg-primary-500/7.5'
+                    : 'border-white/8 hover:border-white/16'
                 }`}
               >
                 <input
@@ -214,19 +214,19 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
                   value={opt.value}
                   checked={mode === opt.value}
                   onChange={() => setMode(opt.value)}
-                  className="accent-blue-600 shrink-0 mt-0.5"
+                  className="accent-primary-500 shrink-0 mt-0.5"
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium dark:text-white">{opt.label}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${opt.badgeCls}`}>{opt.badge}</span>
+                    <span className="text-sm font-medium text-zinc-100">{opt.label}</span>
+                    <span className={`px-1.5 py-0.5 rounded-sm text-xs font-medium ${opt.badgeCls}`}>{opt.badge}</span>
                   </div>
-                  <p className="text-xs font-mono text-gray-400 dark:text-gray-500 mb-1">{opt.tech}</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">{opt.desc}</p>
+                  <p className="text-xs font-code text-zinc-500 mb-1">{opt.tech}</p>
+                  <p className="text-xs text-zinc-400 mb-1.5">{opt.desc}</p>
                   <ul className="space-y-0.5">
                     {opt.pros.map((pro) => (
-                      <li key={pro} className="text-xs text-gray-500 dark:text-gray-400 flex items-start gap-1">
-                        <span className="text-green-500 shrink-0">✓</span>
+                      <li key={pro} className="text-xs text-zinc-400 flex items-start gap-1">
+                        <span className="text-emerald-500 shrink-0">✓</span>
                         {pro}
                       </li>
                     ))}
@@ -239,23 +239,23 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
 
         {/* Agent URL + protocol (optional — leave empty for local instance) */}
         <div className="mb-5">
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">
-            Agent 地址 <span className="text-gray-400 font-normal">（可选，留空则为本地实例）</span>
+          <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+            Agent 地址 <span className="text-zinc-400 font-normal">（可选，留空则为本地实例）</span>
           </label>
           <input
             type="url"
             value={agentUrl}
             onChange={(e) => setAgentUrl(e.target.value)}
             placeholder="http://192.168.1.100:19823"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+            className="w-full px-3 py-2 text-sm rounded-lg border border-white/8 bg-black/40 text-zinc-100 focus:outline-hidden focus:ring-1 focus:ring-primary-500 font-code"
           />
-          <p className="mt-1 text-xs text-gray-400">填写后须选择连接协议（需配合 COLLECTION_MODE=agent）</p>
+          <p className="mt-1 text-xs text-zinc-400">填写后须选择连接协议（需配合 COLLECTION_MODE=agent）</p>
         </div>
 
         {/* Agent protocol (only shown when agent_url is filled) */}
         {agentUrl && (
           <div className="mb-5">
-            <p className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">连接协议</p>
+            <p className="text-xs font-medium text-zinc-300 mb-2">连接协议</p>
             <div className="flex gap-2">
               {([
                 { value: 'http' as const, label: 'HTTP', desc: '局域网 / 代理可达，中心主动请求 Agent' },
@@ -265,8 +265,8 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
                   key={opt.value}
                   className={`flex-1 flex gap-2 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors ${
                     agentProtocol === opt.value
-                      ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-500'
-                      : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                      ? 'border-primary-500/65 bg-primary-500/7.5'
+                      : 'border-white/8 hover:border-white/16'
                   }`}
                 >
                   <input
@@ -275,11 +275,11 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
                     value={opt.value}
                     checked={agentProtocol === opt.value}
                     onChange={() => setAgentProtocol(opt.value)}
-                    className="accent-blue-600 shrink-0 mt-0.5"
+                    className="accent-primary-500 shrink-0 mt-0.5"
                   />
                   <div className="min-w-0">
-                    <span className="text-xs font-medium dark:text-white">{opt.label}</span>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{opt.desc}</p>
+                    <span className="text-xs font-medium text-zinc-100">{opt.label}</span>
+                    <p className="text-xs text-zinc-400 mt-0.5">{opt.desc}</p>
                   </div>
                 </label>
               ))}
@@ -288,11 +288,11 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
         )}
 
         {/* Preview */}
-        <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2 mb-5">
-          <p className="text-xs text-gray-400 mb-1.5">{t('browsers.instancePreview')}</p>
+        <div className="bg-white/4 rounded-lg px-3 py-2 mb-5">
+          <p className="text-xs text-zinc-400 mb-1.5">{t('browsers.instancePreview')}</p>
           <div className="flex flex-wrap gap-1.5">
             {preview.map((name) => (
-              <span key={name} className="px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-mono">
+              <span key={name} className="px-2 py-0.5 text-xs rounded-full bg-primary-500/10 text-primary-300 font-code">
                 {name}
               </span>
             ))}
@@ -304,21 +304,21 @@ function AddInstanceModal({ currentCount, onConfirm, onClose, isPending }: AddIn
           <button
             onClick={() => onConfirm(count, true, mode, agentUrl, agentProtocol)}
             disabled={isPending || (!!agentUrl && !agentProtocol)}
-            className="w-full px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 font-medium"
+            className="w-full px-3 py-2 text-sm rounded-lg bg-primary-500/80 text-white hover:bg-primary-500 disabled:opacity-50 font-medium"
           >
             {isPending ? t('browsers.adding') : t('browsers.createAndRestart')}
           </button>
           <button
             onClick={() => onConfirm(count, false, mode, agentUrl, agentProtocol)}
             disabled={isPending || (!!agentUrl && !agentProtocol)}
-            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+            className="w-full px-3 py-2 text-sm rounded-lg border border-white/8 text-zinc-300 hover:bg-white/4 disabled:opacity-50"
           >
             {t('browsers.createLaterRestart')}
           </button>
           <button
             onClick={onClose}
             disabled={isPending}
-            className="w-full px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
+            className="w-full px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-300 disabled:opacity-50"
           >
             {t('common.cancel')}
           </button>
@@ -342,11 +342,11 @@ function RemoveInstanceModal({ name, onConfirm, onClose, isPending }: RemoveInst
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-80 p-5"
+        className="border border-white/8 bg-black/20 shadow-xl w-80 p-5"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-sm font-semibold dark:text-white mb-2">{t('browsers.removeInstance')}</h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
+        <h3 className="text-sm font-semibold text-zinc-100 mb-2">{t('browsers.removeInstance')}</h3>
+        <p className="text-sm text-zinc-400 mb-5">
           {t('browsers.confirmRemove', { name })}
         </p>
         <div className="flex flex-col gap-2">
@@ -360,14 +360,14 @@ function RemoveInstanceModal({ name, onConfirm, onClose, isPending }: RemoveInst
           <button
             onClick={() => onConfirm(false)}
             disabled={isPending}
-            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+            className="w-full px-3 py-2 text-sm rounded-lg border border-white/8 text-zinc-300 hover:bg-white/4 disabled:opacity-50"
           >
             {t('browsers.removeLaterRestart')}
           </button>
           <button
             onClick={onClose}
             disabled={isPending}
-            className="w-full px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
+            className="w-full px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-300 disabled:opacity-50"
           >
             {t('common.cancel')}
           </button>
@@ -414,18 +414,18 @@ function SiteDropdown({ boundSites, onSelect, isPending }: SiteDropdownProps) {
       <button
         onClick={() => setOpen((o) => !o)}
         disabled={isPending}
-        className="flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors disabled:opacity-50"
+        className="flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-white/8 text-zinc-400 hover:border-primary-500/50 hover:text-primary-400 transition-colors disabled:opacity-50"
       >
         <Plus size={11} />
         {t('browsers.addSite')}
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg w-48 overflow-hidden">
-          <div className="p-2 border-b border-gray-100 dark:border-gray-700">
+        <div className="absolute left-0 top-full mt-1 z-50 border border-white/8 bg-black/20 rounded-lg shadow-lg w-48 overflow-hidden">
+          <div className="p-2 border-b border-white/6">
             <input
               autoFocus
-              className="w-full px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-transparent dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-2 py-1 text-xs rounded-sm border border-white/8 bg-transparent text-zinc-100 focus:outline-hidden focus:ring-1 focus:ring-primary-500"
               placeholder={t('browsers.searchSite')}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -433,15 +433,15 @@ function SiteDropdown({ boundSites, onSelect, isPending }: SiteDropdownProps) {
           </div>
           <ul className="max-h-52 overflow-y-auto py-1">
             {available.length === 0 ? (
-              <li className="px-3 py-2 text-xs text-gray-400">{t('browsers.noAvailable')}</li>
+              <li className="px-3 py-2 text-xs text-zinc-400">{t('browsers.noAvailable')}</li>
             ) : available.map(([key, label]) => (
               <li key={key}>
                 <button
                   onClick={() => { onSelect(key); setOpen(false); setQuery('') }}
-                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between"
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-white/4 flex items-center justify-between"
                 >
-                  <span className="font-medium dark:text-white">{label}</span>
-                  <span className="text-gray-400 font-mono">{key}</span>
+                  <span className="font-medium text-zinc-100">{label}</span>
+                  <span className="text-zinc-400 font-code">{key}</span>
                 </button>
               </li>
             ))}
@@ -470,7 +470,7 @@ function ModeToggle({ endpoint, onSuccess, isDockerEndpoint }: { endpoint: Chrom
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-gray-600 text-xs font-medium">
+      <div className="flex rounded-md overflow-hidden border border-white/8 text-xs font-medium">
         {(['bridge', 'cdp']).map((m) => (
           <button
             key={m}
@@ -481,9 +481,9 @@ function ModeToggle({ endpoint, onSuccess, isDockerEndpoint }: { endpoint: Chrom
               'px-2.5 py-1 transition-colors',
               mode === m
                 ? m === 'bridge'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-amber-500 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700',
+                  ? 'bg-primary-500/80 text-white'
+                  : 'bg-amber-500/80 text-white'
+                : 'bg-black/20 text-zinc-400 hover:bg-white/4',
             ].join(' ')}
           >
             {t(`workers.mode${m.charAt(0).toUpperCase() + m.slice(1)}`)}
@@ -491,7 +491,7 @@ function ModeToggle({ endpoint, onSuccess, isDockerEndpoint }: { endpoint: Chrom
         ))}
       </div>
       {showCdpWarning && (
-        <span className="text-xs text-amber-600 dark:text-amber-400 whitespace-nowrap">
+        <span className="text-xs text-amber-400 whitespace-nowrap">
           ⚠ CDP 会启动新 Chrome，本地请用 Bridge
         </span>
       )}
@@ -529,6 +529,7 @@ function InstanceCard({
     mutationFn: ({ agent_url, agent_protocol }: { agent_url: string; agent_protocol: string }) =>
       updateChromeInstanceConfig(url, { agent_url: agent_url || null, agent_protocol: agent_protocol || null }),
     onSuccess: () => { setEditingAgentUrl(false); onConfigChanged() },
+    onError: (err) => toast.error(err instanceof Error ? err.message : '保存 Agent 地址失败'),
   })
   const novncUrl = `http://${window.location.hostname}:${novncPort}`
   const label = instanceLabel(url)
@@ -538,26 +539,26 @@ function InstanceCard({
 
   return (
     <Card>
-      <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100 dark:border-gray-700">
+      <div className="flex items-center gap-2 mb-3 pb-3 border-b border-white/6">
         {isDockerEndpoint
           ? <StatusBadge containerStatus={containerStatus} available={available} isStarting={isStarting} />
-          : <span className={`inline-flex items-center gap-1 text-xs ${available ? 'text-green-500' : 'text-gray-400'}`}>
-              <span className={`w-2 h-2 rounded-full shrink-0 ${available ? 'bg-green-500' : 'bg-gray-400'}`} />
+          : <span className={`inline-flex items-center gap-1 text-xs ${available ? 'text-emerald-500' : 'text-zinc-400'}`}>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${available ? 'bg-emerald-500' : 'bg-zinc-500'}`} />
               {available ? '在线' : '空闲'}
             </span>
         }
-        <span className="font-semibold text-sm dark:text-white">
+        <span className="font-semibold text-sm text-zinc-100">
           {isDockerEndpoint ? label : '本地 Chrome'}
         </span>
         {!isDockerEndpoint && (
-          <span className="text-xs text-gray-400 font-mono">{label}</span>
+          <span className="text-xs text-zinc-400 font-code">{label}</span>
         )}
         {isDockerEndpoint && (
           <a
             href={novncUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs text-blue-500 hover:underline font-mono"
+            className="flex items-center gap-1 text-xs text-primary-400 hover:underline font-code"
           >
             :{novncPort}
             <ExternalLink size={11} />
@@ -565,18 +566,18 @@ function InstanceCard({
         )}
         <div className="ml-auto flex items-center gap-2">
           {endpoint.agent_protocol === 'ws' && (wsConnected ? (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium border border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
               <Wifi size={10} />
               {t('browsers.statusWsConnected')}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-white/6 text-zinc-400">
               <WifiOff size={10} />
               {t('browsers.statusWsOffline')}
             </span>
           ))}
           {!!endpoint.agent_url && endpoint.agent_protocol === 'http' && (
-            <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
+            <span className="px-1.5 py-0.5 rounded-sm text-xs font-medium border border-violet-500/40 bg-violet-500/10 text-violet-300">
               HTTP Agent
             </span>
           )}
@@ -586,7 +587,7 @@ function InstanceCard({
               onClick={onRemove}
               disabled={isRemovePending}
               title={t('browsers.removeInstance')}
-              className="text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+              className="text-zinc-400 hover:text-red-400 transition-colors disabled:opacity-50"
             >
               <Trash2 size={14} />
             </button>
@@ -595,7 +596,7 @@ function InstanceCard({
       </div>
 
       {/* Agent URL row */}
-      <div className="mb-3 pb-3 border-b border-gray-100 dark:border-gray-700">
+      <div className="mb-3 pb-3 border-b border-white/6">
         {editingAgentUrl ? (
           <div className="space-y-2">
             <div className="flex gap-2 items-center">
@@ -605,7 +606,7 @@ function InstanceCard({
                 value={agentUrlDraft}
                 onChange={(e) => setAgentUrlDraft(e.target.value)}
                 placeholder="http://192.168.1.100:19823"
-                className="flex-1 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                className="flex-1 px-2 py-1 text-xs rounded-sm border border-white/8 bg-black/40 text-zinc-100 focus:outline-hidden focus:ring-1 focus:ring-primary-500 font-code"
               />
             </div>
             {agentUrlDraft && (
@@ -613,12 +614,12 @@ function InstanceCard({
                 {(['http', 'ws'] as const).map((p) => (
                   <label key={p} className={`flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${
                     agentProtocolDraft === p
-                      ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                      : 'border-gray-200 dark:border-gray-600 text-gray-500 hover:border-gray-300'
+                      ? 'border-primary-500/50 bg-primary-500/10 text-primary-300'
+                      : 'border-white/8 text-zinc-400 hover:border-white/[0.14]'
                   }`}>
                     <input type="radio" name={`protocol-${url}`} value={p} checked={agentProtocolDraft === p}
                       onChange={() => setAgentProtocolDraft(p)}
-                      className="accent-blue-600" />
+                      className="accent-primary-500" />
                     {p === 'http' ? 'HTTP（局域网 / 代理）' : 'WS（反向连接）'}
                   </label>
                 ))}
@@ -628,13 +629,13 @@ function InstanceCard({
               <button
                 onClick={() => saveAgentUrlMutation.mutate({ agent_url: agentUrlDraft, agent_protocol: agentProtocolDraft })}
                 disabled={saveAgentUrlMutation.isPending}
-                className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                className="px-2 py-1 text-xs rounded-sm bg-primary-500/80 text-white hover:bg-primary-500 disabled:opacity-50"
               >
                 保存
               </button>
               <button
                 onClick={() => { setEditingAgentUrl(false); setAgentUrlDraft(endpoint.agent_url ?? ''); setAgentProtocolDraft(endpoint.agent_protocol === 'ws' ? 'ws' : 'http') }}
-                className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700"
+                className="px-2 py-1 text-xs rounded-sm border border-white/8 text-zinc-400 hover:bg-white/4"
               >
                 取消
               </button>
@@ -646,31 +647,31 @@ function InstanceCard({
             className="flex items-center gap-1.5 text-xs group"
             title="点击编辑 Agent 地址"
           >
-            <span className="text-gray-400 shrink-0">Agent:</span>
+            <span className="text-zinc-400 shrink-0">Agent:</span>
             {endpoint.agent_url ? (
               <>
-                <span className="font-mono text-blue-600 dark:text-blue-400 group-hover:underline truncate max-w-[160px]">
+                <span className="font-code text-primary-400 group-hover:underline truncate max-w-[160px]">
                   {endpoint.agent_url}
                 </span>
-                <span className="px-1 py-0.5 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 font-mono">
+                <span className="px-1 py-0.5 rounded-sm text-xs border border-white/10 bg-black/40 font-code text-zinc-400">
                   {endpoint.agent_protocol ?? 'http'}
                 </span>
               </>
             ) : (
-              <span className="text-gray-400 italic group-hover:text-blue-500">未配置 — 点击设置</span>
+              <span className="text-zinc-400 italic group-hover:text-primary-400">未配置 — 点击设置</span>
             )}
           </button>
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2 min-h-[2rem]">
+      <div className="flex flex-wrap gap-2 min-h-8">
         {bindings.map((b) => (
           <span
             key={b.id}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-primary-500/10 text-primary-300 border border-primary-500/40"
           >
             {SITE_LABELS[b.site] ?? b.site}
-            <button onClick={() => onUnbind(b.id)} className="hover:text-red-500 transition-colors ml-0.5">
+            <button onClick={() => onUnbind(b.id)} className="hover:text-red-400 transition-colors ml-0.5">
               <X size={10} />
             </button>
           </span>
@@ -790,6 +791,10 @@ export default function BrowsersPage() {
       }, 2000)
       setTimeout(() => { clearInterval(poll); setRestartMsg(null) }, 30_000)
     },
+    onError: (err) => {
+      setRestartMsg(null)
+      toast.error(err instanceof Error ? err.message : t('browsers.restartApi') + ' 失败')
+    },
   })
 
   if (poolLoading || bindingsLoading) return <PageLoader />
@@ -816,9 +821,9 @@ export default function BrowsersPage() {
       <div className="flex items-center gap-3 mb-5 flex-wrap">
         {/* Collection mode toggle */}
         {sysConfig && (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
-            <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">{t('browsers.collectionMode')}:</span>
-            <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-gray-600 text-xs font-medium">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/8 bg-black/20">
+            <span className="text-xs text-zinc-400 shrink-0">{t('browsers.collectionMode')}:</span>
+            <div className="flex rounded-md overflow-hidden border border-white/8 text-xs font-medium">
               {(['local', 'agent'] as const).map((mode) => (
                 <button
                   key={mode}
@@ -828,9 +833,9 @@ export default function BrowsersPage() {
                     'px-2.5 py-1 transition-colors',
                     sysConfig.collection_mode === mode
                       ? mode === 'local'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-purple-600 text-white'
-                      : 'bg-white dark:bg-gray-800 text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700',
+                        ? 'bg-primary-500/80 text-white'
+                        : 'bg-violet-600 text-white'
+                      : 'bg-black/20 text-zinc-400 hover:bg-white/4',
                   ].join(' ')}
                 >
                   {mode === 'local' ? t('browsers.modeLocal') : t('browsers.modeAgent')}
@@ -842,7 +847,7 @@ export default function BrowsersPage() {
 
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-primary-500/80 text-white hover:bg-primary-500"
         >
           <Plus size={15} />
           {t('browsers.addInstance')}
@@ -851,14 +856,14 @@ export default function BrowsersPage() {
         <button
           onClick={() => restartMutation.mutate()}
           disabled={restartMutation.isPending || !!restartMsg}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-white/8 text-zinc-300 hover:bg-white/4 disabled:opacity-50"
         >
           <RefreshCw size={15} className={restartMsg ? 'animate-spin' : ''} />
           {restartMsg ?? t('browsers.restartApi')}
         </button>
 
         {addInstanceMutation.isError && (
-          <span className="text-xs text-red-500">
+          <span className="text-xs text-red-400">
             {(addInstanceMutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? t('common.error')}
           </span>
         )}
@@ -870,7 +875,7 @@ export default function BrowsersPage() {
         if (localEps.length === 0) return null
         return (
           <div className="mb-6">
-            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">本地浏览器</p>
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">本地浏览器</p>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {localEps.map((ep) => (
                 <InstanceCard
@@ -898,7 +903,7 @@ export default function BrowsersPage() {
         return (
           <div>
             {endpoints.some((ep) => instanceIndex(ep.url) !== null) && (
-              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Docker 实例</p>
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">Docker 实例</p>
             )}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {dockerEps.map((ep) => {
@@ -923,7 +928,7 @@ export default function BrowsersPage() {
               })}
 
               {endpoints.length === 0 && (
-                <div className="col-span-full text-center py-12 text-gray-400 text-sm">
+                <div className="col-span-full text-center py-12 text-zinc-400 text-sm">
                   {t('browsers.noInstances')}
                 </div>
               )}
@@ -935,14 +940,14 @@ export default function BrowsersPage() {
       {/* Orphaned bindings */}
       {orphaned.length > 0 && (
         <div className="mt-6">
-          <p className="text-xs font-medium text-gray-400 mb-2">{t('browsers.orphaned')}</p>
+          <p className="text-xs font-medium text-zinc-400 mb-2">{t('browsers.orphaned')}</p>
           <Card>
             <div className="flex flex-wrap gap-2">
               {orphaned.map((b) => (
-                <span key={b.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 border border-gray-200 dark:border-gray-600">
+                <span key={b.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-white/6 text-zinc-400 border border-white/8">
                   {SITE_LABELS[b.site] ?? b.site}
-                  <span className="font-mono text-gray-400">→ {instanceLabel(b.browser_endpoint)}</span>
-                  <button onClick={() => deleteMutation.mutate(b.id)} className="hover:text-red-500 ml-0.5">
+                  <span className="font-code text-zinc-400">→ {instanceLabel(b.browser_endpoint)}</span>
+                  <button onClick={() => deleteMutation.mutate(b.id)} className="hover:text-red-400 ml-0.5">
                     <X size={10} />
                   </button>
                 </span>

@@ -36,7 +36,14 @@ DEFAULT_BASE_URL = os.environ.get("OPENCLI_ADMIN_URL", "http://localhost:8031")
 
 
 def _client(base_url: str) -> httpx.Client:
-    return httpx.Client(base_url=f"{base_url.rstrip('/')}/api/v1", timeout=30.0)
+    # Fleet auth (ADR-0005): attach the static bearer token when the target
+    # instance requires one. Same env var name the server reads; empty = dev
+    # posture (tokenless localhost instance) — no header attached.
+    token = os.environ.get("API_AUTH_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return httpx.Client(
+        base_url=f"{base_url.rstrip('/')}/api/v1", timeout=30.0, headers=headers
+    )
 
 
 def _die(msg: str) -> None:
@@ -119,14 +126,35 @@ def cmd_record(args: argparse.Namespace) -> None:
         session_id = session["session_id"]
         print(f"recording started (session={session_id}, chrome={session['cdp_endpoint']})")
         print("go demo the task in that Chrome window now.")
-        input("press Enter here when done recording... ")
 
-        status = "success"
-        if input("mark as success? [Y/n] ").strip().lower() == "n":
-            status = "failed"
-        stop_result = _unwrap(
-            c.post(f"/skills/record/{session_id}/stop", json={"status": status}, timeout=30.0)
-        )
+        # /start holds the pool's per-endpoint mutex for the session's
+        # lifetime, released only by /stop. ANY exit path from here on —
+        # Ctrl+C, EOF, an unexpected exception — must still reach /stop, or
+        # that Chrome endpoint stays locked until the backend process
+        # restarts (PR #4 review finding, closed out by issue 05).
+        interrupted = False
+        status = "failed"
+        stop_result = None
+        try:
+            input("press Enter here when done recording... ")
+            status = "success"
+            if input("mark as success? [Y/n] ").strip().lower() == "n":
+                status = "failed"
+        except (KeyboardInterrupt, EOFError):
+            print()
+            status = "failed"  # even if the first prompt already marked success
+            interrupted = True
+        finally:
+            stop_result = _unwrap(
+                c.post(f"/skills/record/{session_id}/stop", json={"status": status}, timeout=30.0)
+            )
+
+        if interrupted:
+            # Session released above; exit non-zero without offering distill —
+            # an interrupted demo is not a trace worth keeping.
+            print("interrupted — recording session stopped (marked failed).", file=sys.stderr)
+            raise SystemExit(130)
+
         trace = stop_result["trace"]
         _print_trace_steps(trace)
 
@@ -189,7 +217,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        # Clean-interrupt contract (issue 05): no traceback, non-zero exit.
+        # Handlers that hold remote resources release them on their own exit
+        # paths (see cmd_record's finally) before this propagates.
+        print("\ninterrupted", file=sys.stderr)
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":

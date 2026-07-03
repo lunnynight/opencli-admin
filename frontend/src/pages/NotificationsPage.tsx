@@ -25,6 +25,7 @@ import {
 } from '../lib/notificationDisplay'
 import { Plus, Trash2 } from 'lucide-react'
 import { formatInTimeZone } from 'date-fns-tz'
+import { Button } from '../components/ui/button'
 
 const NOTIFIER_TYPES: NotifierType[] = ['webhook', 'dingtalk', 'feishu', 'wecom', 'email']
 const TRIGGER_EVENTS = ['on_new_record', 'on_ai_processed', 'on_task_failed'] as const
@@ -39,10 +40,10 @@ const DEFAULT_CONFIGS: Record<NotifierType, Record<string, unknown>> = {
 }
 
 const ACK_TONE_RING: Record<AckStatusTone, string> = {
-  success: 'ring-1 ring-green-200',
-  warning: 'ring-1 ring-yellow-200',
-  danger: 'ring-1 ring-red-200',
-  muted: 'ring-1 ring-gray-200',
+  success: 'ring-1 ring-emerald-500/40',
+  warning: 'ring-1 ring-amber-500/40',
+  danger: 'ring-1 ring-red-500/40',
+  muted: 'ring-1 ring-white/10',
 }
 
 function formatTime(value?: string) {
@@ -57,8 +58,8 @@ function AddRuleModal({ onClose, onSave }: { onClose: () => void; onSave: (d: Pa
   const [notifierType, setNotifierType] = useState<NotifierType>('webhook')
   const [notifierConfig, setNotifierConfig] = useState<Record<string, unknown>>(DEFAULT_CONFIGS.webhook)
 
-  const inputCls = 'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-  const labelCls = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'
+  const inputCls = 'w-full border border-white/10 bg-black/40 px-3 py-2 text-sm text-zinc-100 focus:outline-hidden focus:ring-2 focus:ring-primary-500/70'
+  const labelCls = 'block text-sm font-medium text-zinc-300 mb-1'
 
   const handleTypeChange = (type: NotifierType) => {
     setNotifierType(type)
@@ -72,8 +73,8 @@ function AddRuleModal({ onClose, onSave }: { onClose: () => void; onSave: (d: Pa
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4 dark:text-white">{t('notifications.addRuleTitle')}</h2>
+      <div className="telemetry-panel w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+        <h2 className="text-lg font-semibold mb-4 text-zinc-100">{t('notifications.addRuleTitle')}</h2>
         <div className="space-y-4">
           <div>
             <label className={labelCls}>{t('common.name')}<span className="text-red-500 ml-0.5">*</span></label>
@@ -92,8 +93,8 @@ function AddRuleModal({ onClose, onSave }: { onClose: () => void; onSave: (d: Pa
             </select>
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 uppercase tracking-wide font-medium">
+          <div className="border-t border-white/8 pt-4">
+            <p className="text-xs text-zinc-400 mb-3 uppercase tracking-wide font-medium">
               {t('notifications.notifierConfig')}
             </p>
             <NotifierConfigForm
@@ -104,12 +105,12 @@ function AddRuleModal({ onClose, onSave }: { onClose: () => void; onSave: (d: Pa
           </div>
         </div>
         <div className="mt-6 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600">
+          <Button type="button" variant="outline" onClick={onClose}>
             {t('common.cancel')}
-          </button>
-          <button onClick={handleSubmit} disabled={!name.trim()} className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+          </Button>
+          <Button type="button" onClick={handleSubmit} disabled={!name.trim()}>
             {t('common.create')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -147,10 +148,9 @@ export default function NotificationsPage() {
         description={t('notifications.description')}
         action={
           tab === 'rules' && (
-            <button onClick={() => setShowAdd(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+            <Button type="button" onClick={() => setShowAdd(true)}>
               <Plus size={16} /> {t('notifications.addRule')}
-            </button>
+            </Button>
           )
         }
       />
@@ -158,8 +158,8 @@ export default function NotificationsPage() {
       <div className="flex gap-2 mb-4">
         {(['rules', 'logs'] as const).map((tabKey) => (
           <button key={tabKey} onClick={() => setTab(tabKey)}
-            className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors ${
-              tab === tabKey ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 hover:bg-gray-50'
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              tab === tabKey ? 'bg-primary-500/16 border border-primary-500/70 text-white' : 'bg-black/20 border border-white/8 text-zinc-300 hover:bg-white/4'
             }`}>
             {tabKey === 'rules' ? t('notifications.tabRules') : t('notifications.tabLogs')}
           </button>
@@ -181,21 +181,21 @@ export default function NotificationsPage() {
               { key: 'enabled', header: t('common.status'), render: (r) => <StatusBadge status={r.enabled ? 'online' : 'offline'} /> },
               {
                 key: 'id', header: t('common.id'), width: '100px',
-                render: (r) => <span className="font-mono text-xs text-gray-400">{r.id.slice(0, 8)}</span>,
+                render: (r) => <span className="font-mono text-xs text-zinc-500">{r.id.slice(0, 8)}</span>,
               },
               {
                 key: 'created_at', header: t('common.createdAt'), width: '130px',
-                render: (r) => <span className="text-xs text-gray-500">{formatInTimeZone(new Date(r.created_at), 'Asia/Shanghai', 'MM-dd HH:mm:ss')}</span>,
+                render: (r) => <span className="text-xs text-zinc-400">{formatInTimeZone(new Date(r.created_at), 'Asia/Shanghai', 'MM-dd HH:mm:ss')}</span>,
               },
               {
                 key: 'updated_at', header: t('common.updatedAt'), width: '130px',
-                render: (r) => <span className="text-xs text-gray-500">{formatInTimeZone(new Date(r.updated_at), 'Asia/Shanghai', 'MM-dd HH:mm:ss')}</span>,
+                render: (r) => <span className="text-xs text-zinc-400">{formatInTimeZone(new Date(r.updated_at), 'Asia/Shanghai', 'MM-dd HH:mm:ss')}</span>,
               },
               {
                 key: 'actions', header: t('common.actions'), width: '70px',
                 render: (r) => (
                   <button onClick={() => { if (confirm(t('notifications.confirmDelete', { name: r.name }))) deleteMut.mutate(r.id) }}
-                    className="p-1.5 rounded hover:bg-red-100 text-red-500">
+                    className="p-1.5 rounded-sm hover:bg-red-100 text-red-500">
                     <Trash2 size={14} />
                   </button>
                 ),
@@ -216,11 +216,11 @@ export default function NotificationsPage() {
             columns={[
               {
                 key: 'id', header: t('common.id'), width: '100px',
-                render: (l) => <span className="font-mono text-xs text-gray-400">{l.id.slice(0, 8)}</span>,
+                render: (l) => <span className="font-mono text-xs text-zinc-500">{l.id.slice(0, 8)}</span>,
               },
               {
                 key: 'record_id', header: t('notifications.recordId'), width: '100px',
-                render: (l) => <span className="font-mono text-xs text-gray-500">{l.record_id ? l.record_id.slice(0, 8) : '—'}</span>,
+                render: (l) => <span className="font-mono text-xs text-zinc-400">{l.record_id ? l.record_id.slice(0, 8) : '—'}</span>,
               },
               { key: 'rule', header: t('notifications.ruleId'), width: '110px', render: (l) => <span className="font-mono text-xs">{l.rule_id.slice(0, 10)}…</span> },
               { key: 'status', header: t('notifications.deliveryStatus'), width: '96px', render: (l) => <StatusBadge status={l.status} /> },
@@ -237,7 +237,7 @@ export default function NotificationsPage() {
                   <TruncatedText
                     text={summarizeNotificationResponse(l.response_data)}
                     lines={2}
-                    className="text-xs text-gray-500 dark:text-gray-400"
+                    className="text-xs text-zinc-400"
                   />
                 ),
               },
@@ -247,18 +247,18 @@ export default function NotificationsPage() {
                   <TruncatedText
                     text={formatJsonPreview(l.ack_data)}
                     lines={2}
-                    className="font-mono text-xs text-gray-500 dark:text-gray-400"
+                    className="font-mono text-xs text-zinc-400"
                   />
                 ),
               },
               { key: 'error', header: t('notifications.errorMsg'), render: (l) => <span className="text-xs text-red-400">{l.error_message || '—'}</span> },
               {
                 key: 'acked_at', header: t('notifications.ackedAt'), width: '130px',
-                render: (l) => <span className="text-xs text-gray-500">{formatTime(l.acked_at)}</span>,
+                render: (l) => <span className="text-xs text-zinc-400">{formatTime(l.acked_at)}</span>,
               },
               {
                 key: 'created_at', header: t('common.createdAt'), width: '130px',
-                render: (l) => <span className="text-xs text-gray-500">{formatTime(l.created_at)}</span>,
+                render: (l) => <span className="text-xs text-zinc-400">{formatTime(l.created_at)}</span>,
               },
             ]}
           />

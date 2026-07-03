@@ -17,10 +17,12 @@ const SkillsPage = lazy(() => import('./pages/SkillsPage'))
 const SkillDetailPage = lazy(() => import('./pages/SkillDetailPage'))
 const ProvidersPage = lazy(() => import('./pages/ProvidersPage'))
 const NodesPage = lazy(() => import('./pages/NodesPage'))
+const ActionHistoryPage = lazy(() => import('./pages/ActionHistoryPage'))
+const SourceControlRoomPage = lazy(() => import('./pages/SourceControlRoomPage'))
 const TopologyPage = lazy(() => import('./labs/topology/TopologyPage'))
-const NetworkPage = lazy(() => import('./labs/topology/NetworkPage'))
 const NodeKitPage = lazy(() => import('./labs/topology/NodeKitPage'))
 const WorkflowPage = lazy(() => import('./labs/topology/workflow/WorkflowPage'))
+const PlanCanvasPage = lazy(() => import('./pages/PlanCanvasPage'))
 
 function LazyRoute({ children }: { children: ReactNode }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>
@@ -28,24 +30,19 @@ function LazyRoute({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
-    <BrowserRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+    <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to={isTopologyLabEnabled ? '/labs/topology' : '/dashboard'} replace />} />
+          <Route index element={<Navigate to={isTopologyLabEnabled ? '/plans' : '/dashboard'} replace />} />
           <Route path="dashboard" element={<LazyRoute><DashboardPage /></LazyRoute>} />
           <Route path="settings" element={<LazyRoute><SettingsPage /></LazyRoute>} />
-          <Route
-            path="labs/topology"
-            element={
-              isTopologyLabEnabled ? (
-                <LazyRoute>
-                  <NetworkPage />
-                </LazyRoute>
-              ) : (
-                <Navigate to="/dashboard" replace />
-              )
-            }
-          />
+          {/* Collection Canvas is ONE surface (ADR-0008): /labs/topology used to host
+           * a separate global-topology page (NetworkPage) alongside /plans/new's
+           * per-plan canvas — two canvas entries for one concept. NetworkPage's
+           * component tree now lives inside PlanCanvasPage as its "overview" view
+           * (see pages/PlanCanvasPage.tsx), so this route is just a redirect for
+           * old links/bookmarks. */}
+          <Route path="labs/topology" element={<Navigate to="/plans" replace />} />
           <Route
             path="labs/node-kit"
             element={
@@ -83,8 +80,12 @@ export default function App() {
               )
             }
           />
-          <Route path="topology" element={<Navigate to={isTopologyLabEnabled ? '/labs/topology' : '/dashboard'} replace />} />
+          <Route path="topology" element={<Navigate to={isTopologyLabEnabled ? '/plans' : '/dashboard'} replace />} />
+          <Route path="plans" element={<LazyRoute><PlanCanvasPage /></LazyRoute>} />
+          <Route path="plans/new" element={<LazyRoute><PlanCanvasPage /></LazyRoute>} />
+          <Route path="plans/:planId" element={<LazyRoute><PlanCanvasPage /></LazyRoute>} />
           <Route path="sources" element={<LazyRoute><SourcesPage /></LazyRoute>} />
+          <Route path="sources/:sourceId/control-room" element={<LazyRoute><SourceControlRoomPage /></LazyRoute>} />
           <Route path="tasks" element={<LazyRoute><TasksPage /></LazyRoute>} />
           <Route path="records" element={<LazyRoute><RecordsPage /></LazyRoute>} />
           <Route path="schedules" element={<LazyRoute><SchedulesPage /></LazyRoute>} />
@@ -96,6 +97,7 @@ export default function App() {
           <Route path="providers" element={<LazyRoute><ProvidersPage /></LazyRoute>} />
           <Route path="browsers" element={<Navigate to="/nodes" replace />} />
           <Route path="nodes" element={<LazyRoute><NodesPage /></LazyRoute>} />
+          <Route path="control/actions" element={<LazyRoute><ActionHistoryPage /></LazyRoute>} />
         </Route>
       </Routes>
     </BrowserRouter>

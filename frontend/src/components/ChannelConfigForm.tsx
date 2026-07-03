@@ -3,14 +3,14 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { deleteSourceCredential, listSkills, listSourceCredentials, storeSourceCredential } from '../api/endpoints'
+import { deleteSourceCredential, listProviders, listSkills, listSourceCredentials, storeSourceCredential } from '../api/endpoints'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const input =
-  'w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-const label = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'
-const hint = 'mt-1 text-xs text-gray-400'
+  'w-full border border-white/12 bg-black/40 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-hidden focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500/60'
+const label = 'block text-sm font-medium text-zinc-300 mb-1'
+const hint = 'mt-1 text-xs text-zinc-500'
 
 function formFieldName(seed: string | undefined, fallback: string) {
   const slug = (seed ?? '')
@@ -166,7 +166,7 @@ function KVList({
             type="button"
             aria-label="删除参数行"
             onClick={() => remove(i)}
-            className="p-1.5 text-red-400 hover:text-red-600 flex-shrink-0"
+            className="p-1.5 text-red-400 hover:text-red-600 shrink-0"
           >
             <Trash2 size={14} />
           </button>
@@ -175,7 +175,7 @@ function KVList({
       <button
         type="button"
         onClick={() => onChange([...pairs, { key: '', value: '' }])}
-        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
+        className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 mt-1"
       >
         <Plus size={12} /> Add row
       </button>
@@ -286,7 +286,7 @@ function CredentialField({
         type="button"
         disabled={busy || !value}
         onClick={save}
-        className="px-3 py-2 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-40 flex-shrink-0"
+        className="px-3 py-2 text-xs border border-primary-500/70 bg-primary-500/20 text-primary-200 hover:bg-primary-500/30 disabled:opacity-40 shrink-0"
       >
         存储
       </button>
@@ -296,7 +296,7 @@ function CredentialField({
           aria-label={`删除已存储的${label}`}
           disabled={busy}
           onClick={remove}
-          className="p-1.5 text-red-400 hover:text-red-600 flex-shrink-0"
+          className="p-1.5 text-red-400 hover:text-red-600 shrink-0"
         >
           <Trash2 size={14} />
         </button>
@@ -425,7 +425,7 @@ function APIConfig({
           ]}
         />
       </Field>
-      {authType === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
+      {authType === 'cookie' && <p className="text-xs text-zinc-400">{t('channelConfig.authCookieHint')}</p>}
 
       {authType === 'bearer' && (
         <>
@@ -573,7 +573,7 @@ function WebScraperConfig({
           min={1}
         />
       </Field>
-      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
         <input
           type="checkbox"
           checked={auth.type === 'cookie'}
@@ -581,7 +581,7 @@ function WebScraperConfig({
         />
         {t('channelConfig.authCookie')}
       </label>
-      {auth.type === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
+      {auth.type === 'cookie' && <p className="text-xs text-zinc-400">{t('channelConfig.authCookieHint')}</p>}
     </div>
   )
 }
@@ -597,13 +597,40 @@ function Crawl4AIConfig({
   const [selectors, setSelectors] = useState<KVPair[]>(
     objToKv(config.selectors as Record<string, unknown>),
   )
+  const [mode, setMode] = useState<'css' | 'llm'>(config.instruction ? 'llm' : 'css')
   const auth = (config.auth as Record<string, string>) ?? {}
+
+  const { data: providersResp } = useQuery({
+    queryKey: ['providers', 'for-crawl4ai-config'],
+    queryFn: listProviders,
+  })
+  const providers = (providersResp?.data ?? []).filter((p) => p.enabled)
 
   const update = (patch: Partial<Record<string, unknown>>) => onChange({ ...config, ...patch })
 
   const updateSelectors = (pairs: KVPair[]) => {
     setSelectors(pairs)
     update({ selectors: kvToObj(pairs) })
+  }
+
+  const extractionSchemaText =
+    config.extraction_schema != null ? JSON.stringify(config.extraction_schema, null, 2) : ''
+  const [schemaText, setSchemaText] = useState(extractionSchemaText)
+  const [schemaError, setSchemaError] = useState<string | null>(null)
+
+  const updateSchemaText = (v: string) => {
+    setSchemaText(v)
+    if (!v.trim()) {
+      setSchemaError(null)
+      update({ extraction_schema: undefined })
+      return
+    }
+    try {
+      update({ extraction_schema: JSON.parse(v) })
+      setSchemaError(null)
+    } catch {
+      setSchemaError('不是合法 JSON — 抽取时会当成 block 模式(自由格式)处理，不传 schema')
+    }
   }
 
   return (
@@ -626,14 +653,74 @@ function Crawl4AIConfig({
           placeholder=".item"
         />
       </Field>
-      <Field label={t('channelConfig.fieldSelectors')} hint={t('channelConfig.fieldSelectorsHint')} required>
-        <KVList
-          pairs={selectors}
-          onChange={updateSelectors}
-          keyPlaceholder="field name"
-          valuePlaceholder="CSS selector"
-        />
-      </Field>
+
+      <div>
+        <label className={label}>抽取方式</label>
+        <div className="flex gap-4 text-sm text-zinc-300">
+          <label className="flex items-center gap-1.5">
+            <input type="radio" checked={mode === 'css'} onChange={() => setMode('css')} />
+            CSS 选择器(零 AI 成本)
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="radio" checked={mode === 'llm'} onChange={() => setMode('llm')} />
+            LLM 抽取(没法写选择器时兜底)
+          </label>
+        </div>
+      </div>
+
+      {mode === 'css' && (
+        <Field label={t('channelConfig.fieldSelectors')} hint={t('channelConfig.fieldSelectorsHint')} required>
+          <KVList
+            pairs={selectors}
+            onChange={updateSelectors}
+            keyPlaceholder="field name"
+            valuePlaceholder="CSS selector"
+          />
+        </Field>
+      )}
+
+      {mode === 'llm' && (
+        <>
+          <Field
+            label="抽取指令(instruction)"
+            hint="用自然语言描述要从页面里抽取什么，比如「抽取每条商品的标题、价格、链接」"
+            required
+          >
+            <textarea
+              className={input}
+              rows={3}
+              value={(config.instruction as string) ?? ''}
+              onChange={(e) => update({ instruction: e.target.value || undefined })}
+              placeholder="抽取每条商品的标题、价格、链接"
+            />
+          </Field>
+          <Field
+            label="抽取 Schema(可选)"
+            hint="JSON schema — 给了就走 schema 模式(结构化输出)，不给走 block 模式(自由格式文本块)"
+          >
+            <textarea
+              className={input}
+              rows={4}
+              value={schemaText}
+              onChange={(e) => updateSchemaText(e.target.value)}
+              placeholder={'{\n  "title": "string",\n  "price": "string"\n}'}
+            />
+            {schemaError && <p className="mt-1 text-xs text-amber-500">{schemaError}</p>}
+          </Field>
+          <Field label="模型 Provider(可选)" hint="不选就用第一个已启用的 provider，跟 AI 富化步骤共用同一份配置">
+            <SelectInput
+              value={(config.provider_id as string) ?? ''}
+              onChange={(v) => update({ provider_id: v || undefined })}
+              ariaLabel="模型 Provider"
+              options={[
+                { value: '', label: '— 自动(第一个已启用的) —' },
+                ...providers.map((p) => ({ value: p.id, label: `${p.name} (${p.provider_type})` })),
+              ]}
+            />
+          </Field>
+        </>
+      )}
+
       <Field label={t('channelConfig.waitFor')} hint={t('channelConfig.waitForHint')}>
         <TextInput
           value={(config.wait_for as string) ?? ''}
@@ -641,7 +728,7 @@ function Crawl4AIConfig({
           placeholder="css:.item"
         />
       </Field>
-      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
         <input
           type="checkbox"
           checked={auth.type === 'cookie'}
@@ -649,7 +736,7 @@ function Crawl4AIConfig({
         />
         {t('channelConfig.authCookie')}
       </label>
-      {auth.type === 'cookie' && <p className="text-xs text-gray-500 dark:text-gray-400">{t('channelConfig.authCookieHint')}</p>}
+      {auth.type === 'cookie' && <p className="text-xs text-zinc-400">{t('channelConfig.authCookieHint')}</p>}
     </div>
   )
 }
@@ -976,13 +1063,13 @@ function ArgsKVList({
                 type="button"
                 aria-label="删除参数"
                 onClick={() => remove(i)}
-                className="p-1.5 text-red-400 hover:text-red-600 flex-shrink-0"
+                className="p-1.5 text-red-400 hover:text-red-600 shrink-0"
               >
                 <Trash2 size={14} />
               </button>
             </div>
             {hintText && (
-              <p className="text-xs text-gray-400 ml-1">{hintText}</p>
+              <p className="text-xs text-zinc-400 ml-1">{hintText}</p>
             )}
           </div>
         )
@@ -991,7 +1078,7 @@ function ArgsKVList({
         <select
           aria-label="添加参数"
           name="opencli-add-param"
-          className="text-xs text-blue-600 bg-transparent border-none cursor-pointer hover:text-blue-700 mt-1 outline-none"
+          className="text-xs text-primary-400 bg-transparent border-none cursor-pointer hover:text-primary-300 mt-1 outline-hidden"
           value=""
           onChange={(e) => { if (e.target.value) addParam(e.target.value) }}
         >
@@ -1007,7 +1094,7 @@ function ArgsKVList({
         <button
           type="button"
           onClick={() => addParam('__custom__')}
-          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
+          className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 mt-1"
         >
           <Plus size={12} /> 添加参数
         </button>
@@ -1109,7 +1196,7 @@ function OpenCLIConfig({
       )}
 
       {args.length === 0 && currentCommand && (
-        <p className="text-xs text-gray-400 italic">{t('channelConfig.noArgs')}</p>
+        <p className="text-xs text-zinc-400 italic">{t('channelConfig.noArgs')}</p>
       )}
 
       <Field label={t('channelConfig.outputFormat')}>
@@ -1305,7 +1392,7 @@ function SkillSourceConfig({
           placeholder="打开列表页并读取所有行"
         />
       </Field>
-      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
         <input
           type="checkbox"
           checked={Boolean(config.auto_confirm)}

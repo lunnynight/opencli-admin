@@ -39,6 +39,7 @@ async def _upsert_node(
     mode: str = "bridge",
     ip: str | None = None,
     node_type: str = "chrome",
+    runtimes: list[str] | None = None,
 ) -> "EdgeNode":  # type: ignore[name-defined]
     from backend.models.edge_node import EdgeNode
 
@@ -55,6 +56,8 @@ async def _upsert_node(
             node.label = label
         if ip:
             node.ip = ip
+        if runtimes is not None:
+            node.runtimes = runtimes
     else:
         node = EdgeNode(
             url=url,
@@ -65,6 +68,7 @@ async def _upsert_node(
             status="online",
             last_seen_at=now,
             ip=ip,
+            runtimes=runtimes,
         )
         db.add(node)
     await db.flush()
@@ -361,13 +365,14 @@ def _install_script_template(central_url: str, image_tag: str = "latest") -> str
     return f'''#!/usr/bin/env bash
 # OpenCLI Agent — one-line install
 # Usage: curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | bash
-# Or:    curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | AGENT_REGISTER=ws bash
+# Or:    curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | AGENT_API_TOKEN=... AGENT_REGISTER=ws bash
 
 set -euo pipefail
 CENTRAL_API_URL="${{CENTRAL_API_URL:-{central_url}}}"
 AGENT_REGISTER="${{AGENT_REGISTER:-ws}}"
 AGENT_PORT="${{AGENT_PORT:-19823}}"
 AGENT_LABEL="${{AGENT_LABEL:-$(hostname)}}"
+AGENT_API_TOKEN="${{AGENT_API_TOKEN:-}}"
 IMAGE_TAG="${{IMAGE_TAG:-{image_tag}}}"
 INSTALL_MODE="${{1:-docker}}"
 
@@ -399,6 +404,7 @@ install_docker() {{
     --add-host=host.docker.internal:host-gateway \\
     -e CENTRAL_API_URL="$DOCKER_CENTRAL_URL" -e AGENT_REGISTER="$AGENT_REGISTER" \\
     -e AGENT_PORT="$AGENT_PORT" -e AGENT_LABEL="$AGENT_LABEL" -e AGENT_MODE="cdp" \\
+    -e AGENT_API_TOKEN="$AGENT_API_TOKEN" \\
     $PROXY_ARGS -p "${{AGENT_PORT}}:${{AGENT_PORT}}" \\
     "xjh1994/opencli-admin-agent:${{IMAGE_TAG}}"
   info "Agent container started!"
@@ -416,6 +422,7 @@ install_python() {{
   fi
   CENTRAL_API_URL="$CENTRAL_API_URL" AGENT_REGISTER="$AGENT_REGISTER" \\
   AGENT_PORT="$AGENT_PORT" AGENT_LABEL="$AGENT_LABEL" AGENT_MODE="cdp" \\
+  AGENT_API_TOKEN="$AGENT_API_TOKEN" \\
   nohup "$PYTHON_BIN" -m backend.agent_server > /tmp/opencli-agent.log 2>&1 &
   info "Agent started (PID=$!). Logs: /tmp/opencli-agent.log"
 }}
@@ -456,6 +463,7 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
         mode = data.get("mode", "bridge")
         node_type = data.get("node_type", "chrome")
         label = data.get("label", "")
+        runtimes = data.get("runtimes")
 
         if not agent_url.startswith("http"):
             await ws.close(code=1008, reason="agent_url must be an http/https URL")
@@ -466,11 +474,17 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
         if node_type not in ("docker", "shell"):
             await ws.close(code=1008, reason="node_type must be 'docker' or 'shell'")
             return
+        if runtimes is not None and (
+            not isinstance(runtimes, list) or not all(isinstance(r, str) for r in runtimes)
+        ):
+            await ws.close(code=1008, reason="runtimes must be a list of strings")
+            return
 
         # ── 2. Upsert node + write event ──────────────────────────────────
         try:
             async with AsyncSessionLocal() as db:
-                node = await _upsert_node(db, agent_url, label, "ws", mode, node_type=node_type)
+                node = await _upsert_node(db, agent_url, label, "ws", mode, node_type=node_type,
+                                          runtimes=runtimes)
                 await _write_event(db, node.id, "online",
                                    event_meta={"mode": mode, "node_type": node_type, "protocol": "ws"})
                 # BrowserInstance compat
@@ -505,6 +519,10 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
             msg_type = msg.get("type")
             if msg_type == "result":
                 ws_agent_manager.resolve_response(msg.get("request_id", ""), msg)
+            elif msg_type == "agent_event":
+                await ws_agent_manager.resolve_agent_event(msg.get("request_id", ""), msg)
+            elif msg_type == "agent_result":
+                ws_agent_manager.resolve_agent_result(msg.get("request_id", ""), msg)
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
             else:
