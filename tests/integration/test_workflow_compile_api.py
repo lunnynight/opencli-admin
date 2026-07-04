@@ -74,6 +74,33 @@ def _valid_workflow_project() -> dict:
     }
 
 
+def _opencli_workflow_project() -> dict:
+    project = _valid_workflow_project()
+    project["nodes"][0] = {
+        "id": "source-bilibili",
+        "kind": "source",
+        "capability": "fetch",
+        "adapter": "opencli-bilibili",
+        "params": {"site": "bilibili", "command": "search"},
+        "sourceAnchor": {
+            "kind": "url",
+            "label": "Bilibili",
+            "href": "https://www.bilibili.com/",
+        },
+    }
+    project["edges"][0]["source"] = "source-bilibili"
+    project["adapters"] = [
+        {
+            "id": "opencli-bilibili",
+            "type": "source",
+            "provider": "opencli",
+            "mode": "live",
+            "config": {"channel": "opencli"},
+        }
+    ]
+    return project
+
+
 @pytest.mark.asyncio
 async def test_compile_valid_workflow_returns_plan_preview(client):
     response = await client.post(
@@ -95,6 +122,74 @@ async def test_compile_valid_workflow_returns_plan_preview(client):
     assert plan["runtime"]["dispatch"] == "none"
     assert plan["runtime"]["nodes"][0]["adapter"]["provider"] == "jin10"
     assert plan["runtime"]["plan_ir"]["draft"] is True
+
+
+@pytest.mark.asyncio
+async def test_compile_resolves_opencli_source_to_iii_runtime_binding(client):
+    response = await client.post(
+        "/api/v1/workflows/compile",
+        json={"project": _opencli_workflow_project()},
+    )
+
+    assert response.status_code == 200
+    runtime = response.json()["data"]["plan"]["runtime"]
+    source_node = runtime["nodes"][0]
+    assert source_node["id"] == "source-bilibili"
+    assert source_node["runtime"]["binding"] == {
+        "status": "bound",
+        "binding_id": "iii.collector-opencli.snapshot",
+        "runtime": "iii",
+        "worker": "collector-opencli",
+        "function_id": "odp.collect::opencli_snapshot",
+        "channel": "opencli",
+        "input": {"site": "bilibili", "command": "search"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_compile_marks_unsupported_nodes_with_structured_missing_runtime(client):
+    response = await client.post(
+        "/api/v1/workflows/compile",
+        json={"project": _opencli_workflow_project()},
+    )
+
+    assert response.status_code == 200
+    runtime_nodes = response.json()["data"]["plan"]["runtime"]["nodes"]
+    normalize_node = runtime_nodes[1]
+    assert normalize_node["id"] == "normalize-items"
+    assert normalize_node["runtime"]["missing_runtime"] == {
+        "status": "missing",
+        "code": "missing_runtime_binding",
+        "node_id": "normalize-items",
+        "kind": "agent",
+        "capability": "normalize",
+        "message": "No runtime binding registered for workflow.agent.normalize",
+    }
+
+
+@pytest.mark.asyncio
+async def test_compile_marks_opencli_source_without_site_command_as_missing_runtime_parameter(
+    client,
+):
+    project = _opencli_workflow_project()
+    project["nodes"][0]["params"] = {"site": "bilibili"}
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    source_node = response.json()["data"]["plan"]["runtime"]["nodes"][0]
+    assert "binding" not in source_node["runtime"]
+    assert source_node["runtime"]["missing_runtime"] == {
+        "status": "missing",
+        "code": "missing_runtime_parameter",
+        "node_id": "source-bilibili",
+        "kind": "source",
+        "capability": "fetch",
+        "adapter_id": "opencli-bilibili",
+        "provider": "opencli",
+        "required_params": ["command"],
+        "message": "OpenCLI runtime binding requires node.params.site and node.params.command",
+    }
 
 
 @pytest.mark.asyncio
@@ -227,6 +322,66 @@ async def test_compile_expands_package_internals_and_binds_public_params(client)
     assert internal_fetch["depends_on"] == ["multi-source-hda"]
     assert runtime["edges"][0]["id"] == "multi-source-hda::internal-fetch-normalize"
     assert [node["id"] for node in runtime["plan_ir"]["nodes"]] == runtime["node_ids"]
+
+
+@pytest.mark.asyncio
+async def test_compile_resolves_opencli_hda_internal_source_binding(client):
+    project = _opencli_workflow_project()
+    project["nodes"] = [
+        {
+            "id": "multi-source-hda",
+            "kind": "agent",
+            "capability": "normalize",
+            "topicCollapse": {
+                "groupId": "opencli-package",
+                "nodeCount": 2,
+                "mode": "draft",
+                "packageInternal": True,
+            },
+            "internals": {
+                "nodes": [
+                    {
+                        "id": "source-bilibili",
+                        "kind": "source",
+                        "capability": "fetch",
+                        "adapter": "opencli-bilibili",
+                        "params": {"site": "bilibili", "command": "search"},
+                    },
+                    {
+                        "id": "internal-normalize",
+                        "kind": "agent",
+                        "capability": "normalize",
+                        "params": {"language": "zh-CN"},
+                    },
+                ],
+                "edges": [
+                    {
+                        "id": "source-normalize",
+                        "source": "source-bilibili",
+                        "target": "internal-normalize",
+                    }
+                ],
+            },
+        }
+    ]
+    project["edges"] = []
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    runtime_nodes = response.json()["data"]["plan"]["runtime"]["nodes"]
+    package_node = runtime_nodes[0]
+    internal_source = runtime_nodes[1]
+    assert package_node["id"] == "multi-source-hda"
+    assert "binding" not in package_node["runtime"]
+    assert package_node["runtime"]["missing_runtime"]["code"] == "missing_runtime_binding"
+    assert internal_source["id"] == "multi-source-hda::source-bilibili"
+    assert internal_source["runtime"]["package_parent_id"] == "multi-source-hda"
+    assert internal_source["runtime"]["binding"]["function_id"] == "odp.collect::opencli_snapshot"
+    assert internal_source["runtime"]["binding"]["input"] == {
+        "site": "bilibili",
+        "command": "search",
+    }
 
 
 @pytest.mark.asyncio

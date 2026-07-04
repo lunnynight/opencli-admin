@@ -21,6 +21,7 @@ from backend.workflow.node_registry import (
     forbidden_node_definition_keys,
     resolve_node_origin,
 )
+from backend.workflow.runtime_registry import resolve_runtime_metadata
 
 INTERNAL_ID_SEPARATOR = "::"
 
@@ -555,6 +556,7 @@ def _compile_node(
     }
     if runtime:
         runtime_metadata.update(runtime)
+    runtime_metadata.update(resolve_runtime_metadata(node, adapter, node_id=node_id))
 
     return CompiledWorkflowNode(
         id=node_id,

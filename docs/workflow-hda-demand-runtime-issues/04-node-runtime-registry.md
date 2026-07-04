@@ -11,11 +11,11 @@ For this slice, the registry must prove the OpenCLI path: OpenCLI collection nod
 
 ## Acceptance criteria
 
-- [ ] Runtime registry resolves node metadata to a runtime binding object.
-- [ ] OpenCLI source/HDA nodes resolve to an III collector-opencli binding.
-- [ ] Unsupported nodes fail with structured missing-runtime information.
-- [ ] The registry does not replace OpenCLIChannel, III collector-opencli, or ODP mapper.
-- [ ] Tests cover OpenCLI resolution, unsupported node rejection, and registry use from compiled plan output.
+- [x] Runtime registry resolves node metadata to a runtime binding object.
+- [x] OpenCLI source/HDA nodes resolve to an III collector-opencli binding.
+- [x] Unsupported nodes fail with structured missing-runtime information.
+- [x] The registry does not replace OpenCLIChannel, III collector-opencli, or ODP mapper.
+- [x] Tests cover OpenCLI resolution, unsupported node rejection, and registry use from compiled plan output.
 
 ## Blocked by
 
