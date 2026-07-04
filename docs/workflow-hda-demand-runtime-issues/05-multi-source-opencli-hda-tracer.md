@@ -11,11 +11,11 @@ The tracer should support a narrow, configurable set of source entries and carry
 
 ## Acceptance criteria
 
-- [ ] Multi Source OpenCLI HDA compiles into multiple OpenCLI task bindings.
-- [ ] Each OpenCLI task dispatches through existing III collector-opencli semantics.
-- [ ] III payloads include workflow run id, package node id, internal node id where applicable, source group, site, command, args, and trace id.
-- [ ] ODP ingest continues to use existing Record v2/OpenCLI mapping.
-- [ ] Tests cover fanout compilation, III payload shape, OpenCLI/ODP reuse, and no direct rewrite of OpenCLI adapter behavior.
+- [x] Multi Source OpenCLI HDA compiles into multiple OpenCLI task bindings.
+- [x] Each OpenCLI task dispatches through existing III collector-opencli semantics.
+- [x] III payloads include workflow run id, package node id, internal node id where applicable, source group, site, command, args, and trace id.
+- [x] ODP ingest continues to use existing Record v2/OpenCLI mapping.
+- [x] Tests cover fanout compilation, III payload shape, OpenCLI/ODP reuse, and no direct rewrite of OpenCLI adapter behavior.
 
 ## Blocked by
 

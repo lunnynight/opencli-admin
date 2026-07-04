@@ -279,6 +279,36 @@ class WorkflowCompileResponse(BaseModel):
     plan: Optional[WorkflowCompiledPlanPreview] = None
 
 
+class WorkflowOpenCLIHDATraceRequest(BaseModel):
+    project: WorkflowProject
+    packageNodeId: Optional[str] = None
+    runId: Optional[str] = None
+    traceId: Optional[str] = None
+
+
+class WorkflowOpenCLIHDATraceDispatch(BaseModel):
+    taskId: str
+    nodeId: str
+    packageNodeId: Optional[str] = None
+    internalNodeId: Optional[str] = None
+    sourceGroup: str
+    site: str
+    command: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    iii: dict[str, Any]
+
+
+class WorkflowOpenCLIHDATraceResponse(BaseModel):
+    valid: bool
+    errors: list[WorkflowCompileError] = Field(default_factory=list)
+    workflowId: str
+    runId: str
+    traceId: str
+    packageNodeId: Optional[str] = None
+    dispatch: dict[str, Any] = Field(default_factory=dict)
+    dispatches: list[WorkflowOpenCLIHDATraceDispatch] = Field(default_factory=list)
+
+
 class WorkflowMissingCapability(BaseModel):
     capability: str
     reason: Optional[str] = None
