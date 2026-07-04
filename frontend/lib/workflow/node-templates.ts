@@ -91,6 +91,17 @@ const NODE_TEMPLATES: NodeTemplate[] = [
     ],
   },
   {
+    id: "intelligence.source.opencli-slot",
+    title: "OpenCLI Source Slot",
+    summary: "Fetch one selected source through the OpenCLI worker channel.",
+    dataShape: "trigger -> items[]",
+    fields: [
+      { id: "site", source: "params", type: "text", label: "Site", placeholder: "bilibili" },
+      { id: "command", source: "params", type: "text", label: "Command", placeholder: "search" },
+      { id: "sourceGroup", source: "params", type: "text", label: "Source group", placeholder: "video" },
+    ],
+  },
+  {
     id: "intelligence.agent.summary",
     title: "LLM Summary",
     summary: "Produce a concise operator brief from normalized items.",
@@ -197,6 +208,7 @@ export function getNodeTemplate(node: WorkflowProjectNode | undefined): NodeTemp
   return NODE_TEMPLATES.find((template) => {
     if (template.id === "intelligence.schedule.cron") return node.kind === "schedule" && node.capability === "trigger"
     if (template.id === "intelligence.source.jin10") return node.kind === "source" && node.adapter === "jin10-kuaixun"
+    if (template.id === "intelligence.source.opencli-slot") return node.kind === "source" && Boolean(node.adapter?.startsWith("opencli-"))
     if (template.id === "intelligence.agent.summary") return node.kind === "agent" && node.capability === "summarize"
     if (template.id === "intelligence.agent.score") return node.kind === "agent" && node.capability === "score"
     if (template.id === "intelligence.router.importance") return node.kind === "router" && node.capability === "route"

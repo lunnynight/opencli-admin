@@ -47,20 +47,119 @@ const SIMULATED_WEBHOOK_ADAPTER: AdapterBinding = {
   config: { target: "operator-preview" },
 }
 
-const OPENCLI_BILIBILI_ADAPTER: AdapterBinding = {
-  id: "opencli-bilibili",
-  type: "source",
-  provider: "opencli",
-  mode: "live",
-  config: { channel: "opencli" },
+export type OpenCLISourceSlot = {
+  id: string
+  label: string
+  sourceGroup: string
+  site: string
+  command: string
+  args: Record<string, unknown>
+  adapterId?: string
+  format?: string
+  mode?: string
+  profileId?: string
+  profileBinding?: string
+  sessionPolicy?: string
+  workerTags?: string[]
+  resourceTags?: string[]
 }
 
-const OPENCLI_XIAOHONGSHU_ADAPTER: AdapterBinding = {
-  id: "opencli-xiaohongshu",
-  type: "source",
-  provider: "opencli",
-  mode: "live",
-  config: { channel: "opencli" },
+export const DEFAULT_OPENCLI_HDA_SOURCES: OpenCLISourceSlot[] = [
+  {
+    id: "bilibili",
+    label: "Bilibili Search",
+    sourceGroup: "video",
+    site: "bilibili",
+    command: "search",
+    args: { keyword: "ai" },
+  },
+  {
+    id: "xiaohongshu",
+    label: "Xiaohongshu Search",
+    sourceGroup: "social",
+    site: "xiaohongshu",
+    command: "search",
+    args: { keyword: "ai" },
+  },
+]
+
+export function opencliAdaptersForSourceSlots(sources: OpenCLISourceSlot[]): AdapterBinding[] {
+  const adapters = sources.map((source) => ({
+    id: source.adapterId ?? opencliAdapterId(source.site),
+    type: "source" as const,
+    provider: "opencli",
+    mode: "live" as const,
+    config: { channel: "opencli" },
+  }))
+  return Array.from(new Map(adapters.map((adapter) => [adapter.id, adapter])).values())
+}
+
+export function buildOpenCLIMultiSourceHDAInternals(sources: OpenCLISourceSlot[]): WorkflowProjectNode["internals"] {
+  const sourceNodes = sources.map((source, index) => ({
+    id: opencliSourceNodeId(source),
+    kind: "source" as const,
+    capability: "fetch" as const,
+    adapter: source.adapterId ?? opencliAdapterId(source.site),
+    params: {
+      site: source.site,
+      command: source.command,
+      args: source.args,
+      sourceGroup: source.sourceGroup,
+      ...(source.format ? { format: source.format } : {}),
+      ...(source.mode ? { mode: source.mode } : {}),
+      ...(source.profileId ? { profileId: source.profileId } : {}),
+      ...(source.profileBinding ? { profileBinding: source.profileBinding } : {}),
+      ...(source.sessionPolicy ? { sessionPolicy: source.sessionPolicy } : {}),
+      ...(source.workerTags ? { workerTags: source.workerTags } : {}),
+      ...(source.resourceTags ? { resourceTags: source.resourceTags } : {}),
+    },
+    ui: {
+      label: source.label,
+      description: `${source.site} ${source.command}`,
+      icon: "Globe",
+      color: "var(--chart-4)",
+      catalogId: "intelligence.source.opencli-slot",
+      position: { x: 0, y: index * 150 },
+    },
+  }))
+  const midpointY = Math.max(0, ((sourceNodes.length - 1) * 150) / 2)
+  return {
+    locked: true,
+    nodes: [
+      ...sourceNodes,
+      {
+        id: "internal-normalize",
+        kind: "agent",
+        capability: "normalize",
+        params: { language: "zh-CN", preserveSourceRefs: true },
+        ui: {
+          label: "Normalize Items",
+          description: "Normalize OpenCLI source slot results",
+          icon: "ArrowRightLeft",
+          color: "var(--chart-2)",
+          catalogId: "intelligence.processing.normalize",
+          position: { x: 430, y: midpointY },
+        },
+      },
+    ],
+    edges: sourceNodes.map((sourceNode) => ({
+      id: `${sourceNode.id}-normalize`,
+      source: sourceNode.id,
+      target: "internal-normalize",
+    })),
+  }
+}
+
+function opencliAdapterId(site: string): string {
+  return `opencli-${safeIdPart(site)}`
+}
+
+function opencliSourceNodeId(source: OpenCLISourceSlot): string {
+  return `source-${safeIdPart(source.id || source.sourceGroup || source.site)}`
+}
+
+function safeIdPart(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "source"
 }
 
 export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
@@ -225,71 +324,54 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
     keywords: ["package", "collection", "source", "rss", "http", "采集", "封装"],
   },
   {
+    id: "intelligence.source.opencli-slot",
+    idPrefix: "source-opencli",
+    label: "OpenCLI Source Slot",
+    description: "一个可由 HDA/AI 填参的 OpenCLI source 槽位，运行时交给 OpenCLI channel/worker 执行",
+    category: "source",
+    profile: "intelligence",
+    kind: "source",
+    capability: "fetch",
+    icon: "Globe",
+    color: "var(--chart-4)",
+    params: { site: "bilibili", command: "search", sourceGroup: "video", args: { keyword: "ai" } },
+    keywords: ["opencli", "source", "slot", "bilibili", "xiaohongshu", "adapter", "来源槽"],
+  },
+  {
     id: "package.opencli.multi-source-hda",
     idPrefix: "pkg-opencli-hda",
     label: "OpenCLI Multi-source HDA",
-    description: "封装 Bilibili/小红书 OpenCLI source fanout 和内部标准化",
+    description: "封装可扩展 OpenCLI source slot 并行 fanout 和内部标准化",
     category: "package",
     profile: "intelligence",
     kind: "agent",
     capability: "normalize",
     icon: "Network",
     color: "var(--chart-4)",
-    requiredAdapters: [OPENCLI_BILIBILI_ADAPTER, OPENCLI_XIAOHONGSHU_ADAPTER],
-    params: { template: "opencli-multi-source", runtime: "iii", lockedInternals: true },
+    requiredAdapters: opencliAdaptersForSourceSlots(DEFAULT_OPENCLI_HDA_SOURCES),
+    params: {
+      template: "opencli-multi-source",
+      runtime: "iii",
+      lockedInternals: true,
+      execution: {
+        fanout: "parallel",
+        maxConcurrency: 4,
+        workerPool: "docker-browser-workers",
+      },
+      sources: DEFAULT_OPENCLI_HDA_SOURCES,
+      aiCallable: {
+        schema: "opencli.multi_source_hda.v1",
+        editable: ["sources", "sources[].args", "execution.maxConcurrency", "execution.workerPool"],
+        sourceMode: "parallel",
+      },
+    },
     topicCollapse: {
       groupId: "opencli-package",
-      nodeCount: 3,
+      nodeCount: DEFAULT_OPENCLI_HDA_SOURCES.length + 1,
       mode: "locked",
       packageInternal: true,
     },
-    internals: {
-      locked: true,
-      nodes: [
-        {
-          id: "source-bilibili",
-          kind: "source",
-          capability: "fetch",
-          adapter: "opencli-bilibili",
-          params: {
-            site: "bilibili",
-            command: "search",
-            args: { keyword: "ai" },
-            sourceGroup: "video",
-          },
-        },
-        {
-          id: "source-xiaohongshu",
-          kind: "source",
-          capability: "fetch",
-          adapter: "opencli-xiaohongshu",
-          params: {
-            site: "xiaohongshu",
-            command: "search",
-            args: { keyword: "ai" },
-            sourceGroup: "social",
-          },
-        },
-        {
-          id: "internal-normalize",
-          kind: "agent",
-          capability: "normalize",
-          params: { language: "zh-CN" },
-        },
-      ],
-      edges: [
-        {
-          id: "bilibili-normalize",
-          source: "source-bilibili",
-          target: "internal-normalize",
-        },
-        {
-          id: "xiaohongshu-normalize",
-          source: "source-xiaohongshu",
-          target: "internal-normalize",
-        },
-      ],
-    },
+    internals: buildOpenCLIMultiSourceHDAInternals(DEFAULT_OPENCLI_HDA_SOURCES),
     keywords: ["package", "hda", "opencli", "bilibili", "xiaohongshu", "multi-source", "采集", "封装"],
   },
   {
@@ -448,7 +530,7 @@ export function createWorkflowNodeFromCatalog(
     kind: item.kind,
     capability: item.capability,
     adapter: item.adapter,
-    params: { ...item.params },
+    params: cloneCatalogValue(item.params) ?? {},
     topicCollapse: cloneCatalogValue(item.topicCollapse),
     parameterInterface,
     internals: cloneCatalogValue(item.internals),

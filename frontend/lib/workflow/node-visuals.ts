@@ -13,6 +13,7 @@ export type NodeVisualSignature = {
 const VISUALS: Record<string, NodeVisualSignature> = {
   "intelligence.schedule.cron": sig("CLK", "T", "var(--chart-1)", "pulse"),
   "intelligence.source.jin10": sig("J10", "S", "var(--chart-4)", "dots"),
+  "intelligence.source.opencli-slot": sig("OCS", "S", "var(--chart-4)", "dots"),
   "intelligence.processing.normalize": sig("NRM", "N", "var(--chart-2)", "split"),
   "intelligence.processing.dedupe": sig("DED", "D", "var(--chart-2)", "gate"),
   "intelligence.agent.summary": sig("SUM", "A", "var(--chart-2)", "solid"),

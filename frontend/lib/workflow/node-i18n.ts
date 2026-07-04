@@ -16,6 +16,10 @@ const NODE_TEXT: Record<string, Record<WorkflowLanguage, LocalizedNodeText>> = {
     "zh-CN": { label: "金十快讯源", description: "读取金十快讯 fixture/live feed" },
     "en-US": { label: "JIN10 Source", description: "Read JIN10 flash news from fixture or live feed" },
   },
+  "intelligence.source.opencli-slot": {
+    "zh-CN": { label: "OpenCLI 来源槽", description: "由 HDA/AI 填参并交给 OpenCLI worker 执行的来源槽" },
+    "en-US": { label: "OpenCLI Source Slot", description: "Source slot filled by HDA/AI and executed by OpenCLI workers" },
+  },
   "intelligence.processing.normalize": {
     "zh-CN": { label: "标准化条目", description: "统一字段、语言和时间格式" },
     "en-US": { label: "Normalize Items", description: "Normalize fields, language, and timestamps" },
@@ -53,8 +57,8 @@ const NODE_TEXT: Record<string, Record<WorkflowLanguage, LocalizedNodeText>> = {
     "en-US": { label: "Intelligence Pipeline", description: "Package source, normalize, summary, scoring, review, and delivery" },
   },
   "package.opencli.multi-source-hda": {
-    "zh-CN": { label: "OpenCLI 多源 HDA", description: "封装 Bilibili/小红书 OpenCLI 采集 fanout 和内部标准化" },
-    "en-US": { label: "OpenCLI Multi-source HDA", description: "Package Bilibili/Xiaohongshu OpenCLI source fanout and internal normalization" },
+    "zh-CN": { label: "OpenCLI 多源 HDA", description: "封装可扩展 OpenCLI 来源槽并行 fanout 和内部标准化" },
+    "en-US": { label: "OpenCLI Multi-source HDA", description: "Package extensible OpenCLI source-slot fanout and internal normalization" },
   },
   "package.ops.event": {
     "zh-CN": { label: "Ops 任务事件", description: "封装触发、队列、重试、日志和执行证据的任务事件" },
@@ -493,12 +497,13 @@ const NODE_TEXT: Record<string, Record<WorkflowLanguage, LocalizedNodeText>> = {
 export function getNodeDisplayId(data: WorkflowNodeData): string | undefined {
   if (data.externalWorkflow?.source) return undefined
   if (typeof data.primitiveId === "string") return data.primitiveId
-  const canonical = data.canonical as { catalogId?: string; kind?: string; capability?: string } | undefined
+  const canonical = data.canonical as { catalogId?: string; kind?: string; capability?: string; adapter?: string } | undefined
   if (canonical?.catalogId) return canonical.catalogId
 
   const kind = canonical?.kind
   const capability = canonical?.capability
   if (kind === "schedule") return "intelligence.schedule.cron"
+  if (kind === "source" && typeof canonical?.adapter === "string" && canonical.adapter.startsWith("opencli-")) return "intelligence.source.opencli-slot"
   if (kind === "source") return "intelligence.source.jin10"
   if (kind === "router") return "intelligence.router.importance"
   if (kind === "inbox") return "intelligence.output.inbox"

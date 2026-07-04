@@ -88,6 +88,19 @@ const NODE_INTERNALS: Record<string, NodeInternals> = {
       step("output", "Output schema", "validate", "Ensures downstream receives items[].", "items[] contract", "simulated"),
     ],
   },
+  "intelligence.source.opencli-slot": {
+    title: "OpenCLI Source Slot Internals",
+    summary: "A source slot keeps OpenCLI command params structured while delegating execution to the worker pool.",
+    steps: [
+      step("site", "Site binding", "fetch", "Selects the OpenCLI adapter site.", "params.site", "ready", [
+        exposedParam("site", "Site", "source", "Source", "text", "bilibili", { order: 1 }),
+        exposedParam("command", "Command", "source", "Source", "text", "search", { order: 2 }),
+      ]),
+      step("args", "Command args", "parse", "Carries AI/user-filled command args without flattening them into text.", "params.args", "ready"),
+      step("dispatch", "Worker dispatch", "queue", "Queues the source request for the OpenCLI/Docker browser worker pool.", "workerPool", "ready"),
+      step("output", "Output schema", "validate", "Returns items[] with sourceGroup and source references.", "items[] contract", "simulated"),
+    ],
+  },
   "intelligence.agent.summary": {
     title: "Summary Internals",
     summary: "Builds a brief while preserving source evidence.",
@@ -281,12 +294,12 @@ const NODE_INTERNALS: Record<string, NodeInternals> = {
   },
   "package.opencli.multi-source-hda": {
     title: "OpenCLI Multi-source HDA",
-    summary: "A locked HDA package that fans out to existing OpenCLI source adapters and folds runtime dispatch back onto the package node.",
+    summary: "A locked HDA package that materializes node.params.sources into parallel OpenCLI source slots.",
     steps: [
       step("trigger", "Schedule input", "trigger", "Receives the workflow tick from the outer canvas.", "trigger edge", "ready"),
-      step("source-bilibili", "Bilibili OpenCLI source", "fetch", "Uses the existing OpenCLI channel through the III collector worker.", "site=bilibili command=search", "ready"),
-      step("source-xiaohongshu", "Xiaohongshu OpenCLI source", "fetch", "Uses the existing OpenCLI channel through the III collector worker.", "site=xiaohongshu command=search", "ready"),
-      step("normalize", "Internal normalize", "resolve", "Normalizes internal source results before returning items[] to the outer canvas.", "items[] contract", "ready"),
+      step("source-slots", "Parallel source slots", "fetch", "Expands params.sources into source-* slots so user/AI can choose sources without editing internals.", "node.params.sources[]", "ready"),
+      step("fanout", "Docker worker fanout", "queue", "Dispatches source slots in parallel against the OpenCLI worker pool.", "execution.fanout=parallel", "ready"),
+      step("normalize", "Internal normalize", "resolve", "Normalizes all source results before returning items[] to the outer canvas.", "items[] contract", "ready"),
       step("trace", "Runtime trace fold", "evidence", "Backend trace dispatches are folded onto this package node in the run panel.", "opencli-hda trace", "ready"),
     ],
   },
@@ -440,6 +453,7 @@ export function getNodeInternals(node: WorkflowProjectNode | undefined): NodeInt
 
   if (node.kind === "schedule" && node.capability === "trigger") return NODE_INTERNALS["intelligence.schedule.cron"]
   if (node.kind === "source" && node.adapter === "jin10-kuaixun") return NODE_INTERNALS["intelligence.source.jin10"]
+  if (node.kind === "source" && node.adapter?.startsWith("opencli-")) return NODE_INTERNALS["intelligence.source.opencli-slot"]
   if (node.kind === "agent" && node.capability === "normalize") return NODE_INTERNALS["intelligence.processing.normalize"]
   if (node.kind === "agent" && node.capability === "dedupe") return NODE_INTERNALS["intelligence.processing.dedupe"]
   if (node.kind === "agent" && node.capability === "summarize") return NODE_INTERNALS["intelligence.agent.summary"]

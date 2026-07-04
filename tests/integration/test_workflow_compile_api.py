@@ -385,6 +385,89 @@ async def test_compile_resolves_opencli_hda_internal_source_binding(client):
 
 
 @pytest.mark.asyncio
+async def test_compile_materializes_opencli_hda_sources_from_ai_params_in_parallel(client):
+    project = _valid_workflow_project()
+    project["nodes"] = [
+        {
+            "id": "multi-source-opencli",
+            "kind": "agent",
+            "capability": "normalize",
+            "params": {
+                "template": "opencli-multi-source",
+                "runtime": "iii",
+                "lockedInternals": True,
+                "execution": {
+                    "fanout": "serial",
+                    "maxConcurrency": 4,
+                    "workerPool": "docker-browser-workers",
+                },
+                "sources": [
+                    {
+                        "id": "bili",
+                        "sourceGroup": "video",
+                        "site": "bilibili",
+                        "command": "search",
+                        "args": {"keyword": "ai"},
+                    },
+                    {
+                        "id": "xhs",
+                        "sourceGroup": "social",
+                        "site": "xiaohongshu",
+                        "command": "search",
+                        "args": {"keyword": "ai"},
+                    },
+                ],
+            },
+            "topicCollapse": {
+                "groupId": "opencli-package",
+                "nodeCount": 0,
+                "mode": "locked",
+                "packageInternal": True,
+            },
+            "ui": {"catalogId": "package.opencli.multi-source-hda"},
+        }
+    ]
+    project["edges"] = []
+    project["adapters"] = []
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is True
+    runtime = data["plan"]["runtime"]
+    assert runtime["node_ids"] == [
+        "multi-source-opencli",
+        "multi-source-opencli::source-bili",
+        "multi-source-opencli::source-xhs",
+        "multi-source-opencli::internal-normalize",
+    ]
+    package_node = runtime["nodes"][0]
+    source_bili = runtime["nodes"][1]
+    source_xhs = runtime["nodes"][2]
+    normalize = runtime["nodes"][3]
+    assert package_node["params"]["execution"]["fanout"] == "parallel"
+    assert package_node["params"]["execution"]["maxConcurrency"] == 4
+    assert source_bili["depends_on"] == ["multi-source-opencli"]
+    assert source_xhs["depends_on"] == ["multi-source-opencli"]
+    assert normalize["depends_on"] == [
+        "multi-source-opencli::source-bili",
+        "multi-source-opencli::source-xhs",
+    ]
+    assert source_bili["runtime"]["origin"]["catalog_id"] == "intelligence.source.opencli-slot"
+    assert source_bili["runtime"]["binding"]["function_id"] == "odp.collect::opencli_snapshot"
+    assert source_xhs["runtime"]["binding"]["input"] == {
+        "site": "xiaohongshu",
+        "command": "search",
+    }
+    assert package_node["package"]["internal_node_ids"] == [
+        "multi-source-opencli::source-bili",
+        "multi-source-opencli::source-xhs",
+        "multi-source-opencli::internal-normalize",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_compile_marks_locked_package_internals_non_editable(client):
     project = _valid_workflow_project()
     project["nodes"] = [

@@ -179,6 +179,61 @@ async def test_opencli_hda_trace_reuses_collector_opencli_instead_of_odp_direct(
 
 
 @pytest.mark.asyncio
+async def test_opencli_hda_trace_accepts_ai_source_slots_without_static_internals(client):
+    project = _multi_source_opencli_hda_project()
+    package = project["nodes"][0]
+    package.pop("internals")
+    package["params"] = {
+        "template": "opencli-multi-source",
+        "runtime": "iii",
+        "lockedInternals": True,
+        "execution": {
+            "fanout": "parallel",
+            "maxConcurrency": 8,
+            "workerPool": "docker-browser-workers",
+        },
+        "sources": [
+            {
+                "id": "bili",
+                "sourceGroup": "video",
+                "site": "bilibili",
+                "command": "search",
+                "args": {"keyword": "ai"},
+            },
+            {
+                "id": "xhs",
+                "sourceGroup": "social",
+                "site": "xiaohongshu",
+                "command": "search",
+                "args": {"keyword": "ai"},
+            },
+        ],
+    }
+    package["ui"] = {"catalogId": "package.opencli.multi-source-hda"}
+    project["adapters"] = []
+
+    response = await client.post(
+        "/api/v1/workflows/opencli-hda/trace",
+        json={
+            "project": project,
+            "packageNodeId": "multi-source-opencli",
+            "runId": "run-001",
+            "traceId": "trace-001",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is True
+    assert [dispatch["nodeId"] for dispatch in data["dispatches"]] == [
+        "multi-source-opencli::source-bili",
+        "multi-source-opencli::source-xhs",
+    ]
+    assert data["dispatches"][0]["iii"]["payload"]["source_group"] == "video"
+    assert data["dispatches"][1]["site"] == "xiaohongshu"
+
+
+@pytest.mark.asyncio
 async def test_opencli_hda_trace_reports_package_without_opencli_source_bindings(client):
     project = _multi_source_opencli_hda_project()
     project["nodes"][0]["internals"]["nodes"] = [

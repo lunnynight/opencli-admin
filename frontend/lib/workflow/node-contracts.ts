@@ -2,7 +2,7 @@ import type { AdapterBinding, WorkflowProject, WorkflowProjectEdge, WorkflowProj
 
 export type PortDirection = "input" | "output"
 export type PortDataType = "trigger" | "items[]" | "scoredItems[]" | "summary[]" | "branch" | "delivery" | "storedItems[]" | "unknown"
-export type ParamDataType = "string" | "number" | "boolean" | "string[]"
+export type ParamDataType = "string" | "number" | "boolean" | "string[]" | "object" | "object[]"
 export type ContractStatus = "pass" | "warn" | "fail"
 
 export type PortContract = {
@@ -106,6 +106,28 @@ const CONTRACTS: Record<string, NodeContract> = {
       param("channel", "params", "string", false, "kuaixun", { enum: ["kuaixun"], description: "JIN10 feed channel." }),
     ],
     ["source adapter must be registered", "items[] output must include stable item ids"],
+  ),
+  "intelligence.source.opencli-slot": contract(
+    "intelligence.source.opencli-slot",
+    "OpenCLI Source Slot",
+    "trigger -> items[]",
+    [port("in", "input", "trigger", false, "Consumes a package fanout trigger.")],
+    [port("out", "output", "items[]", true, "Emits items fetched through the OpenCLI channel.")],
+    [
+      param("site", "params", "string", true, "bilibili", {
+        description: "Logical OpenCLI site key such as bilibili or xiaohongshu.",
+      }),
+      param("command", "params", "string", true, "search", {
+        description: "OpenCLI command exposed by the adapter package.",
+      }),
+      param("sourceGroup", "params", "string", true, "video", {
+        description: "Downstream grouping key used in traces and source selection.",
+      }),
+      param("args", "params", "object", false, { keyword: "ai" }, {
+        description: "Structured command args filled by user or AI.",
+      }),
+    ],
+    ["source slot params must stay structured", "slot execution is delegated to OpenCLI/Docker workers"],
   ),
   "intelligence.processing.normalize": contract(
     "intelligence.processing.normalize",
@@ -242,8 +264,18 @@ const CONTRACTS: Record<string, NodeContract> = {
       param("lockedInternals", "params", "boolean", true, true, {
         description: "Internal source graph is package-owned and not assembled by the web AI.",
       }),
+      param("sources", "params", "object[]", true, [], {
+        description: "Structured OpenCLI source slots. AI may select, add, remove, or fill source args here.",
+      }),
+      param("execution", "params", "object", true, { fanout: "parallel" }, {
+        description: "Package execution policy. Source slots fan out in parallel by default.",
+      }),
     ],
-    ["package internals must include OpenCLI source nodes", "OpenCLI dispatch must resolve to the III collector worker"],
+    [
+      "package internals must include OpenCLI source slots generated from params.sources",
+      "source slots must fan out in parallel before internal normalize",
+      "OpenCLI dispatch must resolve to III/docker browser workers",
+    ],
   ),
 }
 
@@ -254,6 +286,7 @@ export function getNodeContract(node: WorkflowProjectNode | undefined): NodeCont
 
   if (node.kind === "schedule" && node.capability === "trigger") return CONTRACTS["intelligence.schedule.cron"]
   if (node.kind === "source" && node.adapter === "jin10-kuaixun") return CONTRACTS["intelligence.source.jin10"]
+  if (node.kind === "source" && node.adapter?.startsWith("opencli-")) return CONTRACTS["intelligence.source.opencli-slot"]
   if (node.kind === "agent" && node.capability === "normalize") return CONTRACTS["intelligence.processing.normalize"]
   if (node.kind === "agent" && node.capability === "dedupe") return CONTRACTS["intelligence.processing.dedupe"]
   if (node.kind === "agent" && node.capability === "summarize") return CONTRACTS["intelligence.agent.summary"]
@@ -431,6 +464,8 @@ function readParamValue(node: WorkflowProjectNode, adapter: AdapterBinding | und
 
 function matchesType(value: unknown, type: ParamDataType): boolean {
   if (type === "string[]") return Array.isArray(value) && value.every((item) => typeof item === "string")
+  if (type === "object") return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+  if (type === "object[]") return Array.isArray(value) && value.every((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item))
   return typeof value === type
 }
 

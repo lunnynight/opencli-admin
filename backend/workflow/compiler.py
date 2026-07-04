@@ -21,6 +21,7 @@ from backend.workflow.node_registry import (
     forbidden_node_definition_keys,
     resolve_node_origin,
 )
+from backend.workflow.hda_templates import materialize_hda_templates
 from backend.workflow.runtime_registry import resolve_runtime_metadata
 
 INTERNAL_ID_SEPARATOR = "::"
@@ -29,6 +30,7 @@ INTERNAL_ID_SEPARATOR = "::"
 def compile_workflow_project(project: WorkflowProject) -> WorkflowCompileResponse:
     """Validate and compile a WorkflowProject without dispatching execution."""
 
+    project = materialize_hda_templates(project)
     errors = _validate_project(project)
     if errors:
         return WorkflowCompileResponse(valid=False, errors=errors, plan=None)

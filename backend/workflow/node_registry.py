@@ -19,6 +19,7 @@ NodeOriginKind = Literal["node_library", "primitive_library", "n8n", "legacy"]
 WORKFLOW_CATALOG_IDS = {
     "intelligence.schedule.cron",
     "intelligence.source.jin10",
+    "intelligence.source.opencli-slot",
     "intelligence.processing.normalize",
     "intelligence.processing.dedupe",
     "intelligence.agent.summary",
@@ -28,6 +29,7 @@ WORKFLOW_CATALOG_IDS = {
     "intelligence.output.inbox",
     "intelligence.output.webhook",
     "package.collection.pipeline",
+    "package.opencli.multi-source-hda",
     "package.dispatch.fanout",
     "package.intelligence.pipeline",
     "package.ops.event",

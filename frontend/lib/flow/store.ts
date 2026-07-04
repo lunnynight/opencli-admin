@@ -32,7 +32,7 @@ import { animateNodes } from "./animate"
 import { NODE_PALETTE } from "./palette"
 import { COLLECTION_WORKFLOW_PROJECT } from "../workflow/collection-pipeline"
 import type { WorkflowProject } from "../workflow/schema"
-import { parseWorkflowProject, type AdapterBinding, type WorkflowProfile } from "../workflow/schema"
+import { parseWorkflowProject, type AdapterBinding, type WorkflowProfile, type WorkflowProjectNode } from "../workflow/schema"
 import { workflowNodeToReactFlow, workflowProjectToReactFlow } from "../workflow/to-react-flow"
 import { addCatalogNodeToWorkflowProject, type WorkflowNodeCatalogItem } from "../workflow/node-catalog"
 import { getNodeInternals, type NodeInternalStep } from "../workflow/node-internals"
@@ -176,6 +176,166 @@ function fieldsForInternalStep(stepItem: NodeInternalStep, parentNodeId?: string
       }
     }),
   ]
+}
+
+type InternalWorkflowEdge = {
+  id: string
+  source: string
+  target: string
+  sourcePort?: string
+  targetPort?: string
+  label?: string
+  ui?: Record<string, unknown>
+}
+
+function materializeProjectInternals(
+  projectNode: WorkflowProjectNode | undefined,
+  parentNode: WorkflowNode,
+  mode: "network" | "unlock",
+): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } | undefined {
+  const rawNodes = projectNode?.internals?.nodes.filter(isWorkflowProjectNode) ?? []
+  if (!projectNode || rawNodes.length === 0) return undefined
+
+  const explicitEdges = projectNode.internals?.edges.filter(isInternalWorkflowEdge) ?? []
+  const rawEdges = explicitEdges.length > 0 ? explicitEdges : inferNormalizeFanoutEdges(rawNodes)
+  const parentId = projectNode.id
+  const parentRect = nodeRect(parentNode)
+  const origin =
+    mode === "network"
+      ? { x: 520, y: 80 }
+      : { x: parentRect.x, y: parentRect.y + parentRect.height + 110 }
+  const title = typeof projectNode.ui?.label === "string" ? projectNode.ui.label : parentId
+
+  const internalNodes = rawNodes.map((internalNode, index) => {
+    const normalizedNode: WorkflowProjectNode = { ...internalNode, params: internalNode.params ?? {} }
+    const reactNode = workflowNodeToReactFlow(normalizedNode, index)
+    const relativePosition = readInternalPosition(normalizedNode, index)
+    return {
+      ...reactNode,
+      id: scopedInternalId(parentId, normalizedNode.id),
+      type: "workflow" as const,
+      draggable: mode === "network" ? false : reactNode.draggable,
+      connectable: reactNode.connectable,
+      position: {
+        x: origin.x + relativePosition.x,
+        y: origin.y + relativePosition.y,
+      },
+      data: {
+        ...reactNode.data,
+        status: mode === "network" ? "success" : reactNode.data.status,
+        internalOf: parentId,
+        internalStepId: normalizedNode.id,
+        internalStatus: "ready",
+        internalLocked: mode === "network",
+        ...(mode === "network"
+          ? { networkTitle: title }
+          : { internalDraft: true, packageDraft: true }),
+      },
+    }
+  })
+
+  const nodeIds = new Set(rawNodes.map((node) => node.id))
+  const internalEdges = rawEdges
+    .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+    .map((edge) => ({
+      id: `e-${parentId}__${edge.id}`,
+      source: scopedInternalId(parentId, edge.source),
+      target: scopedInternalId(parentId, edge.target),
+      sourceHandle: edge.sourcePort,
+      targetHandle: edge.targetPort,
+      label: edge.label,
+      type: "workflow" as const,
+      animated: true,
+      data: {
+        label: edge.label,
+        internalOf: parentId,
+        sourcePort: edge.sourcePort,
+        targetPort: edge.targetPort,
+        ...(edge.ui ?? {}),
+      },
+    }))
+
+  return { nodes: internalNodes, edges: internalEdges }
+}
+
+function scopedInternalId(parentId: string, internalId: string): string {
+  return `${parentId}__${internalId}`
+}
+
+function readInternalPosition(node: WorkflowProjectNode, index: number): XYPosition {
+  const value = node.ui?.position
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { x: 0, y: index * 140 }
+  const position = value as { x?: unknown; y?: unknown }
+  if (typeof position.x !== "number" || typeof position.y !== "number") return { x: 0, y: index * 140 }
+  return { x: position.x, y: position.y }
+}
+
+function isWorkflowProjectNode(value: unknown): value is WorkflowProjectNode {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const node = value as Partial<WorkflowProjectNode>
+  return (
+    typeof node.id === "string" &&
+    typeof node.kind === "string" &&
+    typeof node.capability === "string" &&
+    (!("params" in node) || Boolean(node.params && typeof node.params === "object" && !Array.isArray(node.params)))
+  )
+}
+
+function isInternalWorkflowEdge(value: unknown): value is InternalWorkflowEdge {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const edge = value as Partial<InternalWorkflowEdge>
+  return typeof edge.id === "string" && typeof edge.source === "string" && typeof edge.target === "string"
+}
+
+function inferNormalizeFanoutEdges(nodes: WorkflowProjectNode[]): InternalWorkflowEdge[] {
+  const normalize = nodes.find((node) => node.id === "internal-normalize")
+  if (!normalize) return []
+  return nodes
+    .filter((node) => node.id !== normalize.id)
+    .map((node) => ({
+      id: `${node.id}-normalize`,
+      source: node.id,
+      target: normalize.id,
+    }))
+}
+
+function scheduleNetworkInternalEdges(
+  getState: () => FlowState,
+  setState: (state: Partial<FlowState>) => void,
+  parentId: string,
+  nodeIds: string[],
+  edges: WorkflowEdge[],
+) {
+  if (edges.length === 0 || typeof window === "undefined") return
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      const state = getState()
+      const stillInNetwork = nodeIds.every((id) => state.nodes.some((node) => node.id === id && node.data.internalOf === parentId))
+      if (!stillInNetwork) return
+      setState({ edges })
+    })
+  })
+}
+
+function scheduleUnlockedInternalEdges(
+  getState: () => FlowState,
+  setState: (updater: Partial<FlowState>) => void,
+  parentId: string,
+  nodeIds: string[],
+  edges: WorkflowEdge[],
+) {
+  if (edges.length === 0 || typeof window === "undefined") return
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      const state = getState()
+      const stillUnlocked = nodeIds.every((id) => state.nodes.some((node) => node.id === id && node.data.internalOf === parentId))
+      if (!stillUnlocked) return
+      const existingEdgeIds = new Set(state.edges.map((edge) => edge.id))
+      const missingEdges = edges.filter((edge) => !existingEdgeIds.has(edge.id))
+      if (missingEdges.length === 0) return
+      setState({ edges: [...state.edges, ...missingEdges] })
+    })
+  })
 }
 
 function writeBoundValueToNode(
@@ -877,8 +1037,31 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     const { workflowProject, nodes, edges, drawings, networkStack } = get()
     const node = nodes.find((candidate) => candidate.id === nodeId)
     const projectNode = workflowProject.nodes.find((candidate) => candidate.id === nodeId)
+    if (!node) return 0
+
+    const projectInternals = materializeProjectInternals(projectNode, node, "network")
+    if (projectInternals) {
+      const internalNodeIds = projectInternals.nodes.map((internalNode) => internalNode.id)
+      set({
+        networkStack: [
+          ...networkStack,
+          {
+            nodeId,
+            label: String(node.data.label ?? nodeId),
+            snapshot: snapshot({ nodes, edges, drawings }),
+          },
+        ],
+        nodes: projectInternals.nodes,
+        edges: [],
+        drawings: [],
+        helperLines: { snapPosition: {} },
+      })
+      scheduleNetworkInternalEdges(get, set, nodeId, internalNodeIds, projectInternals.edges)
+      return projectInternals.nodes.length
+    }
+
     const internals = getNodeInternals(projectNode)
-    if (!node || !internals || internals.steps.length === 0) return 0
+    if (!internals || internals.steps.length === 0) return 0
 
     const internalNodes: WorkflowNode[] = internals.steps.map((stepItem, index) => ({
       ...(() => {
@@ -949,13 +1132,32 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     const { workflowProject, nodes, edges } = get()
     const node = nodes.find((candidate) => candidate.id === nodeId)
     const projectNode = workflowProject.nodes.find((candidate) => candidate.id === nodeId)
-    const internals = getNodeInternals(projectNode)
-    if (!node || !internals || internals.steps.length === 0) return 0
+    if (!node) return 0
 
     const existingInternalIds = new Set(
       nodes.filter((candidate) => candidate.data.internalOf === nodeId).map((candidate) => candidate.id),
     )
     if (existingInternalIds.size > 0) return 0
+
+    const projectInternals = materializeProjectInternals(projectNode, node, "unlock")
+    if (projectInternals) {
+      get().takeSnapshot()
+      const internalNodeIds = projectInternals.nodes.map((internalNode) => internalNode.id)
+      const nextNodes = nodes.map((candidate) =>
+        candidate.id === nodeId
+          ? { ...candidate, data: { ...candidate.data, internalsUnlocked: true } }
+          : candidate,
+      )
+      set({
+        nodes: resolveCollisions([...nextNodes, ...projectInternals.nodes], projectInternals.nodes[0]?.id ?? nodeId),
+        edges,
+      })
+      scheduleUnlockedInternalEdges(get, set, nodeId, internalNodeIds, projectInternals.edges)
+      return projectInternals.nodes.length
+    }
+
+    const internals = getNodeInternals(projectNode)
+    if (!internals || internals.steps.length === 0) return 0
 
     get().takeSnapshot()
     const parentRect = nodeRect(node)
