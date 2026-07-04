@@ -421,8 +421,9 @@ def _trigger_capabilities() -> list[WorkflowRuntimeCapability]:
             kind="schedule",
             capability="trigger",
             reason="Frontend Canvas Run calls the backend workflow run API and "
-            "replays node events onto existing Canvas nodes.",
-            missing=["typed_demand_input_envelope"],
+            "replays node events onto existing Canvas nodes. User collection "
+            "needs are drafted separately before the run starts.",
+            missing=[],
             tags=["trigger", "manual"],
         ),
         _capability(

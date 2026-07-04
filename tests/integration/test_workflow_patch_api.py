@@ -230,3 +230,76 @@ async def test_patch_reports_missing_capability_without_inventing_node(client):
         }
     ]
     assert data["compile"]["valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_demand_draft_assembles_xiaohongshu_need_into_opencli_hda(client):
+    project = _valid_workflow_project()
+
+    response = await client.post(
+        "/api/v1/workflows/demand-draft",
+        json={
+            "project": project,
+            "text": "抓小红书热帖",
+            "locale": "zh-CN",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is True
+    assert data["missing_capabilities"] == []
+    assert [operation["op"] for operation in data["patch"]["operations"]] == ["add_node"]
+
+    node = next(node for node in data["project"]["nodes"] if node["id"] == "opencli-demand-hda")
+    assert node["ui"]["catalogId"] == "package.opencli.multi-source-hda"
+    assert node["params"]["demand"]["text"] == "抓小红书热帖"
+    assert node["params"]["sources"] == [
+        {
+            "id": "xiaohongshu",
+            "label": "Xiaohongshu Search",
+            "sourceGroup": "social",
+            "site": "xiaohongshu",
+            "command": "search",
+            "args": {"keyword": "热门"},
+            "resourceTags": ["browser-session:xiaohongshu"],
+        }
+    ]
+    assert "opencli-demand-hda::source-xiaohongshu" in data["compile"]["plan"]["runtime"]["node_ids"]
+    assert any(
+        node["id"] == "opencli-demand-hda::source-xiaohongshu"
+        and node["runtime"]["binding"]["channel"] == "opencli"
+        for node in data["compile"]["plan"]["runtime"]["nodes"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_demand_draft_reports_missing_capability_for_unknown_source(client):
+    project = _valid_workflow_project()
+
+    response = await client.post(
+        "/api/v1/workflows/demand-draft",
+        json={
+            "project": project,
+            "text": "抓未知平台热帖",
+            "locale": "zh-CN",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is True
+    assert data["patch"]["operations"][0]["op"] == "request_missing_capability"
+    assert data["missing_capabilities"] == [
+        {
+            "capability": "collection.source.intent_mapping",
+            "reason": (
+                "No existing Canvas source capability matched this collection need. "
+                "Add a real source/channel mapping before assembling runnable nodes."
+            ),
+            "n8n_search_hint": "collection.source.intent_mapping",
+        }
+    ]
+    assert [node["id"] for node in data["project"]["nodes"]] == [
+        node["id"] for node in project["nodes"]
+    ]

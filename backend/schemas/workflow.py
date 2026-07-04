@@ -216,6 +216,12 @@ class WorkflowPatchRequest(BaseModel):
     operations: list[WorkflowPatchOperation] = Field(..., min_length=1)
 
 
+class WorkflowDemandDraftRequest(BaseModel):
+    project: WorkflowProject
+    text: str = Field(..., min_length=1)
+    locale: Optional[str] = None
+
+
 class WorkflowCompileError(BaseModel):
     code: str
     message: str

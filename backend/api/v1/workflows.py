@@ -6,6 +6,7 @@ from backend.schemas import workflow as workflow_schemas
 from backend.schemas.common import ApiResponse
 from backend.workflow.capability_projection import build_workflow_capabilities
 from backend.workflow.compiler import compile_workflow_project
+from backend.workflow.demand_assembler import draft_workflow_demand
 from backend.workflow.opencli_hda_tracer import (
     build_opencli_hda_trace,
     get_workflow_run_projection,
@@ -68,6 +69,18 @@ async def patch_workflow(
     """Preview structured AI-authored WorkflowProject patch operations."""
 
     return ApiResponse.ok(preview_workflow_patch(body.project, body.operations))
+
+
+@router.post(
+    "/demand-draft",
+    response_model=ApiResponse[workflow_schemas.WorkflowPatchResponse],
+)
+async def draft_demand_workflow(
+    body: workflow_schemas.WorkflowDemandDraftRequest,
+) -> ApiResponse[workflow_schemas.WorkflowPatchResponse]:
+    """Assemble a user collection need into reviewable WorkflowProject patches."""
+
+    return ApiResponse.ok(draft_workflow_demand(body))
 
 
 @router.post(

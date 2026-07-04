@@ -33,7 +33,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 | DataSource channels | 7 | `opencli`, `web_scraper`, `api`, `rss`, `cli`, `skill`, `crawl4ai` | Real outside Canvas through channel runner; not projected as executable Canvas source nodes except OpenCLI-HDA path |
 | Frontend source adapters | 1 direct adapter | `jin10` fixture/live frontend adapter | Local/simulated path, not authoritative backend workflow runtime |
 | Backend workflow run events | 1 event API family | `/api/v1/workflows/runs` + events + SSE | Backend exists; frontend run trace now proxies to backend and patches Canvas node state |
-| Manual run trigger | 1 trigger | Canvas Run button starts backend workflow runs | Runnable for current project graph; typed user-demand input envelope still missing |
+| Manual run trigger | 1 trigger | Canvas Run button starts backend workflow runs | Runnable for the accepted project graph; user demand input is drafted before run |
 
 ## Adapter/source mapping
 
@@ -115,11 +115,24 @@ The correct translation is:
 4. If a resource cannot be resolved, the node is visible but blocked with a missing-resource reason. It must not look runnable.
 5. User-provided text like "抓小红书热帖" becomes plan intent and optional query args, not raw secret/session/runtime params.
 
+Current adapter/resource truth:
+
+| Adapter/channel | Needs cookie? | Needs browser profile/session? | Needs worker/pool? | Current rule |
+|---|---|---|---|---|
+| `opencli` | Usually indirectly, through logged-in browser state for sites that need auth | Yes when the site needs a live session; channel declares `session_affinity=True` | Yes: resolved through browser pool / agent node / CDP or bridge endpoint | Do not ask user for raw cookies; resolve site binding or block |
+| `skill` | Usually indirectly, through the browser state the skill operates on | Yes; channel declares `session_affinity=True` | Yes: same browser pool/session-affinity path | Do not ask user for raw cookies; resolve site binding or block |
+| `web_scraper` | Optional only when config `auth.type=cookie` requests it | No shared profile requirement | No OpenCLI-style worker requirement | Resolve cookie header if configured; otherwise plain HTTP scrape |
+| `crawl4ai` | Optional only when config `auth.type=cookie` requests it | Uses Crawl4AI-managed browser, not shared profile/CDP pool | Not the shared OpenCLI worker pool | Resolve cookies when configured; otherwise managed crawl |
+| `api` | No browser cookie/profile by default | No | No | Uses headers/auth config/env/encrypted credential store |
+| `rss` | No | No | No | Plain guarded HTTP feed fetch |
+| `cli` | No browser cookie/profile by default | No | No | Requires allowlisted binary; params are command template inputs |
+
 This means the "input point" is not a generic textbox inside a source node. There are several typed inputs:
 
 | Input kind | Existing basis | Canvas requirement |
 |---|---|---|
-| Manual/AI run input | Workflow run request envelope | Add typed demand input to backend run API and frontend run panel |
+| Manual/AI demand input | `/api/v1/workflows/demand-draft` | Draft reviewable WorkflowProject patches from Collection Need before running |
+| Manual run input | Workflow run request envelope | Keep run start focused on an accepted WorkflowProject; add typed run overrides later only when needed |
 | Schedule trigger | scheduler/task concepts; cron catalog node | Bind trigger nodes to real run creation |
 | Inbound webhook trigger | `/api/v1/webhooks/{source_id}` for source trigger | Add workflow-level webhook trigger mode and response/projection policy |
 | Source input | DataSource/channel config or OpenCLI source slot | Generate source nodes from backend capability metadata |

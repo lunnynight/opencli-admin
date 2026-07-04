@@ -184,6 +184,7 @@ function EditorCanvas() {
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false)
   const [runTraceOpen, setRunTraceOpen] = useState(false)
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false)
+  const [agentProposal, setAgentProposal] = useState<AgentProposal | undefined>(undefined)
   const [nodeManagementOpen, setNodeManagementOpen] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [compactViewport, setCompactViewport] = useState(false)
@@ -662,6 +663,7 @@ function EditorCanvas() {
         importWorkflowProject(acceptAgentProposal(useFlowStore.getState().workflowProject, proposal))
         showToast("Agent proposal accepted")
         setAgentDrawerOpen(false)
+        setAgentProposal(undefined)
       } catch (error) {
         showToast(error instanceof Error ? error.message : "Agent proposal failed")
       }
@@ -673,7 +675,17 @@ function EditorCanvas() {
     showToast("Agent proposal rejected")
     clearProposalFocus()
     setAgentDrawerOpen(false)
+    setAgentProposal(undefined)
   }, [clearProposalFocus, showToast])
+
+  const presentAgentProposal = useCallback(
+    (proposal: AgentProposal) => {
+      setAgentProposal(proposal)
+      setAgentDrawerOpen(true)
+      showToast("Demand proposal ready")
+    },
+    [showToast],
+  )
 
   const focusProposalOperation = useCallback(
     (focus: ProposalFocusTarget) => {
@@ -817,7 +829,7 @@ function EditorCanvas() {
 
           {runTraceOpen ? (
             <div className={cn("workflow-floating-panel absolute top-3 z-40", nodeManagementOpen ? "left-[28.75rem]" : "left-3")}>
-              <RunTracePanel />
+              <RunTracePanel onAgentProposal={presentAgentProposal} />
             </div>
           ) : null}
 
@@ -1026,6 +1038,7 @@ function EditorCanvas() {
 
           <AgentDrawer
             open={agentDrawerOpen}
+            proposal={agentProposal}
             onAccept={acceptProposal}
             onReject={rejectProposal}
             onFocusOperation={focusProposalOperation}

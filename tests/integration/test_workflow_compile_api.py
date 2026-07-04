@@ -710,5 +710,5 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client):
 
     triggers = {item["id"]: item for item in data["triggers"]}
     assert triggers["trigger.manual"]["status"] == "runnable"
-    assert "typed_demand_input_envelope" in triggers["trigger.manual"]["missing"]
+    assert triggers["trigger.manual"]["missing"] == []
     assert triggers["trigger.webhook"]["status"] == "blocked"
