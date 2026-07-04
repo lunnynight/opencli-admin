@@ -77,3 +77,4 @@ chrome/extension-src/store-assets/
 odp-rs/target/
 .gstack/
 .repowise/
+.understand-anything/
