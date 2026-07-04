@@ -39,6 +39,28 @@ export type NodeInternals = {
 }
 
 const NODE_INTERNALS: Record<string, NodeInternals> = {
+  "intelligence.input.collection-need": {
+    title: "Collection Need Internals",
+    summary: "Captures a business collection need and turns it into a reviewable patch over real catalog nodes.",
+    steps: [
+      step("input", "Need capture", "input", "Reads the user's collection need from node.params.text.", "params.text", "ready", [
+        exposedParam("text", "Need", "input", "Input", "textarea", "抓小红书热帖", {
+          order: 1,
+          placeholder: "抓小红书热帖",
+        }),
+      ]),
+      step("draft", "Patch draft", "assemble", "Calls the demand-draft endpoint to assemble existing real nodes.", "/api/v1/workflows/demand-draft", "ready", [
+        exposedParam("locale", "Locale", "input", "Input", "select", "zh-CN", {
+          options: [
+            { value: "zh-CN", label: "zh-CN" },
+            { value: "en-US", label: "en-US" },
+          ],
+          order: 2,
+        }),
+      ]),
+      step("review", "Proposal review", "review", "Applies the accepted patch through the Canvas proposal drawer.", "AgentDrawer patch", "ready"),
+    ],
+  },
   "intelligence.schedule.cron": {
     title: "Schedule Internals",
     summary: "Turns wall-clock intent into a deterministic workflow trigger.",

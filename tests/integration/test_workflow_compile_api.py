@@ -707,6 +707,61 @@ async def test_compile_accepts_collection_need_input_node(client):
 
 
 @pytest.mark.asyncio
+async def test_compile_resolves_schedule_trigger_binding(client):
+    project = _valid_workflow_project()
+    project["nodes"].insert(
+        0,
+        {
+            "id": "schedule-cron",
+            "kind": "schedule",
+            "capability": "trigger",
+            "params": {
+                "interval": "5m",
+                "timezone": "Asia/Shanghai",
+                "enabled": True,
+            },
+            "ui": {"catalogId": "intelligence.schedule.cron"},
+        },
+    )
+    project["edges"].insert(
+        0,
+        {
+            "id": "e-schedule-source",
+            "source": "schedule-cron",
+            "target": "source-jin10",
+        },
+    )
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is True
+    node = next(
+        node
+        for node in data["plan"]["runtime"]["nodes"]
+        if node["id"] == "schedule-cron"
+    )
+    assert node["runtime"]["origin"]["catalog_id"] == "intelligence.schedule.cron"
+    assert node["runtime"]["binding"] == {
+        "status": "bound",
+        "binding_id": "workflow.trigger.schedule_tick",
+        "runtime": "workflow",
+        "channel": "schedule",
+        "input": {
+            "interval": "5m",
+            "timezone": "Asia/Shanghai",
+            "enabled": True,
+        },
+    }
+    assert node["runtime"]["trigger"] == {
+        "node_id": "schedule-cron",
+        "mode": "manual_schedule_tick",
+    }
+    assert "missing_runtime" not in node["runtime"]
+
+
+@pytest.mark.asyncio
 async def test_workflow_capabilities_project_real_backend_surfaces(client):
     response = await client.get("/api/v1/workflows/capabilities")
 
@@ -717,6 +772,10 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client):
     assert catalog["intelligence.input.collection-need"]["status"] == "runnable"
     assert catalog["intelligence.input.collection-need"]["backendAvailable"] is True
     assert catalog["intelligence.input.collection-need"]["runtimeBinding"] == "workflow.demand-draft.patch"
+    assert catalog["intelligence.schedule.cron"]["status"] == "runnable"
+    assert catalog["intelligence.schedule.cron"]["backendAvailable"] is True
+    assert catalog["intelligence.schedule.cron"]["runtimeBinding"] == "workflow.trigger.schedule_tick"
+    assert "workflow_trigger_binding" not in catalog["intelligence.schedule.cron"]["missing"]
     assert catalog["intelligence.source.opencli-slot"]["status"] == "runnable"
     assert catalog["intelligence.source.opencli-slot"]["backendAvailable"] is True
     assert catalog["intelligence.source.opencli-slot"]["runtimeBinding"]

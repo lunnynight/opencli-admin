@@ -11,6 +11,7 @@ Implementation slice:
 - Canvas catalog, command palette, node cards, and Node Management can show `REAL`, `BLOCKED`, `PREVIEW`, or `DESIGN` status from the capability projection.
 - Frontend Canvas Run now proxies to backend `/api/v1/workflows/runs`, replays `/events/stream`, and patches existing Canvas nodes from backend run events.
 - Canvas now has a real `intelligence.input.collection-need` catalog node. The node owns the visible user input textarea and calls `/api/v1/workflows/demand-draft` to produce reviewable real-node patches.
+- `intelligence.schedule.cron` now compiles/runs as a workflow schedule tick binding for Canvas Run; automatic scheduler-to-run creation remains a separate scheduler integration.
 - This does not execute blocked nodes. It makes runtime truth visible and runs the narrow OpenCLI HDA proof path; full result/resource workbench wiring is still pending.
 
 ## Hard conclusion
@@ -21,7 +22,7 @@ The system has three real but misaligned surfaces:
 2. Frontend primitive library: 107 primitive/import nodes in `frontend/lib/workflow/node-primitives.ts`.
 3. Backend collection capability: 7 real `DataSource.channel_type` runners under `backend/channels`.
 
-Today, Canvas workflow runtime execution is only wired for `source/fetch` with an OpenCLI adapter (`provider=opencli` or `config.channel=opencli`). Everything else may compile or display, but it does not yet have an authoritative workflow runtime binding.
+Today, Canvas workflow runtime execution is wired for Collection Need patch drafting, schedule trigger ticks, and `source/fetch` with an OpenCLI adapter (`provider=opencli` or `config.channel=opencli`). Other catalog nodes may compile or display, but they do not yet have an authoritative workflow runtime binding.
 
 So the next step is not more hand-made nodes. The next step is to project existing backend source/channel/runtime/notifier capabilities into the Canvas catalog, and to mark any unmapped visible node as blocked or design/import-only.
 
@@ -29,7 +30,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 
 | Surface | Count | Real capability | Canvas runtime state |
 |---|---:|---|---|
-| Catalog nodes | 23 | Authoring palette and contracts | Collection Need and OpenCLI source/fetch internals have runtime metadata; others surface `missing_runtime_binding` |
+| Catalog nodes | 23 | Authoring palette and contracts | Collection Need, Cron Schedule, and OpenCLI source/fetch internals have runtime metadata; others surface `missing_runtime_binding` |
 | Primitive nodes | 107 | n8n/import/design vocabulary | Accepted by backend origin guard, but no primitive executor binding |
 | DataSource channels | 7 | `opencli`, `web_scraper`, `api`, `rss`, `cli`, `skill`, `crawl4ai` | Real outside Canvas through channel runner; not projected as executable Canvas source nodes except OpenCLI-HDA path |
 | Frontend source adapters | 1 direct adapter | `jin10` fixture/live frontend adapter | Local/simulated path, not authoritative backend workflow runtime |
@@ -54,7 +55,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 | Catalog node | Current role | Real backend counterpart | Current state | Decision |
 |---|---|---|---|---|
 | `intelligence.input.collection-need` | User demand input | `/api/v1/workflows/demand-draft` + existing patcher/compiler | Runnable patch-draft binding; node does not ask for cookie/profile/worker | Keep as the Canvas input point for business need text |
-| `intelligence.schedule.cron` | Scheduled trigger | Existing scheduler/task concepts | Compiles/displays; no workflow runtime trigger binding | Blocked until trigger/run-input binding exists |
+| `intelligence.schedule.cron` | Scheduled trigger | `workflow.trigger.schedule_tick` binding | Runnable for Canvas Run as a manual schedule tick; automatic scheduler-to-run binding still separate | Keep as the real schedule trigger node; add scheduler integration later |
 | `intelligence.source.jin10` | JIN10 source | Frontend `jin10` adapter only | Not authoritative backend runtime | Keep, but mark not runnable from Canvas |
 | `intelligence.source.opencli-slot` | OpenCLI source slot | `OpenCLIChannel` + runtime registry OpenCLI source binding | Real if adapter binding exists; UI cannot yet resolve resources/args fully | Keep as real executable source slot; add materialization/resource resolver |
 | `intelligence.processing.normalize` | Normalize items | Internal HDA normalize step exists as trace node | No generic runtime executor | Use as package internal for now; blocked as standalone |

@@ -18,7 +18,11 @@ from backend.schemas.workflow import (
     WorkflowRuntimeCapability,
 )
 from backend.workflow.node_registry import WORKFLOW_PRIMITIVE_IDS
-from backend.workflow.runtime_registry import DEMAND_DRAFT_BINDING_ID, OPENCLI_BINDING_ID
+from backend.workflow.runtime_registry import (
+    DEMAND_DRAFT_BINDING_ID,
+    OPENCLI_BINDING_ID,
+    SCHEDULE_TRIGGER_BINDING_ID,
+)
 
 
 def build_workflow_capabilities() -> WorkflowCapabilitiesResponse:
@@ -88,15 +92,21 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             tags=["input", "demand", "patch"],
             source="backend.workflow.demand_assembler",
         ),
-        _blocked_catalog(
-            "intelligence.schedule.cron",
-            "Cron Schedule",
-            "schedule",
-            "trigger",
+        _capability(
+            id="intelligence.schedule.cron",
+            label="Cron Schedule",
+            surface="catalog",
+            status="runnable",
             backend_available=True,
-            reason="Scheduler concepts exist, but workflow trigger nodes do not "
-            "create backend workflow runs yet.",
-            missing=["workflow_trigger_binding", "runtime_input_envelope"],
+            kind="schedule",
+            capability="trigger",
+            provider="workflow",
+            runtime_binding=SCHEDULE_TRIGGER_BINDING_ID,
+            reason="Canvas Run creates an authoritative workflow trigger tick "
+            "from the schedule node params. Automatic scheduler-to-run creation "
+            "is a separate scheduler integration.",
+            tags=["trigger", "schedule", "run"],
+            source="backend.workflow.runtime_registry",
         ),
         _capability(
             id="intelligence.source.jin10",

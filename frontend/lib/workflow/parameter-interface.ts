@@ -6,7 +6,7 @@ import type {
 } from "@/lib/flow/types"
 import type { AdapterBinding, WorkflowProjectNode } from "./schema"
 import { getNodeInternals, type NodeInternals } from "./node-internals"
-import { getNodeTemplate, readTemplateFieldValue, type NodeTemplateField } from "./node-templates"
+import { getNodeTemplate, readTemplateFieldValue, type NodeTemplate, type NodeTemplateField } from "./node-templates"
 
 export type ParameterInterfaceMode = "template" | "exposed" | "summary"
 
@@ -33,6 +33,11 @@ export function buildParameterInterfaceView({
   nodes?: WorkflowNode[]
 }): ParameterInterfaceView | undefined {
   if (!node) return undefined
+  const template = getNodeTemplate(node)
+  if (template && prefersTemplateInterface(node)) {
+    return templateInterfaceView(node, adapter, template)
+  }
+
   const parameterInterface = node.parameterInterface ?? createParameterInterfaceFromInternals(node.id, getNodeInternals(node))
 
   if (parameterInterface && parameterInterface.fields.length > 0) {
@@ -52,21 +57,21 @@ export function buildParameterInterfaceView({
     }
   }
 
-  const template = getNodeTemplate(node)
   if (template) {
-    const group = templateGroup(node)
-    return {
-      mode: "template",
-      title: template.title,
-      summary: template.summary,
-      groups: [group],
-      fields: template.fields.map((field, index) => templateFieldToParameterField(node, adapter, field, group.id, index)),
-    }
+    return templateInterfaceView(node, adapter, template)
   }
 
   const internals = getNodeInternals(node)
   if (!internals) return undefined
   return internalsSummaryView(node, internals)
+}
+
+function prefersTemplateInterface(node: WorkflowProjectNode): boolean {
+  const catalogId = typeof node.ui?.catalogId === "string" ? node.ui.catalogId : undefined
+  return (
+    catalogId === "intelligence.input.collection-need" ||
+    (node.kind === "schedule" && node.capability === "trigger" && node.params.mode === "demand-draft")
+  )
 }
 
 export function createParameterInterfaceFromInternals(
@@ -188,6 +193,21 @@ function templateFieldToParameterField(
   }
 }
 
+function templateInterfaceView(
+  node: WorkflowProjectNode,
+  adapter: AdapterBinding | undefined,
+  template: NodeTemplate,
+): ParameterInterfaceView {
+  const group = templateGroup(node)
+  return {
+    mode: "template",
+    title: template.title,
+    summary: template.summary,
+    groups: [group],
+    fields: template.fields.map((field, index) => templateFieldToParameterField(node, adapter, field, group.id, index)),
+  }
+}
+
 function internalsSummaryView(node: WorkflowProjectNode, internals: NodeInternals): ParameterInterfaceView {
   return {
     mode: "summary",
@@ -209,6 +229,13 @@ function internalsSummaryView(node: WorkflowProjectNode, internals: NodeInternal
 }
 
 function templateGroup(node: WorkflowProjectNode): ParameterInterfaceGroup {
+  const catalogId = typeof node.ui?.catalogId === "string" ? node.ui.catalogId : undefined
+  if (
+    catalogId === "intelligence.input.collection-need" ||
+    (node.kind === "schedule" && node.capability === "trigger" && node.params.mode === "demand-draft")
+  ) {
+    return { id: "input", label: "Input", order: 1 }
+  }
   if (node.kind === "source") return { id: "source", label: "Source", order: 1 }
   if (node.kind === "schedule") return { id: "transform", label: "Transform", order: 1 }
   if (node.kind === "notify" || node.kind === "inbox") return { id: "render", label: "Render", order: 1 }
