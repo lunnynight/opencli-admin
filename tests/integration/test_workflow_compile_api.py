@@ -325,3 +325,103 @@ async def test_compile_rejects_invalid_package_parameter_binding(client):
         "limit",
         "binding",
     ]
+
+
+@pytest.mark.asyncio
+async def test_compile_records_existing_node_library_origin(client):
+    project = _valid_workflow_project()
+    project["nodes"][0]["ui"] = {"catalogId": "intelligence.source.jin10"}
+    project["nodes"][1]["ui"] = {"primitiveId": "primitive.transform.map-fields"}
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    nodes = response.json()["data"]["plan"]["runtime"]["nodes"]
+    assert nodes[0]["runtime"]["origin"] == {
+        "kind": "node_library",
+        "catalog_id": "intelligence.source.jin10",
+        "notes": [],
+    }
+    assert nodes[1]["runtime"]["origin"] == {
+        "kind": "primitive_library",
+        "primitive_id": "primitive.transform.map-fields",
+        "notes": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_compile_accepts_n8n_translated_missing_capability(client):
+    project = _valid_workflow_project()
+    project["nodes"] = [
+        {
+            "id": "n8n-http-request",
+            "kind": "source",
+            "capability": "fetch",
+            "adapter": "n8n-http-request",
+            "params": {"n8nType": "httpRequest", "method": "GET"},
+            "ui": {
+                "missingCapability": "vendor.http.request",
+                "n8n": {
+                    "source": "n8n",
+                    "originalId": "1",
+                    "originalName": "HTTP Request",
+                    "type": "n8n-nodes-base.httpRequest",
+                },
+            },
+        }
+    ]
+    project["edges"] = []
+    project["adapters"] = [
+        {
+            "id": "n8n-http-request",
+            "type": "source",
+            "provider": "http_request",
+            "mode": "fixture",
+            "config": {"translatedFrom": "n8n"},
+        }
+    ]
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is True
+    origin = data["plan"]["runtime"]["nodes"][0]["runtime"]["origin"]
+    assert origin["kind"] == "n8n"
+    assert origin["missing_capability"] == "vendor.http.request"
+    assert origin["n8n"]["type"] == "n8n-nodes-base.httpRequest"
+
+
+@pytest.mark.asyncio
+async def test_compile_rejects_unknown_node_library_binding_without_n8n(client):
+    project = _valid_workflow_project()
+    project["nodes"][1]["ui"] = {
+        "catalogId": "generated.agent.custom-summary",
+        "primitiveId": "primitive.generated.custom-summary",
+        "missingCapability": "custom.summary",
+    }
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is False
+    errors = [error for error in data["errors"] if error["code"] == "unknown_node_library_binding"]
+    assert errors
+    assert errors[0]["node_id"] == "normalize-items"
+    assert errors[0]["path"] == ["nodes", "normalize-items", "ui"]
+
+
+@pytest.mark.asyncio
+async def test_compile_rejects_hand_rolled_node_implementation(client):
+    project = _valid_workflow_project()
+    project["nodes"][1]["ui"] = {"executor": {"type": "python"}}
+    project["nodes"][1]["params"]["rawOpencliCommand"] = "opencli collect whatever"
+
+    response = await client.post("/api/v1/workflows/compile", json={"project": project})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is False
+    errors = [error for error in data["errors"] if error["code"] == "forbidden_node_definition"]
+    assert {error["path"][-1] for error in errors} == {"executor", "rawOpencliCommand"}

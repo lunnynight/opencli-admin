@@ -17,6 +17,10 @@ from backend.schemas.workflow import (
     WorkflowProjectNode,
     WorkflowRuntimePreview,
 )
+from backend.workflow.node_registry import (
+    forbidden_node_definition_keys,
+    resolve_node_origin,
+)
 
 INTERNAL_ID_SEPARATOR = "::"
 
@@ -217,12 +221,50 @@ def _validate_project(project: WorkflowProject) -> list[WorkflowCompileError]:
         if node.internals:
             errors.extend(_validate_package_internals(node, adapter_by_id))
 
+        errors.extend(_validate_node_origin(node, ["nodes", node.id]))
+
     errors.extend(_cycle_errors(project))
     return errors
 
 
 def _requires_adapter(node: WorkflowProjectNode) -> bool:
     return node.kind == "source" or node.capability in {"fetch", "send"}
+
+
+def _validate_node_origin(
+    node: WorkflowProjectNode,
+    path_prefix: list[str],
+) -> list[WorkflowCompileError]:
+    errors: list[WorkflowCompileError] = []
+    for key in forbidden_node_definition_keys(node):
+        errors.append(
+            WorkflowCompileError(
+                code="forbidden_node_definition",
+                message=(
+                    f'Workflow node "{node.id}" includes forbidden implementation '
+                    f'data "{key}". Use an existing node-library primitive/package '
+                    "or an n8n-translated node instead."
+                ),
+                node_id=node.id,
+                path=[*path_prefix, *key.split(".")],
+            )
+        )
+
+    origin = resolve_node_origin(node)
+    if origin.kind == "legacy" and origin.notes:
+        errors.append(
+            WorkflowCompileError(
+                code="unknown_node_library_binding",
+                message=(
+                    f'Workflow node "{node.id}" references an unknown node-library '
+                    "binding. Use an existing catalog/primitive id, or import the "
+                    "missing capability from n8n."
+                ),
+                node_id=node.id,
+                path=[*path_prefix, "ui"],
+            )
+        )
+    return errors
 
 
 def _cycle_errors(project: WorkflowProject) -> list[WorkflowCompileError]:
@@ -422,6 +464,13 @@ def _validate_package_internals(
                 )
             )
 
+        errors.extend(
+            _validate_node_origin(
+                internal_node,
+                ["nodes", node.id, "internals", "nodes", internal_node.id],
+            )
+        )
+
     if node.parameterInterface:
         for field in node.parameterInterface.fields:
             if field.binding.nodeId not in internal_node_ids:
@@ -502,6 +551,7 @@ def _compile_node(
         "status_anchor": node_id,
         "capability": node.capability,
         "dispatch": "preview",
+        "origin": resolve_node_origin(node).model_dump(exclude_none=True),
     }
     if runtime:
         runtime_metadata.update(runtime)
