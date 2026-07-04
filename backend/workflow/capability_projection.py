@@ -184,16 +184,22 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             id="intelligence.output.webhook",
             label="Webhook Notify",
             surface="catalog",
-            status="runnable",
+            status="blocked",
             backend_available=True,
             kind="notify",
             capability="send",
             provider="webhook",
             notifier_type="webhook",
             runtime_binding=WEBHOOK_NOTIFY_BINDING_ID,
-            reason="Backend workflow compile resolves Webhook Notify nodes to "
-            "the guarded webhook notifier sink binding. Delivery still depends "
-            "on notification permission and configured webhook URL at send time.",
+            reason="Backend notifier and workflow sink contract exist, but live "
+            "Canvas delivery waits for EvidenceBatch projection, permission, "
+            "and configured webhook URL.",
+            missing=[
+                "evidencebatch_projection_api",
+                "delivery_projection",
+                "notification_permission",
+                "webhook_url_configuration",
+            ],
             tags=["catalog", "notify", "webhook"],
             source="backend.workflow.runtime_registry",
         ),
@@ -337,9 +343,9 @@ def _primitive_capabilities() -> list[WorkflowRuntimeCapability]:
             backend_available=True,
             kind="notify",
             capability="send",
-            reason="Backend webhook notifier exists, but workflow notifier sink "
-            "binding is not connected.",
-            missing=["workflow_notifier_sink_binding", "delivery_projection"],
+            reason="Backend webhook notifier and the catalog sink contract exist, "
+            "but primitive action execution and projection delivery are not bound.",
+            missing=["primitive_executor_binding", "delivery_projection"],
             tags=["primitive", "webhook", "notify"],
         ),
         "primitive.core.respond-webhook": _capability(
@@ -431,16 +437,20 @@ def _notifier_capabilities() -> list[WorkflowRuntimeCapability]:
                     id="notifier.webhook",
                     label="webhook notifier",
                     surface="notifier",
-                    status="runnable",
+                    status="blocked",
                     backend_available=True,
                     kind="notify",
                     capability="send",
                     provider="webhook",
                     notifier_type="webhook",
                     runtime_binding=WEBHOOK_NOTIFY_BINDING_ID,
-                    reason="Workflow notify/send nodes can bind to the guarded "
-                    "webhook notifier sink.",
-                    missing=["delivery_projection"],
+                    reason="The guarded webhook notifier exists, but workflow "
+                    "delivery still requires projection and URL resources.",
+                    missing=[
+                        "evidencebatch_projection_api",
+                        "delivery_projection",
+                        "webhook_url_configuration",
+                    ],
                     tags=["notifier", "output", "webhook"],
                     source="backend.notifiers.webhook_notifier",
                 )

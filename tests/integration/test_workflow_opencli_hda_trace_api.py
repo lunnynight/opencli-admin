@@ -334,7 +334,7 @@ async def test_workflow_run_events_projection_and_stream(client):
 
 
 @pytest.mark.asyncio
-async def test_workflow_run_completes_webhook_notify_binding(client):
+async def test_workflow_run_blocks_webhook_notify_until_projection_delivery(client):
     project = _multi_source_opencli_hda_project()
     project["adapters"].append(
         {
@@ -376,8 +376,10 @@ async def test_workflow_run_completes_webhook_notify_binding(client):
     assert response.status_code == 202
     data = response.json()["data"]
     states = {state["nodeId"]: state for state in data["nodeStates"]}
-    assert states["notify-webhook"]["status"] == "completed"
-    assert states["notify-webhook"]["blockReasons"] == []
+    assert states["notify-webhook"]["status"] == "blocked"
+    assert states["notify-webhook"]["blockReasons"][0]["code"] == (
+        "missing_delivery_projection"
+    )
 
     events = (await client.get("/api/v1/workflows/runs/run-events-webhook/events")).json()[
         "data"
@@ -385,8 +387,12 @@ async def test_workflow_run_completes_webhook_notify_binding(client):
     notify_events = [event for event in events if event["nodeId"] == "notify-webhook"]
     assert [event["eventType"] for event in notify_events] == [
         "queued",
-        "started",
-        "completed",
+        "blocked",
+    ]
+    assert notify_events[-1]["blockReason"]["details"]["required_params"] == [
+        "evidencebatch_projection_api",
+        "delivery_projection",
+        "webhook_url",
     ]
 
 

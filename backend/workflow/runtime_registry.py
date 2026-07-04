@@ -171,6 +171,47 @@ def _resolve_webhook_notifier(
         or _read_string(config.get("target"))
         or "webhook"
     )
+    delivery_configured = bool(
+        _read_string(config.get("url")) or _read_string(config.get("webhook_url"))
+    )
+    notifier_contract = {
+        "node_id": node_id,
+        "type": "webhook",
+        "binding_id": WEBHOOK_NOTIFY_BINDING_ID,
+        "dispatch": "blocked_until_projection",
+        "input": {
+            "notifier_type": "webhook",
+            "template": _read_string(node.params.get("template")) or "brief",
+            "target": target,
+            "adapter_mode": adapter.mode if adapter else "webhook",
+            "delivery_configured": delivery_configured,
+        },
+    }
+    if not delivery_configured:
+        return {
+            "notifier": notifier_contract,
+            "missing_runtime": _dump_missing_runtime(
+                WorkflowMissingRuntime(
+                    code="missing_delivery_projection",
+                    node_id=node_id,
+                    kind=node.kind,
+                    capability=node.capability,
+                    adapter_id=adapter.id if adapter else None,
+                    provider=adapter.provider if adapter else None,
+                    required_params=[
+                        "evidencebatch_projection_api",
+                        "delivery_projection",
+                        "webhook_url",
+                    ],
+                    message=(
+                        "Webhook Notify has a backend notifier contract, but live "
+                        "delivery waits for EvidenceBatch projection and a "
+                        "configured webhook URL."
+                    ),
+                )
+            ),
+        }
+
     return {
         "binding": {
             "status": "bound",
@@ -182,9 +223,7 @@ def _resolve_webhook_notifier(
                 "template": _read_string(node.params.get("template")) or "brief",
                 "target": target,
                 "adapter_mode": adapter.mode if adapter else "webhook",
-                "delivery_configured": bool(
-                    _read_string(config.get("url")) or _read_string(config.get("webhook_url"))
-                ),
+                "delivery_configured": delivery_configured,
             },
         },
         "notifier": {
