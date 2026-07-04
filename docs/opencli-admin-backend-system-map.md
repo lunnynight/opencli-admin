@@ -15,7 +15,7 @@ The backend already has these axes:
 | User collection intent | WorkflowProject + demand draft patches | `backend/api/v1/workflows.py`, `backend/workflow/demand_assembler.py`, `backend/workflow/patcher.py` |
 | Canvas validation/compile | Workflow compiler and node origin guard | `backend/workflow/compiler.py`, `backend/workflow/node_registry.py`, `backend/schemas/workflow.py` |
 | Runtime binding truth | Workflow runtime registry and capability projection | `backend/workflow/runtime_registry.py`, `backend/workflow/capability_projection.py` |
-| OpenCLI HDA fanout | HDA tracer dispatch envelopes | `backend/workflow/opencli_hda_tracer.py`, `iii/workers/collector-opencli/src/main.py` |
+| OpenCLI node fanout | OpenCLI source/fetch node dispatch envelopes | `backend/workflow/opencli_hda_tracer.py`, `iii/workers/collector-opencli/src/main.py` |
 | Data collection channels | DataSource channel registry/runners | `backend/channels/*`, `backend/services/source_service.py` |
 | Source execution pipeline | Task/pipeline runner and scheduler bridge | `backend/pipeline/*`, `backend/worker/*`, `iii/workers/schedule-bootstrap/src/main.py` |
 | Evidence fact path | ODP contract and Rust hot path | `backend/odp/*`, `odp-rs/crates/*`, `iii/workers/odp-ingest-bridge/src/main.py` |
@@ -30,7 +30,7 @@ Before implementing:
 
 1. If the work starts from a human need like "抓小红书热帖", model it as `intelligence.input.collection-need` plus `/api/v1/workflows/demand-draft`, not as a bespoke source textbox.
 2. If the work collects data, check `backend/channels` and saved DataSource configuration before adding a new Canvas source.
-3. If the work uses OpenCLI/browser state, route through OpenCLI HDA dispatch envelopes and resource resolution. Do not ask the user for raw cookies, profile ids, worker pools, or raw OpenCLI commands.
+3. If the work uses OpenCLI/browser state, route through OpenCLI source/fetch nodes, their dispatch envelopes, and resource resolution. Do not ask the user for raw cookies, profile ids, worker pools, or raw OpenCLI commands.
 4. If the work emits data, send projection refs, batch refs, artifact refs, counts, and links. Do not push raw evidence records through SSE or webhook responses.
 5. If the work notifies, check `backend/notifiers` first. A notifier implementation is not automatically a Canvas REAL delivery path.
 6. If the work is scheduled, bind workflow run creation to the scheduler axis instead of inventing a second cron runtime.
@@ -55,7 +55,7 @@ There are three separate webhook concepts:
 | `intelligence.input.collection-need` | Real demand-draft/patch path. |
 | `intelligence.schedule.cron` | Real manual schedule tick binding; automatic scheduler-to-run creation is separate. |
 | `intelligence.source.opencli-slot` | Real OpenCLI source binding when adapter params resolve. |
-| `package.opencli.multi-source-hda` | Real OpenCLI fanout trace/run-event proof path; result workbench still needs projection API. |
+| `package.opencli.multi-source-hda` | Compatibility catalog id for a package wrapper that composes real OpenCLI source/fetch nodes; OpenCLI itself is not an HDA. |
 | `intelligence.output.webhook` | Backend notifier contract exists, but Canvas delivery remains blocked until projection/permission/URL closure. |
 
 Anything else visible on Canvas must be `blocked`, `preview_only`, or `design_only` until it maps to one of the backend axes above.

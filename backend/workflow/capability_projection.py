@@ -145,7 +145,7 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             "Normalize Items",
             "agent",
             "normalize",
-            reason="Normalize exists as an HDA internal trace node, but has no "
+            reason="Normalize exists as a package internal trace node, but has no "
             "standalone workflow executor binding.",
             missing=["workflow_transform_executor"],
         ),
@@ -215,7 +215,7 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
         ),
         _capability(
             id="package.opencli.multi-source-hda",
-            label="OpenCLI Multi-source HDA",
+            label="OpenCLI Multi-source Package",
             surface="catalog",
             status="runnable",
             backend_available=True,
@@ -224,8 +224,9 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             provider="opencli",
             channel_type="opencli",
             runtime_binding=OPENCLI_BINDING_ID,
-            reason="Backend materializes params.sources into real OpenCLI "
-            "source slots and emits node-level run events.",
+            reason="This package materializes params.sources into real OpenCLI "
+            "source/fetch nodes. OpenCLI itself is the node capability; the "
+            "package is only a composition wrapper.",
             missing=["canvas_resource_resolution", "projection_workbench"],
             tags=["package", "hda", "opencli"],
             source="backend.workflow.opencli_hda_tracer",

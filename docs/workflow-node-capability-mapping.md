@@ -12,7 +12,7 @@ Implementation slice:
 - Frontend Canvas Run now proxies to backend `/api/v1/workflows/runs`, replays `/events/stream`, and patches existing Canvas nodes from backend run events.
 - Canvas now has a real `intelligence.input.collection-need` catalog node. The node owns the visible user input textarea and calls `/api/v1/workflows/demand-draft` to produce reviewable real-node patches.
 - `intelligence.schedule.cron` now compiles/runs as a workflow schedule tick binding for Canvas Run; automatic scheduler-to-run creation remains a separate scheduler integration.
-- This does not execute blocked nodes. It makes runtime truth visible and runs the narrow OpenCLI HDA proof path; full result/resource workbench wiring is still pending.
+- This does not execute blocked nodes. It makes runtime truth visible and runs the narrow OpenCLI node/package proof path; full result/resource workbench wiring is still pending.
 - `intelligence.output.webhook` now exposes the `workflow.notifier.webhook.send` notifier contract, but Canvas live delivery remains blocked until EvidenceBatch projection, notification permission, and webhook URL resources are connected.
 - The durable backend reuse map is `docs/opencli-admin-backend-system-map.md`; check it before adding workflow/runtime surfaces.
 
@@ -34,7 +34,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 |---|---:|---|---|
 | Catalog nodes | 23 | Authoring palette and contracts | Collection Need, Cron Schedule, OpenCLI source/fetch internals, and Webhook Notify have runtime metadata; others surface `missing_runtime_binding` |
 | Primitive nodes | 107 | n8n/import/design vocabulary | Accepted by backend origin guard, but no primitive executor binding |
-| DataSource channels | 7 | `opencli`, `web_scraper`, `api`, `rss`, `cli`, `skill`, `crawl4ai` | Real outside Canvas through channel runner; not projected as executable Canvas source nodes except OpenCLI-HDA path |
+| DataSource channels | 7 | `opencli`, `web_scraper`, `api`, `rss`, `cli`, `skill`, `crawl4ai` | Real outside Canvas through channel runner; not projected as executable Canvas source nodes except the OpenCLI source/fetch node path |
 | Frontend source adapters | 1 direct adapter | `jin10` fixture/live frontend adapter | Local/simulated path, not authoritative backend workflow runtime |
 | Backend workflow run events | 1 event API family | `/api/v1/workflows/runs` + events + SSE | Backend exists; frontend run trace now proxies to backend and patches Canvas node state |
 | Manual run trigger | 1 trigger | Canvas Run button starts backend workflow runs | Runnable for the accepted project graph; user demand input is drafted before run |
@@ -43,7 +43,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 
 | Capability | Existing implementation | Frontend visibility | Runtime state | Can serve real collection need now? |
 |---|---|---|---|---|
-| OpenCLI source/fetch | `backend/channels/opencli_channel.py`; workflow runtime registry recognizes OpenCLI source adapters | `intelligence.source.opencli-slot`; `package.opencli.multi-source-hda`; HDA internals materialize source slots | Wired for compile/materializer/run event stream and frontend node-status patching; result/resource projection pending | Yes for the current HDA run/status proof; collection outputs still need EvidenceBatch/resource wiring |
+| OpenCLI source/fetch | `backend/channels/opencli_channel.py`; workflow runtime registry recognizes OpenCLI source adapters | `intelligence.source.opencli-slot`; package wrappers can compose multiple OpenCLI nodes | Wired for compile/materializer/run event stream and frontend node-status patching; result/resource projection pending | Yes for the current OpenCLI node run/status proof; collection outputs still need EvidenceBatch/resource wiring |
 | JIN10 source | Frontend adapter `frontend/lib/workflow/adapter-registry.ts`; catalog `intelligence.source.jin10` | Visible as catalog/source and local adapter | Not wired to backend workflow runtime | Not authoritative from Canvas; only frontend/local artifact path |
 | RSS source | `backend/channels/rss_channel.py` | Only Data Sources page label and primitive vocabulary, not a real Canvas source catalog item | Not wired to workflow runtime | Real backend capability, blocked on Canvas projection |
 | API/HTTP source | `backend/channels/api_channel.py`; primitives `core.http-request`, `ops.plugin-http-request` | Primitive/import vocabulary only | Not wired to workflow runtime | Real backend capability, blocked on Canvas projection |
@@ -60,7 +60,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 | `intelligence.schedule.cron` | Scheduled trigger | `workflow.trigger.schedule_tick` binding | Runnable for Canvas Run as a manual schedule tick; automatic scheduler-to-run binding still separate | Keep as the real schedule trigger node; add scheduler integration later |
 | `intelligence.source.jin10` | JIN10 source | Frontend `jin10` adapter only | Not authoritative backend runtime | Keep, but mark not runnable from Canvas |
 | `intelligence.source.opencli-slot` | OpenCLI source slot | `OpenCLIChannel` + runtime registry OpenCLI source binding | Real if adapter binding exists; UI cannot yet resolve resources/args fully | Keep as real executable source slot; add materialization/resource resolver |
-| `intelligence.processing.normalize` | Normalize items | Internal HDA normalize step exists as trace node | No generic runtime executor | Use as package internal for now; blocked as standalone |
+| `intelligence.processing.normalize` | Normalize items | Internal package normalize step exists as trace node | No generic runtime executor | Use as package internal for now; blocked as standalone |
 | `intelligence.processing.dedupe` | Dedupe items | No workflow executor binding | Compile/display only | Blocked |
 | `intelligence.agent.summary` | LLM summary | Existing provider/AI concepts elsewhere | No workflow executor binding | Blocked |
 | `intelligence.agent.score` | Importance score | No workflow executor binding | Compile/display only | Blocked |
@@ -69,7 +69,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 | `intelligence.output.inbox` | Store for review | Existing inbox/storage concepts | No workflow sink binding | Blocked |
 | `intelligence.output.webhook` | Outbound notification | Backend `WebhookNotifier` through `workflow.notifier.webhook.send` | Notifier contract exists; Canvas live delivery still needs EvidenceBatch projection, permission, and configured webhook URL | Keep as the single webhook output contract; do not mark REAL delivery yet |
 | `package.collection.pipeline` | Packaged collection pipeline | Real channels exist: JIN10/RSS/HTTP idea, DataSource runners | Package shell only; not generated from channel registry | Keep as design shell until backed by real channel nodes |
-| `package.opencli.multi-source-hda` | OpenCLI HDA package | HDA materializer + OpenCLI source slots + node run events | Best current executable proof; frontend can run and patch node state, result/resource workbench pending | Primary real path; do not replace with custom nodes |
+| `package.opencli.multi-source-hda` | OpenCLI multi-source package wrapper | Materializer composes OpenCLI source/fetch nodes + node run events | Compatibility package id around real OpenCLI nodes; frontend can run and patch node state, result/resource workbench pending | Keep only as a composition wrapper; OpenCLI itself is a node, not an HDA |
 | `package.dispatch.fanout` | Notification fanout | Backend notifiers exist; single Webhook Notify binding exists | Package shell only | Blocked until fanout/non-webhook notifier mapping |
 | `package.intelligence.pipeline` | Intelligence pipeline | Existing primitive groups | Package shell only | Blocked |
 | `package.ops.event` | Task/run event package | Backend task/run/event concepts | Package shell only | Blocked |
@@ -164,7 +164,7 @@ Current state:
 
 ## Can this be used directly now?
 
-Backend tests and the frontend Canvas can now exercise the OpenCLI HDA trace/run event proof path. The narrow answer is: yes for backend run creation, event replay, and real node-status patching on the current OpenCLI HDA path.
+Backend tests and the frontend Canvas can now exercise the OpenCLI node/package trace/run event proof path. The narrow answer is: yes for backend run creation, event replay, and real node-status patching on the current OpenCLI source/fetch path.
 
 The broader collection surface is still not directly usable because:
 
