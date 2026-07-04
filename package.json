@@ -7,6 +7,10 @@
   ],
   "scripts": {
     "dev": "nx run extension:dev",
+    "dev:frontend": "node scripts/frontend.mjs dev",
+    "build:frontend": "node scripts/frontend.mjs build",
+    "lint:frontend": "node scripts/frontend.mjs lint",
+    "typecheck:frontend": "node scripts/frontend.mjs typecheck",
     "dev:extension": "nx run extension:dev",
     "build": "nx run extension:build",
     "build:extension": "nx run extension:build",

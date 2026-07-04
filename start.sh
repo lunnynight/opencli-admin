@@ -184,7 +184,7 @@ ok "Backend API started"
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "  API 文档   →   http://localhost:$API_PORT/docs"
-echo "  前端项目   →   C:\\c\\Users\\Administrator\\projects\\open-cli-admin"
+echo "  前端项目   →   $SCRIPT_DIR/frontend"
 if [[ -n "$CHROME_PID" ]]; then
   echo ""
   echo "  Chrome 已在后台启动，请打开需要采集的平台网址并登录账号。"

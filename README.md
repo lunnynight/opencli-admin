@@ -6,10 +6,10 @@
 
 ## 当前仓库边界
 
-- 本仓库保留后端、Agent、Chrome extension、III/ODP 与编排能力。
-- 生产前端不在本仓库内维护；当前前端项目在 `C:\c\Users\Administrator\projects\open-cli-admin`。
-- Docker Compose 与 GitHub Actions 不再构建本仓库内前端，避免和独立 Canvas/HDA 前端混用。
-- 前后端对接通过 `/api/v1/*` 合同完成；Canvas/WorkflowProject 以独立前端为准。
+- 本仓库是 OpenCLI Admin 单一主仓库，包含前端、后端、Agent、Chrome extension、III/ODP 与编排能力。
+- 新前端位于 `frontend/`，以前端 Canvas/HDA WorkflowProject 为编排主线。
+- 后端位于 `backend/`，前端通过 `/api/v1/*` 与 `/health` 代理对接后端。
+- 扩展仍在 `chrome/extension-src/` 下独立构建。
 
 **OpenCLI WebUI** OpenCLI 可视化界面 [opencli-webui](https://github.com/xjh1994/opencli-webui)
 
@@ -103,19 +103,25 @@ docker compose up -d   # 启动中心 + agent-1
 
 ## 快速开始
 
-### 方式零：前端主线（推荐）
+### 方式零：前后端本地开发（推荐）
 
-生产前端只在独立前端项目下开发和构建：
+新前端在仓库内 `frontend/` 下开发和构建：
 
 ```bash
-cd C:\c\Users\Administrator\projects\open-cli-admin
-npm ci --legacy-peer-deps
-npm run dev   # Vite dev server
-npm run test
-npm run build
+cd frontend
+pnpm install
+pnpm dev      # Next.js dev server, proxies /api/v1/* to backend
+pnpm lint
+pnpm exec tsc --noEmit
 ```
 
-扩展仍在 `chrome/extension-src/` 下独立构建。本仓库 GitHub Actions 只验证 extension、backend、migrations 与 ODP Rust。
+也可以从仓库根目录调用：
+
+```bash
+npm run dev:frontend
+npm run lint:frontend
+npm run typecheck:frontend
+```
 
 ### 方式一：原生 Shell
 
@@ -348,7 +354,7 @@ OPENAI_API_KEY=sk-...
 
 | 层次 | 技术 |
 |------|------|
-| 前端 | React 18 + TypeScript + Vite + Tailwind CSS |
+| 前端 | Next.js + React 19 + TypeScript + Tailwind CSS |
 | 后端 | FastAPI + SQLAlchemy 2.0 (async) |
 | 数据库 | SQLite（默认）/ PostgreSQL |
 | 任务队列 | asyncio（单机）/ Celery + Redis（分布式） |
@@ -388,6 +394,7 @@ AI 处理（可选）— Claude · OpenAI · DeepSeek · Kimi · GLM · Ollama
 │   ├── pipeline/        # 采集流水线（collect → normalize → store → ai → notify）
 │   ├── scheduler.py     # 本地异步调度器
 │   └── worker/          # Celery 任务定义
+├── frontend/             # Next.js Canvas/HDA 前端
 ├── chrome/extension-src/ # Browser Bridge / extension
 ├── iii/                  # III workers and schedules
 ├── odp-rs/               # ODP Rust data plane

@@ -32,6 +32,7 @@ coverage.xml
 .env
 .env.local
 .env.*.local
+.mcp.json
 
 # Alembic versions (keep the folder, ignore generated files optionally)
 # Uncomment if you don't want to commit migration versions:
@@ -40,8 +41,10 @@ coverage.xml
 # Node / frontend
 node_modules/
 frontend/node_modules/
+frontend/.next/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+frontend/.mcp.json
 .nx/
 
 # macOS
