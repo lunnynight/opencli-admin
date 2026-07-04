@@ -676,7 +676,10 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client):
     assert catalog["intelligence.source.opencli-slot"]["status"] == "runnable"
     assert catalog["intelligence.source.opencli-slot"]["backendAvailable"] is True
     assert catalog["intelligence.source.opencli-slot"]["runtimeBinding"]
+    assert "frontend_run_event_binding" not in catalog["intelligence.source.opencli-slot"]["missing"]
     assert catalog["package.opencli.multi-source-hda"]["status"] == "runnable"
+    assert "frontend_run_event_binding" not in catalog["package.opencli.multi-source-hda"]["missing"]
+    assert "typed_demand_input_envelope" not in catalog["package.opencli.multi-source-hda"]["missing"]
     assert catalog["intelligence.output.webhook"]["status"] == "blocked"
     assert catalog["intelligence.output.webhook"]["backendAvailable"] is True
 
@@ -704,3 +707,8 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client):
     primitives = {item["id"]: item for item in data["primitives"]}
     assert primitives["primitive.ops.trigger-webhook"]["status"] == "blocked"
     assert primitives["primitive.ops.trigger-webhook"]["backendAvailable"] is True
+
+    triggers = {item["id"]: item for item in data["triggers"]}
+    assert triggers["trigger.manual"]["status"] == "runnable"
+    assert "typed_demand_input_envelope" in triggers["trigger.manual"]["missing"]
+    assert triggers["trigger.webhook"]["status"] == "blocked"

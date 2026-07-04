@@ -110,7 +110,7 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             runtime_binding=OPENCLI_BINDING_ID,
             reason="Backend workflow compile resolves OpenCLI source/fetch "
             "nodes to the III OpenCLI collector binding.",
-            missing=["canvas_resource_resolution", "frontend_run_event_binding"],
+            missing=["canvas_resource_resolution"],
             tags=["source", "opencli", "hda"],
             source="backend.workflow.runtime_registry",
         ),
@@ -187,7 +187,7 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             runtime_binding=OPENCLI_BINDING_ID,
             reason="Backend materializes params.sources into real OpenCLI "
             "source slots and emits node-level run events.",
-            missing=["frontend_run_event_binding", "projection_workbench"],
+            missing=["canvas_resource_resolution", "projection_workbench"],
             tags=["package", "hda", "opencli"],
             source="backend.workflow.opencli_hda_tracer",
         ),
@@ -416,13 +416,13 @@ def _trigger_capabilities() -> list[WorkflowRuntimeCapability]:
             id="trigger.manual",
             label="Manual workflow run",
             surface="trigger",
-            status="blocked",
+            status="runnable",
             backend_available=True,
             kind="schedule",
             capability="trigger",
-            reason="Backend workflow run start exists, but frontend Canvas run "
-            "still writes local artifacts instead of calling it.",
-            missing=["frontend_run_binding"],
+            reason="Frontend Canvas Run calls the backend workflow run API and "
+            "replays node events onto existing Canvas nodes.",
+            missing=["typed_demand_input_envelope"],
             tags=["trigger", "manual"],
         ),
         _capability(

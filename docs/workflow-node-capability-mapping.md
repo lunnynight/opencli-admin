@@ -33,6 +33,7 @@ So the next step is not more hand-made nodes. The next step is to project existi
 | DataSource channels | 7 | `opencli`, `web_scraper`, `api`, `rss`, `cli`, `skill`, `crawl4ai` | Real outside Canvas through channel runner; not projected as executable Canvas source nodes except OpenCLI-HDA path |
 | Frontend source adapters | 1 direct adapter | `jin10` fixture/live frontend adapter | Local/simulated path, not authoritative backend workflow runtime |
 | Backend workflow run events | 1 event API family | `/api/v1/workflows/runs` + events + SSE | Backend exists; frontend run trace now proxies to backend and patches Canvas node state |
+| Manual run trigger | 1 trigger | Canvas Run button starts backend workflow runs | Runnable for current project graph; typed user-demand input envelope still missing |
 
 ## Adapter/source mapping
 
@@ -118,7 +119,7 @@ This means the "input point" is not a generic textbox inside a source node. Ther
 
 | Input kind | Existing basis | Canvas requirement |
 |---|---|---|
-| Manual/AI run input | Workflow run request envelope | Add typed run input to backend run API and frontend run panel |
+| Manual/AI run input | Workflow run request envelope | Add typed demand input to backend run API and frontend run panel |
 | Schedule trigger | scheduler/task concepts; cron catalog node | Bind trigger nodes to real run creation |
 | Inbound webhook trigger | `/api/v1/webhooks/{source_id}` for source trigger | Add workflow-level webhook trigger mode and response/projection policy |
 | Source input | DataSource/channel config or OpenCLI source slot | Generate source nodes from backend capability metadata |
@@ -151,9 +152,10 @@ The broader collection surface is still not directly usable because:
 
 1. The source catalog is not generated from backend channel capability metadata.
 2. Most catalog and primitive nodes are visible but lack runtime bindings.
-3. Resource resolution for cookies/profile/credentials/worker pool is not connected to Canvas source materialization.
-4. Evidence/result projection APIs are not ready, so outputs are still references and event counts rather than inspectable collection results.
-5. Webhook/notifier sinks and inbound webhook trigger response policy are not bound to the workflow run axis.
+3. The user's natural-language Collection Need is not yet part of `WorkflowRunStartRequest`; Canvas Run currently submits the project graph only.
+4. Resource resolution for cookies/profile/credentials/worker pool is not connected to Canvas source materialization.
+5. Evidence/result projection APIs are not ready, so outputs are still references and event counts rather than inspectable collection results.
+6. Webhook/notifier sinks and inbound webhook trigger response policy are not bound to the workflow run axis.
 
 So the next work remains wiring existing capabilities instead of adding new node concepts.
 
