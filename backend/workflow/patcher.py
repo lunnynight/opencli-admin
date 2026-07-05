@@ -13,6 +13,10 @@ from backend.schemas.workflow import (
 )
 from backend.workflow.compiler import compile_workflow_project
 from backend.workflow.node_registry import forbidden_node_definition_keys, resolve_node_origin
+from backend.workflow.opencli_adapter_nodes import (
+    OpenCLIAdapterNodeMaterializationError,
+    materialize_opencli_adapter_node,
+)
 
 
 def preview_workflow_patch(
@@ -71,6 +75,97 @@ def preview_workflow_patch(
                 )
                 continue
             node.params.update(operation.params)
+            accepted.append(operation.model_dump(exclude_none=True))
+            continue
+
+        if operation.op == "add_adapter":
+            if operation.adapter is None:
+                errors.append(_operation_error(operation.op, "add_adapter requires adapter", path))
+                continue
+            if any(adapter.id == operation.adapter.id for adapter in patched.adapters):
+                errors.append(
+                    WorkflowCompileError(
+                        code="duplicate_adapter_id",
+                        message=f'Workflow adapter id "{operation.adapter.id}" is duplicated',
+                        path=[*path, "adapter", "id"],
+                    )
+                )
+                continue
+            patched.adapters.append(operation.adapter)
+            accepted.append(operation.model_dump(exclude_none=True))
+            continue
+
+        if operation.op == "materialize_opencli_adapter":
+            if not operation.adapterNodeId:
+                errors.append(
+                    _operation_error(
+                        operation.op,
+                        "materialize_opencli_adapter requires adapterNodeId",
+                        path,
+                    )
+                )
+                continue
+            try:
+                node, adapter = materialize_opencli_adapter_node(
+                    operation.adapterNodeId,
+                    node_id=operation.nodeId,
+                    params=operation.params,
+                )
+            except OpenCLIAdapterNodeMaterializationError as exc:
+                errors.append(
+                    WorkflowCompileError(
+                        code=exc.code,
+                        message=exc.message,
+                        path=[*path, "adapterNodeId"],
+                    )
+                )
+                if exc.missing_params:
+                    reason = (
+                        "Missing OpenCLI adapter params: "
+                        f"{', '.join(exc.missing_params)}"
+                    )
+                    missing.append(
+                        WorkflowMissingCapability(
+                            capability="opencli.adapter.params",
+                            reason=reason,
+                            n8n_search_hint=operation.adapterNodeId,
+                        )
+                    )
+                continue
+            if any(existing.id == node.id for existing in patched.nodes):
+                errors.append(
+                    WorkflowCompileError(
+                        code="duplicate_node_id",
+                        message=f'Workflow node id "{node.id}" is duplicated',
+                        node_id=node.id,
+                        path=[*path, "nodeId"],
+                    )
+                )
+                continue
+            node_errors = _validate_added_node(node, path)
+            if node_errors:
+                errors.extend(node_errors)
+                continue
+            if adapter is not None:
+                existing_adapter = next(
+                    (item for item in patched.adapters if item.id == adapter.id),
+                    None,
+                )
+                if existing_adapter is None:
+                    patched.adapters.append(adapter)
+                elif existing_adapter.model_dump() != adapter.model_dump():
+                    errors.append(
+                        WorkflowCompileError(
+                            code="duplicate_adapter_id",
+                            message=(
+                                f'Workflow adapter id "{adapter.id}" already exists '
+                                "with different configuration"
+                            ),
+                            path=[*path, "adapterNodeId"],
+                        )
+                    )
+                    continue
+            patched.nodes.append(node)
             accepted.append(operation.model_dump(exclude_none=True))
             continue
 

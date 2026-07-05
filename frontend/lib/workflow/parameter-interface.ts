@@ -67,11 +67,7 @@ export function buildParameterInterfaceView({
 }
 
 function prefersTemplateInterface(node: WorkflowProjectNode): boolean {
-  const catalogId = typeof node.ui?.catalogId === "string" ? node.ui.catalogId : undefined
-  return (
-    catalogId === "intelligence.input.collection-need" ||
-    (node.kind === "schedule" && node.capability === "trigger" && node.params.mode === "demand-draft")
-  )
+  return isCollectionNeedNode(node)
 }
 
 export function createParameterInterfaceFromInternals(
@@ -229,11 +225,7 @@ function internalsSummaryView(node: WorkflowProjectNode, internals: NodeInternal
 }
 
 function templateGroup(node: WorkflowProjectNode): ParameterInterfaceGroup {
-  const catalogId = typeof node.ui?.catalogId === "string" ? node.ui.catalogId : undefined
-  if (
-    catalogId === "intelligence.input.collection-need" ||
-    (node.kind === "schedule" && node.capability === "trigger" && node.params.mode === "demand-draft")
-  ) {
+  if (isCollectionNeedNode(node)) {
     return { id: "input", label: "Input", order: 1 }
   }
   if (node.kind === "source") return { id: "source", label: "Source", order: 1 }
@@ -248,4 +240,19 @@ function sortedGroups(groups: ParameterInterfaceGroup[]): ParameterInterfaceGrou
 
 function compareFields(left: { groupId: string; order?: number; label: string }, right: { groupId: string; order?: number; label: string }) {
   return left.groupId.localeCompare(right.groupId) || (left.order ?? 0) - (right.order ?? 0) || left.label.localeCompare(right.label)
+}
+
+function isCollectionNeedNode(node: WorkflowProjectNode): boolean {
+  if (node.ui?.catalogId === "intelligence.input.collection-need") return true
+  if (node.kind !== "schedule" || node.capability !== "trigger") return false
+  if (node.params.mode === "demand-draft") return true
+  return hasNeedShape(node.params) && !hasScheduleShape(node.params)
+}
+
+function hasNeedShape(params: Record<string, unknown>): boolean {
+  return typeof params.text === "string" || typeof params.locale === "string"
+}
+
+function hasScheduleShape(params: Record<string, unknown>): boolean {
+  return typeof params.interval === "string" || typeof params.timezone === "string"
 }

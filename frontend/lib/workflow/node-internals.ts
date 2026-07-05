@@ -112,15 +112,35 @@ const NODE_INTERNALS: Record<string, NodeInternals> = {
   },
   "intelligence.source.opencli-slot": {
     title: "OpenCLI Source Slot Internals",
-    summary: "A source slot keeps OpenCLI command params structured while delegating execution to the worker pool.",
+    summary: "A source slot keeps package-selected OpenCLI command params structured while delegating execution to the runtime resource resolver.",
     steps: [
       step("site", "Site binding", "fetch", "Selects the OpenCLI adapter site.", "params.site", "ready", [
-        exposedParam("site", "Site", "source", "Source", "text", "bilibili", { order: 1 }),
-        exposedParam("command", "Command", "source", "Source", "text", "search", { order: 2 }),
+        exposedParam("site", "Site", "source", "Source", "text", "bilibili", { readonly: true, order: 1 }),
+        exposedParam("command", "Command", "source", "Source", "text", "search", { readonly: true, order: 2 }),
       ]),
-      step("args", "Command args", "parse", "Carries AI/user-filled command args without flattening them into text.", "params.args", "ready"),
-      step("dispatch", "Worker dispatch", "queue", "Queues the source request for the OpenCLI/Docker browser worker pool.", "workerPool", "ready"),
+      step("args", "Command args", "parse", "Carries planner-filled command args without flattening them into credential fields.", "params.args", "ready"),
+      step("dispatch", "Runtime dispatch", "queue", "Queues the source request through OpenCLI runtime resources.", "runtime binding", "ready"),
       step("output", "Output schema", "validate", "Returns items[] with sourceGroup and source references.", "items[] contract", "simulated"),
+    ],
+  },
+  "intelligence.source.pool": {
+    title: "Source Pool Internals",
+    summary: "Projects package demand into a parallel source-slot fanout without exposing credential or browser-resource fields.",
+    steps: [
+      step("registry", "Source registry projection", "select", "Reads the package-owned source slot set.", "params.sourceGroups", "ready"),
+      step("fanout", "Parallel fanout", "route", "Emits one trigger per materialized OpenCLI source slot.", "fanout=parallel", "ready", [
+        exposedParam("sourceCount", "Source Count", "source", "Source", "number", 0, {
+          readonly: true,
+          min: 0,
+          step: 1,
+          order: 1,
+        }),
+        exposedParam("fanout", "Fanout", "source", "Source", "text", "parallel", {
+          readonly: true,
+          order: 2,
+        }),
+      ]),
+      step("resources", "Resource guard", "guard", "Leaves session identity and execution capacity resolution to backend runtime resources.", "runtime resource resolver", "ready"),
     ],
   },
   "intelligence.agent.summary": {
@@ -283,6 +303,63 @@ const NODE_INTERNALS: Record<string, NodeInternals> = {
       step("guard", "Delivery guard", "guard", "Checks permissions and URL configuration before sends.", "agentPermissions", "ready"),
     ],
   },
+  "intelligence.output.turbopush-publish": {
+    title: "TurboPush Publish Internals",
+    summary: "Publishes articles, graph-text, or videos through the local TurboPush service and logged accounts.",
+    steps: [
+      step("content", "Content binding", "format", "Chooses content type and reads publishable content from upstream or inline params.", "contentType/contentSource", "ready", [
+        exposedParam("contentType", "Content Type", "publish", "Publish", "select", "graph_text", {
+          options: turboPushContentTypeOptions(),
+          order: 1,
+        }),
+        exposedParam("contentSource", "Content Source", "publish", "Publish", "select", "upstream", {
+          options: [
+            { value: "upstream", label: "Upstream Items" },
+            { value: "inline", label: "Inline Content" },
+            { value: "existing_article", label: "Existing Article ID" },
+          ],
+          order: 2,
+        }),
+        exposedParam("title", "Title", "publish", "Publish", "text", "{{item.title}}", {
+          order: 3,
+        }),
+      ]),
+      step("body", "Body and files", "format", "Carries Markdown, desc, files, and thumbnails as structured content fields.", "markdown/desc/files/thumb", "ready", [
+        exposedParam("markdown", "Markdown", "content", "Content", "textarea", "{{item.markdown}}", {
+          order: 1,
+        }),
+        exposedParam("desc", "Description", "content", "Content", "textarea", "{{item.summary}}", {
+          order: 2,
+        }),
+        exposedParam("files", "Files", "content", "Content", "tokens", [], {
+          order: 3,
+        }),
+      ]),
+      step("accounts", "Logged account resolver", "resolve", "Calls TurboPush list_logged_accounts and filters by target platform intent.", "list_logged_accounts", "ready", [
+        exposedParam("targetPlatforms", "Platforms", "target", "Target", "tokens", ["xiaohongshu"], {
+          options: turboPushPlatformOptions(),
+          order: 1,
+        }),
+        exposedParam("accountSelector", "Accounts", "target", "Target", "select", "logged_accounts_by_platform", {
+          options: [
+            { value: "logged_accounts_by_platform", label: "Logged Accounts By Platform" },
+            { value: "all_logged", label: "All Logged Accounts" },
+          ],
+          order: 2,
+        }),
+      ]),
+      step("schema", "Platform settings schema", "validate", "Calls get_platform_setting_schema before building postAccounts.", "get_platform_setting_schema", "ready"),
+      step("create", "Create content", "send", "Calls create_article, create_graph_text, or create_video.", "create_*", "ready"),
+      step("publish", "SSE publish", "send", "Calls publish_article, publish_graph_text, or publish_video and consumes SSE results.", "publish_* SSE", "ready", [
+        exposedParam("syncDraft", "Sync Draft", "runtime", "Runtime", "boolean", false, {
+          groupOrder: 4,
+          order: 1,
+        }),
+      ]),
+      step("records", "Publish records", "evidence", "Reads list_records/get_record_info for publish evidence.", "record APIs", "ready"),
+      step("guard", "Runtime guard", "guard", "Blocks until local TurboPush service and send permission are present.", "service + permission", "ready"),
+    ],
+  },
   "intelligence.output.inbox": {
     title: "Inbox Internals",
     summary: "Writes reviewable intelligence items into a durable operator queue.",
@@ -298,6 +375,15 @@ const NODE_INTERNALS: Record<string, NodeInternals> = {
         exposedParam("archive", "Archive", "misc", "Misc", "boolean", true, { groupOrder: 2, order: 1 }),
       ]),
       step("audit", "Audit refs", "evidence", "Keeps stored item ids traceable.", "stored refs", "ready"),
+    ],
+  },
+  "intelligence.output.collection-result": {
+    title: "Collection Output Internals",
+    summary: "Collects normalized package items and exposes them as the HDA output boundary.",
+    steps: [
+      step("collect", "Collect normalized items", "store", "Receives items[] from internal normalize.", "items[]", "ready"),
+      step("artifact", "Artifact boundary", "archive", "Creates a traceable package output reference.", "opencli-hda-output", "ready"),
+      step("handoff", "Downstream handoff", "emit", "Makes package output available to downstream nodes.", "storedItems[]", "simulated"),
     ],
   },
   "package.intelligence.pipeline": {
@@ -319,7 +405,7 @@ const NODE_INTERNALS: Record<string, NodeInternals> = {
     steps: [
       step("trigger", "Schedule input", "trigger", "Receives the workflow tick from the outer canvas.", "trigger edge", "ready"),
       step("source-slots", "Parallel source slots", "fetch", "Expands params.sources into source-* slots so user/AI can choose sources without editing internals.", "node.params.sources[]", "ready"),
-      step("fanout", "Docker worker fanout", "queue", "Dispatches source slots in parallel against the OpenCLI worker pool.", "execution.fanout=parallel", "ready"),
+      step("fanout", "Runtime fanout", "queue", "Dispatches source slots in parallel through OpenCLI runtime capacity.", "execution.fanout=parallel", "ready"),
       step("normalize", "Internal normalize", "resolve", "Normalizes all source results before returning items[] to the outer canvas.", "items[] contract", "ready"),
       step("trace", "Runtime trace fold", "evidence", "Backend trace dispatches are folded onto this package node in the run panel.", "opencli-hda trace", "ready"),
     ],
@@ -472,16 +558,20 @@ export function getNodeInternals(node: WorkflowProjectNode | undefined): NodeInt
   const catalogId = typeof node.ui?.catalogId === "string" ? node.ui.catalogId : undefined
   if (catalogId && NODE_INTERNALS[catalogId]) return NODE_INTERNALS[catalogId]
 
+  if (isCollectionNeedNode(node)) return NODE_INTERNALS["intelligence.input.collection-need"]
   if (node.kind === "schedule" && node.capability === "trigger") return NODE_INTERNALS["intelligence.schedule.cron"]
   if (node.kind === "source" && node.adapter === "jin10-kuaixun") return NODE_INTERNALS["intelligence.source.jin10"]
   if (node.kind === "source" && node.adapter?.startsWith("opencli-")) return NODE_INTERNALS["intelligence.source.opencli-slot"]
+  if (node.kind === "agent" && node.capability === "normalize" && node.params.fanout === "parallel") return NODE_INTERNALS["intelligence.source.pool"]
   if (node.kind === "agent" && node.capability === "normalize") return NODE_INTERNALS["intelligence.processing.normalize"]
   if (node.kind === "agent" && node.capability === "dedupe") return NODE_INTERNALS["intelligence.processing.dedupe"]
   if (node.kind === "agent" && node.capability === "summarize") return NODE_INTERNALS["intelligence.agent.summary"]
   if (node.kind === "agent" && node.capability === "score") return NODE_INTERNALS["intelligence.agent.score"]
   if (node.kind === "agent" && node.capability === "tag") return NODE_INTERNALS["intelligence.agent.tag"]
   if (node.kind === "router" && node.capability === "route") return NODE_INTERNALS["intelligence.router.importance"]
+  if (node.kind === "inbox" && node.capability === "store" && node.params.queue === "opencli-hda-output") return NODE_INTERNALS["intelligence.output.collection-result"]
   if (node.kind === "inbox" && node.capability === "store") return NODE_INTERNALS["intelligence.output.inbox"]
+  if (node.kind === "notify" && node.adapter?.startsWith("turbopush")) return NODE_INTERNALS["intelligence.output.turbopush-publish"]
   if (node.kind === "notify" && node.capability === "send") return NODE_INTERNALS["intelligence.output.webhook"]
   return undefined
 }
@@ -519,6 +609,21 @@ function exposedParam(
   }
 }
 
+function isCollectionNeedNode(node: WorkflowProjectNode): boolean {
+  if (node.ui?.catalogId === "intelligence.input.collection-need") return true
+  if (node.kind !== "schedule" || node.capability !== "trigger") return false
+  if (node.params.mode === "demand-draft") return true
+  return hasNeedShape(node.params) && !hasScheduleShape(node.params)
+}
+
+function hasNeedShape(params: Record<string, unknown>): boolean {
+  return typeof params.text === "string" || typeof params.locale === "string"
+}
+
+function hasScheduleShape(params: Record<string, unknown>): boolean {
+  return typeof params.interval === "string" || typeof params.timezone === "string"
+}
+
 function timezoneOptions() {
   return [
     { value: "Asia/Shanghai", label: "Asia/Shanghai" },
@@ -540,5 +645,38 @@ function reviewQueueOptions() {
     { value: "macro-watch", label: "Macro Watch" },
     { value: "risk-review", label: "Risk Review" },
     { value: "ops-triage", label: "Ops Triage" },
+  ]
+}
+
+function turboPushContentTypeOptions() {
+  return [
+    { value: "article", label: "Article" },
+    { value: "graph_text", label: "Graph Text" },
+    { value: "video", label: "Video" },
+  ]
+}
+
+function turboPushPlatformOptions() {
+  return [
+    { value: "wechat", label: "WeChat" },
+    { value: "wechat-video", label: "WeChat Channels" },
+    { value: "douyin", label: "Douyin" },
+    { value: "toutiaohao", label: "Toutiao" },
+    { value: "kuaishou", label: "Kuaishou" },
+    { value: "xiaohongshu", label: "Xiaohongshu" },
+    { value: "bilibili", label: "Bilibili" },
+    { value: "zhihu", label: "Zhihu" },
+    { value: "sina", label: "Sina Weibo" },
+    { value: "csdn", label: "CSDN" },
+    { value: "juejin", label: "Juejin" },
+    { value: "jianshuhao", label: "Jianshu" },
+    { value: "tiktok", label: "TikTok" },
+    { value: "youtube", label: "YouTube" },
+    { value: "x", label: "X" },
+    { value: "pinduoduo", label: "Pinduoduo" },
+    { value: "acfun", label: "AcFun" },
+    { value: "omtencent", label: "Tencent" },
+    { value: "weishi", label: "Weishi" },
+    { value: "baijiahao", label: "Baijiahao" },
   ]
 }

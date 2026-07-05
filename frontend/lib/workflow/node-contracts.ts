@@ -1,7 +1,18 @@
 import type { AdapterBinding, WorkflowProject, WorkflowProjectEdge, WorkflowProjectNode } from "./schema"
 
 export type PortDirection = "input" | "output"
-export type PortDataType = "trigger" | "items[]" | "scoredItems[]" | "summary[]" | "branch" | "delivery" | "storedItems[]" | "unknown"
+export type PortDataType =
+  | "trigger"
+  | "items[]"
+  | "recordCandidate[]"
+  | "record[]"
+  | "runtimeArtifact[]"
+  | "scoredItems[]"
+  | "summary[]"
+  | "branch"
+  | "delivery"
+  | "storedItems[]"
+  | "unknown"
 export type ParamDataType = "string" | "number" | "boolean" | "string[]" | "object" | "object[]"
 export type ContractStatus = "pass" | "warn" | "fail"
 
@@ -138,23 +149,47 @@ const CONTRACTS: Record<string, NodeContract> = {
         description: "Logical OpenCLI site key such as bilibili or xiaohongshu.",
       }),
       param("command", "params", "string", true, "search", {
-        description: "OpenCLI command exposed by the adapter package.",
+        description: "Structured command selected by the package/source planner.",
       }),
       param("sourceGroup", "params", "string", true, "video", {
         description: "Downstream grouping key used in traces and source selection.",
       }),
       param("args", "params", "object", false, { keyword: "ai" }, {
-        description: "Structured command args filled by user or AI.",
+        description: "Structured command args selected by the package/source planner.",
       }),
     ],
-    ["source slot params must stay structured", "slot execution is delegated to OpenCLI/Docker workers"],
+    ["source slot params must stay structured", "slot execution is delegated to OpenCLI runtime resources"],
+  ),
+  "intelligence.source.pool": contract(
+    "intelligence.source.pool",
+    "Source Pool",
+    "need -> trigger",
+    [port("in", "input", "trigger", false, "Consumes package demand or trigger context.")],
+    [port("out", "output", "trigger", true, "Fans out the trigger to OpenCLI source slots.")],
+    [
+      param("sourceCount", "params", "number", true, 0, {
+        min: 0,
+        description: "Number of materialized source slots.",
+      }),
+      param("sourceGroups", "params", "string[]", false, [], {
+        description: "Source groups selected by the demand/package planner.",
+      }),
+      param("fanout", "params", "string", true, "parallel", {
+        enum: ["parallel"],
+        description: "OpenCLI HDA source slots always run as parallel fanout.",
+      }),
+    ],
+    [
+      "source pool must fan out only to package-owned source slots",
+      "resource credentials and runtime identities must stay outside node params",
+    ],
   ),
   "intelligence.processing.normalize": contract(
     "intelligence.processing.normalize",
     "Normalize Items",
-    "items[] -> items[]",
+    "items[] -> recordCandidate[]",
     [port("in", "input", "items[]", true, "Consumes source items.")],
-    [port("out", "output", "items[]", true, "Emits normalized items.")],
+    [port("out", "output", "recordCandidate[]", true, "Emits normalized record candidates.")],
     [
       param("language", "params", "string", true, "zh-CN", { description: "Normalized output language." }),
       param("preserveSourceRefs", "params", "boolean", false, true, { description: "Keeps source references available downstream." }),
@@ -164,14 +199,41 @@ const CONTRACTS: Record<string, NodeContract> = {
   "intelligence.processing.dedupe": contract(
     "intelligence.processing.dedupe",
     "Dedupe Items",
-    "items[] -> items[]",
-    [port("in", "input", "items[]", true, "Consumes candidate items.")],
-    [port("out", "output", "items[]", true, "Emits unique items.")],
+    "recordCandidate[] -> recordCandidate[]",
+    [port("in", "input", "recordCandidate[]", true, "Consumes candidate items.")],
+    [port("out", "output", "recordCandidate[]", true, "Emits unique candidates.")],
     [
       param("key", "params", "string", true, "title+source+publishedAt", { description: "Deduplication key expression." }),
       param("window", "params", "string", true, "24h", { description: "Deduplication time window." }),
     ],
     ["dedupe key must be explicit"],
+  ),
+  "intelligence.flow.merge": contract(
+    "intelligence.flow.merge",
+    "Merge",
+    "recordCandidate[] + recordCandidate[] -> recordCandidate[]",
+    [
+      port("in1", "input", "recordCandidate[]", true, "Consumes the first candidate stream."),
+      port("in2", "input", "recordCandidate[]", true, "Consumes another candidate stream."),
+    ],
+    [port("out", "output", "recordCandidate[]", true, "Emits merged candidates with lineage preserved.")],
+    [
+      param("strategy", "params", "string", true, "concat", {
+        enum: ["concat", "key_join", "dedupe", "priority", "windowed"],
+        description: "Merge strategy. The first loop executes concat and preserves lineage.",
+      }),
+      param("preserveLineage", "params", "boolean", true, true, {
+        description: "Lineage preservation is required for first-loop merges.",
+      }),
+      param("inputType", "params", "string", true, "recordCandidate[]", {
+        enum: ["recordCandidate[]", "record[]", "runtimeArtifact[]"],
+        description: "Typed upstream stream accepted by this merge preset.",
+      }),
+    ],
+    [
+      "merge requires at least two compatible upstream inputs",
+      "lineage must be preserved for every output item",
+    ],
   ),
   "intelligence.agent.summary": contract(
     "intelligence.agent.summary",
@@ -235,6 +297,38 @@ const CONTRACTS: Record<string, NodeContract> = {
     ],
     ["router expression must be present", "router should have at least one downstream edge"],
   ),
+  "intelligence.control.record-acceptance": contract(
+    "intelligence.control.record-acceptance",
+    "Record Acceptance Gate",
+    "recordCandidate[] -> record[]",
+    [port("candidates", "input", "recordCandidate[]", true, "Consumes normalized record candidates.")],
+    [port("records", "output", "record[]", true, "Emits accepted records.")],
+    [
+      param("mode", "params", "string", true, "automatic_with_review", {
+        enum: ["automatic_with_review", "manual_review", "automatic_strict"],
+        description: "Acceptance policy for candidates that pass or need review.",
+      }),
+      param("schema", "params", "string", true, "record.v1", {
+        description: "Record schema expected before acceptance.",
+      }),
+      param("dedupe", "params", "string", true, "required", {
+        enum: ["required", "advisory", "off"],
+        description: "Deduplication requirement before acceptance.",
+      }),
+      param("lineageRequired", "params", "boolean", true, true, {
+        description: "Candidates without lineage cannot become records.",
+      }),
+      param("minQuality", "params", "number", false, 0, {
+        min: 0,
+        max: 1,
+        description: "Minimum candidate quality score.",
+      }),
+    ],
+    [
+      "accepted records must satisfy schema and lineage requirements",
+      "raw artifacts or candidates cannot bypass this gate into the record sink",
+    ],
+  ),
   "intelligence.output.inbox": contract(
     "intelligence.output.inbox",
     "Inbox Store",
@@ -246,6 +340,49 @@ const CONTRACTS: Record<string, NodeContract> = {
       param("archive", "params", "boolean", false, true, { description: "Whether to archive stored items." }),
     ],
     ["queue must be present", "stored item ids must be traceable"],
+  ),
+  "intelligence.sink.records": contract(
+    "intelligence.sink.records",
+    "Record Sink",
+    "record[] -> storedItems[]",
+    [port("records", "input", "record[]", true, "Consumes accepted records only.")],
+    [port("stored", "output", "storedItems[]", false, "Emits stored record references.")],
+    [
+      param("target", "params", "string", true, "records", {
+        enum: ["records"],
+        description: "Authoritative records system target.",
+      }),
+      param("writeMode", "params", "string", true, "append", {
+        enum: ["append", "upsert"],
+        description: "Record write mode.",
+      }),
+      param("preserveLineage", "params", "boolean", true, true, {
+        description: "Stored records keep lineage and run trace pointers.",
+      }),
+    ],
+    [
+      "record sink only accepts records emitted by an acceptance gate",
+      "stored records must keep lineage references",
+    ],
+  ),
+  "intelligence.output.collection-result": contract(
+    "intelligence.output.collection-result",
+    "Collection Output",
+    "recordCandidate[] -> storedItems[]",
+    [port("in", "input", "recordCandidate[]", true, "Consumes normalized package candidates.")],
+    [port("out", "output", "storedItems[]", false, "Emits package output artifact references.")],
+    [
+      param("queue", "params", "string", true, "opencli-hda-output", {
+        description: "Internal artifact queue for package output.",
+      }),
+      param("archive", "params", "boolean", false, false, {
+        description: "Whether the package output should be archived.",
+      }),
+    ],
+    [
+      "collection output must expose package items without credential params",
+      "downstream nodes consume items through the package boundary",
+    ],
   ),
   "intelligence.output.webhook": contract(
     "intelligence.output.webhook",
@@ -265,6 +402,48 @@ const CONTRACTS: Record<string, NodeContract> = {
       }),
     ],
     ["real sends require explicit permission", "delivery payload should be inspectable before send"],
+  ),
+  "intelligence.output.turbopush-publish": contract(
+    "intelligence.output.turbopush-publish",
+    "TurboPush Publish",
+    "items[] -> delivery",
+    [port("in", "input", "items[]", true, "Consumes publishable content or upstream items.")],
+    [port("out", "output", "delivery", false, "Emits TurboPush publish result or blocked resource state.")],
+    [
+      param("mode", "adapter.mode", "string", true, "live", {
+        enum: ["live"],
+        description: "TurboPush runs through the local service/MCP bridge.",
+      }),
+      param("contentType", "params", "string", true, "graph_text", {
+        enum: ["article", "graph_text", "video"],
+        description: "TurboPush content type used to choose create_* and publish_* tools.",
+      }),
+      param("contentSource", "params", "string", true, "upstream", {
+        enum: ["upstream", "inline", "existing_article"],
+        description: "Where publishable content comes from.",
+      }),
+      param("title", "params", "string", true, "{{item.title}}", {
+        description: "Title template or inline title.",
+      }),
+      param("targetPlatforms", "params", "string[]", true, ["xiaohongshu"], {
+        description: "Platform intent. Logged accounts and platform settings are resolved by TurboPush.",
+      }),
+      param("accountSelector", "params", "string", true, "logged_accounts_by_platform", {
+        enum: ["logged_accounts_by_platform", "all_logged"],
+        description: "Account resolution strategy; account credentials stay in TurboPush.",
+      }),
+      param("platformSettings", "params", "object", false, {}, {
+        description: "Implicit platform settings injected by runtime/agent assembly, not a user credential form.",
+      }),
+      param("syncDraft", "params", "boolean", false, false, {
+        description: "When true, creates/syncs drafts instead of direct publish.",
+      }),
+    ],
+    [
+      "account/session/browser resources must be resolved through TurboPush, not node params",
+      "publishing requires workflow send permission and local TurboPush service resource",
+      "runtime must use list_logged_accounts, platform settings defaults, create_*, publish_*, and SSE result events",
+    ],
   ),
   "package.opencli.multi-source-hda": contract(
     "package.opencli.multi-source-hda",
@@ -294,7 +473,7 @@ const CONTRACTS: Record<string, NodeContract> = {
     [
       "package internals must include OpenCLI source slots generated from params.sources",
       "source slots must fan out in parallel before internal normalize",
-      "OpenCLI dispatch must resolve to III/docker browser workers",
+      "OpenCLI dispatch must resolve through III/OpenCLI runtime resources",
     ],
   ),
 }
@@ -304,19 +483,25 @@ export function getNodeContract(node: WorkflowProjectNode | undefined): NodeCont
   const catalogId = typeof node.ui?.catalogId === "string" ? node.ui.catalogId : undefined
   if (catalogId && CONTRACTS[catalogId]) return CONTRACTS[catalogId]
 
-  if (node.kind === "schedule" && node.capability === "trigger" && node.params.mode === "demand-draft") {
+  if (isCollectionNeedNode(node)) {
     return CONTRACTS["intelligence.input.collection-need"]
   }
   if (node.kind === "schedule" && node.capability === "trigger") return CONTRACTS["intelligence.schedule.cron"]
   if (node.kind === "source" && node.adapter === "jin10-kuaixun") return CONTRACTS["intelligence.source.jin10"]
   if (node.kind === "source" && node.adapter?.startsWith("opencli-")) return CONTRACTS["intelligence.source.opencli-slot"]
+  if (node.kind === "agent" && node.capability === "normalize" && node.params.fanout === "parallel") return CONTRACTS["intelligence.source.pool"]
   if (node.kind === "agent" && node.capability === "normalize") return CONTRACTS["intelligence.processing.normalize"]
   if (node.kind === "agent" && node.capability === "dedupe") return CONTRACTS["intelligence.processing.dedupe"]
+  if (node.kind === "flow" && node.capability === "merge") return CONTRACTS["intelligence.flow.merge"]
   if (node.kind === "agent" && node.capability === "summarize") return CONTRACTS["intelligence.agent.summary"]
   if (node.kind === "agent" && node.capability === "score") return CONTRACTS["intelligence.agent.score"]
   if (node.kind === "agent" && node.capability === "tag") return CONTRACTS["intelligence.agent.tag"]
   if (node.kind === "router" && node.capability === "route") return CONTRACTS["intelligence.router.importance"]
+  if (node.kind === "control" && node.capability === "accept") return CONTRACTS["intelligence.control.record-acceptance"]
+  if (node.kind === "sink" && node.capability === "store") return CONTRACTS["intelligence.sink.records"]
+  if (node.kind === "inbox" && node.capability === "store" && node.params.queue === "opencli-hda-output") return CONTRACTS["intelligence.output.collection-result"]
   if (node.kind === "inbox" && node.capability === "store") return CONTRACTS["intelligence.output.inbox"]
+  if (node.kind === "notify" && node.adapter?.startsWith("turbopush")) return CONTRACTS["intelligence.output.turbopush-publish"]
   if (node.kind === "notify" && node.capability === "send") return CONTRACTS["intelligence.output.webhook"]
   return undefined
 }
@@ -490,6 +675,21 @@ function matchesType(value: unknown, type: ParamDataType): boolean {
   if (type === "object") return Boolean(value) && typeof value === "object" && !Array.isArray(value)
   if (type === "object[]") return Array.isArray(value) && value.every((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item))
   return typeof value === type
+}
+
+function isCollectionNeedNode(node: WorkflowProjectNode): boolean {
+  if (node.ui?.catalogId === "intelligence.input.collection-need") return true
+  if (node.kind !== "schedule" || node.capability !== "trigger") return false
+  if (node.params.mode === "demand-draft") return true
+  return hasNeedShape(node.params) && !hasScheduleShape(node.params)
+}
+
+function hasNeedShape(params: Record<string, unknown>): boolean {
+  return typeof params.text === "string" || typeof params.locale === "string"
+}
+
+function hasScheduleShape(params: Record<string, unknown>): boolean {
+  return typeof params.interval === "string" || typeof params.timezone === "string"
 }
 
 function finding(

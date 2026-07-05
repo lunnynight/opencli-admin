@@ -1,6 +1,7 @@
 """Compile Canvas WorkflowProject documents into executable-plan previews."""
 
 from collections import Counter, defaultdict, deque
+from dataclasses import dataclass
 from typing import Literal
 
 from backend.schemas.plan_ir import PlanEdge, PlanGraph, PlanNode, PlanPort
@@ -14,17 +15,73 @@ from backend.schemas.workflow import (
     WorkflowCompileError,
     WorkflowCompileResponse,
     WorkflowProject,
+    WorkflowProjectEdge,
     WorkflowProjectNode,
     WorkflowRuntimePreview,
 )
+from backend.workflow.hda_templates import materialize_hda_templates
 from backend.workflow.node_registry import (
     forbidden_node_definition_keys,
     resolve_node_origin,
 )
-from backend.workflow.hda_templates import materialize_hda_templates
 from backend.workflow.runtime_registry import resolve_runtime_metadata
 
 INTERNAL_ID_SEPARATOR = "::"
+
+
+@dataclass(frozen=True)
+class _PortContract:
+    id: str
+    direction: Literal["input", "output"]
+    type: str
+    required: bool = True
+
+
+_PORT_CONTRACTS: dict[str, tuple[list[_PortContract], list[_PortContract]]] = {
+    "intelligence.source.opencli-slot": (
+        [_PortContract("in", "input", "trigger", required=False)],
+        [_PortContract("out", "output", "items[]")],
+    ),
+    "intelligence.source.pool": (
+        [_PortContract("in", "input", "trigger", required=False)],
+        [_PortContract("out", "output", "trigger")],
+    ),
+    "intelligence.processing.normalize": (
+        [_PortContract("in", "input", "items[]")],
+        [_PortContract("out", "output", "recordCandidate[]")],
+    ),
+    "intelligence.processing.dedupe": (
+        [_PortContract("in", "input", "recordCandidate[]")],
+        [_PortContract("out", "output", "recordCandidate[]")],
+    ),
+    "intelligence.flow.merge": (
+        [
+            _PortContract("in1", "input", "recordCandidate[]"),
+            _PortContract("in2", "input", "recordCandidate[]"),
+        ],
+        [_PortContract("out", "output", "recordCandidate[]")],
+    ),
+    "intelligence.control.record-acceptance": (
+        [_PortContract("candidates", "input", "recordCandidate[]")],
+        [_PortContract("records", "output", "record[]")],
+    ),
+    "intelligence.sink.records": (
+        [_PortContract("records", "input", "record[]")],
+        [_PortContract("stored", "output", "storedItems[]", required=False)],
+    ),
+    "intelligence.output.collection-result": (
+        [_PortContract("in", "input", "recordCandidate[]")],
+        [_PortContract("out", "output", "storedItems[]", required=False)],
+    ),
+    "intelligence.output.inbox": (
+        [_PortContract("in", "input", "items[]")],
+        [_PortContract("out", "output", "storedItems[]", required=False)],
+    ),
+    "external.tool.capability": (
+        [_PortContract("in", "input", "unknown", required=False)],
+        [_PortContract("out", "output", "unknown", required=False)],
+    ),
+}
 
 
 def compile_workflow_project(project: WorkflowProject) -> WorkflowCompileResponse:
@@ -226,6 +283,7 @@ def _validate_project(project: WorkflowProject) -> list[WorkflowCompileError]:
 
         errors.extend(_validate_node_origin(node, ["nodes", node.id]))
 
+    errors.extend(_validate_typed_edges(project.nodes, project.edges, path_prefix=["edges"]))
     errors.extend(_cycle_errors(project))
     return errors
 
@@ -268,6 +326,108 @@ def _validate_node_origin(
             )
         )
     return errors
+
+
+def _validate_typed_edges(
+    nodes: list[WorkflowProjectNode],
+    edges: list[WorkflowProjectEdge],
+    *,
+    path_prefix: list[str],
+) -> list[WorkflowCompileError]:
+    errors: list[WorkflowCompileError] = []
+    node_by_id = {node.id: node for node in nodes}
+    for edge in edges:
+        source_node = node_by_id.get(edge.source)
+        target_node = node_by_id.get(edge.target)
+        if source_node is None or target_node is None:
+            continue
+        source_contract = _node_port_contracts(source_node)
+        target_contract = _node_port_contracts(target_node)
+        if source_contract is None or target_contract is None:
+            continue
+
+        source_port = _resolve_output_port(source_contract[1], edge.sourcePort)
+        target_port = _resolve_input_port(target_contract[0], edge.targetPort)
+        if source_port is None:
+            errors.append(
+                WorkflowCompileError(
+                    code="invalid_edge_source_port",
+                    message=(
+                        f'Workflow edge "{edge.id}" references invalid source port '
+                        f'"{edge.sourcePort}" on node "{edge.source}"'
+                    ),
+                    edge_id=edge.id,
+                    path=[*path_prefix, edge.id, "sourcePort"],
+                )
+            )
+            continue
+        if target_port is None:
+            errors.append(
+                WorkflowCompileError(
+                    code="invalid_edge_target_port",
+                    message=(
+                        f'Workflow edge "{edge.id}" references invalid target port '
+                        f'"{edge.targetPort}" on node "{edge.target}"'
+                    ),
+                    edge_id=edge.id,
+                    path=[*path_prefix, edge.id, "targetPort"],
+                )
+            )
+            continue
+        if not _port_types_compatible(source_port.type, target_port.type):
+            errors.append(
+                WorkflowCompileError(
+                    code="incompatible_edge_ports",
+                    message=(
+                        f'Workflow edge "{edge.id}" connects incompatible port types: '
+                        f"{source_port.type} -> {target_port.type}"
+                    ),
+                    edge_id=edge.id,
+                    path=[*path_prefix, edge.id],
+                )
+            )
+    return errors
+
+
+def _node_port_contracts(
+    node: WorkflowProjectNode,
+) -> tuple[list[_PortContract], list[_PortContract]] | None:
+    catalog_id = _read_string((node.ui or {}).get("catalogId"))
+    if catalog_id:
+        return _PORT_CONTRACTS.get(catalog_id)
+    return None
+
+
+def _resolve_output_port(
+    outputs: list[_PortContract],
+    requested_port: str | None,
+) -> _PortContract | None:
+    if requested_port:
+        return next((port for port in outputs if port.id == requested_port), None)
+    if len(outputs) == 1:
+        return outputs[0]
+    return next((port for port in outputs if port.required), outputs[0] if outputs else None)
+
+
+def _resolve_input_port(
+    inputs: list[_PortContract],
+    requested_port: str | None,
+) -> _PortContract | None:
+    if requested_port:
+        return next((port for port in inputs if port.id == requested_port), None)
+    if len(inputs) == 1:
+        return inputs[0]
+    return next((port for port in inputs if port.required), inputs[0] if inputs else None)
+
+
+def _port_types_compatible(source_type: str, target_type: str) -> bool:
+    if source_type == target_type:
+        return True
+    return source_type == "unknown" or target_type == "unknown"
+
+
+def _read_string(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _cycle_errors(project: WorkflowProject) -> list[WorkflowCompileError]:
@@ -497,6 +657,13 @@ def _validate_package_internals(
                     )
                 )
 
+    errors.extend(
+        _validate_typed_edges(
+            node.internals.nodes,
+            node.internals.edges,
+            path_prefix=["nodes", node.id, "internals", "edges"],
+        )
+    )
     errors.extend(_cycle_errors_for_nodes(node.id, node.internals.nodes, node.internals.edges))
     return errors
 
@@ -606,10 +773,13 @@ def _to_plan_node(node: WorkflowProjectNode, id_override: str | None = None) -> 
     kind: Literal["source", "transform", "merge", "sink"]
     if node.kind in {"schedule", "source"}:
         kind = "source"
-    elif node.kind in {"notify", "inbox"}:
+    elif node.kind in {"notify", "inbox", "sink"}:
         kind = "sink"
+    elif node.kind == "flow" and node.capability == "merge":
+        kind = "merge"
     else:
         kind = "transform"
+    inputs, outputs = _plan_ports_for_node(node, kind)
     return PlanNode(
         id=id_override or node.id,
         kind=kind,
@@ -623,8 +793,34 @@ def _to_plan_node(node: WorkflowProjectNode, id_override: str | None = None) -> 
                 "adapter": node.adapter,
             },
         },
-        inputs=[] if kind == "source" else [PlanPort(name="records", type="records")],
-        outputs=[] if kind == "sink" else [PlanPort(name="records", type="records")],
+        inputs=inputs,
+        outputs=outputs,
         source_id=None,
         draft=kind == "source",
+    )
+
+
+def _plan_ports_for_node(
+    node: WorkflowProjectNode,
+    kind: Literal["source", "transform", "merge", "sink"],
+) -> tuple[list[PlanPort], list[PlanPort]]:
+    catalog_id = (node.ui or {}).get("catalogId")
+    if catalog_id == "intelligence.flow.merge":
+        return (
+            [
+                PlanPort(name="in1", type="recordCandidate[]"),
+                PlanPort(name="in2", type="recordCandidate[]"),
+            ],
+            [PlanPort(name="out", type="recordCandidate[]")],
+        )
+    if catalog_id == "intelligence.control.record-acceptance":
+        return (
+            [PlanPort(name="candidates", type="recordCandidate[]")],
+            [PlanPort(name="records", type="record[]")],
+        )
+    if catalog_id == "intelligence.sink.records":
+        return ([PlanPort(name="records", type="record[]")], [])
+    return (
+        [] if kind == "source" else [PlanPort(name="records", type="records")],
+        [] if kind == "sink" else [PlanPort(name="records", type="records")],
     )

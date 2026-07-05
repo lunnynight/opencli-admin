@@ -5,8 +5,10 @@ const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8031"
 export async function GET(req: Request, context: { params: Promise<{ runId: string }> }) {
   const { runId } = await context.params
   try {
+    const url = new URL(req.url)
+    const search = url.searchParams.toString()
     const response = await fetch(
-      `${BACKEND_URL}/api/v1/workflows/runs/${encodeURIComponent(runId)}/events`,
+      `${BACKEND_URL}/api/v1/workflows/runs/${encodeURIComponent(runId)}/events${search ? `?${search}` : ""}`,
       {
         headers: {
           ...(req.headers.get("authorization")

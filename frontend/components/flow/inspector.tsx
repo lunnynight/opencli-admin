@@ -1,7 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { X } from "lucide-react"
+import Link from "next/link"
+import { AlertTriangle, PlugZap } from "lucide-react"
 import { useFlowStore } from "@/lib/flow/store"
 import type { WorkflowNodeData, FieldConfig } from "@/lib/flow/types"
 import { Input } from "@/components/ui/input"
@@ -19,21 +20,9 @@ import { getNodeInternals, type NodeInternalStatus } from "@/lib/workflow/node-i
 import { getNodeContract } from "@/lib/workflow/node-contracts"
 import { getNodeTemplate } from "@/lib/workflow/node-templates"
 import { buildParameterInterfaceView, type ParameterInterfaceViewField } from "@/lib/workflow/parameter-interface"
+import { blockedActionViewForRuntime } from "@/lib/workflow/capabilities"
+import { MonoRow, PanelShell, SectionCaption } from "./inspector-shell"
 import { cn } from "@/lib/utils"
-
-const stateText: Record<string, string> = {
-  idle: "Idle",
-  running: "Running",
-  success: "Done",
-  error: "Error",
-}
-
-const stateDotClass: Record<string, string> = {
-  idle: "border-muted-foreground/50 bg-transparent",
-  running: "border-[#ff7a17] bg-[#ff7a17]",
-  success: "border-[#4ade80] bg-[#4ade80]",
-  error: "border-destructive bg-destructive",
-}
 
 const edgeTypeOptions = [
   { value: "workflow", label: "默认（贝塞尔曲线）" },
@@ -73,93 +62,38 @@ const houdiniDetailsClass = "overflow-hidden rounded-[3px] border border-[#20242
 const houdiniSummaryClass =
   "flex cursor-pointer list-none items-center justify-between gap-3 bg-[#171a1f] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:text-foreground"
 
-function splitTypeLine(typeLine: string) {
-  const [kind = typeLine, version = ""] = typeLine.split("·").map((part) => part.trim())
-  return { kind, version }
+type ProjectNodeWithIdentity = {
+  params: Record<string, unknown>
+  ui?: Record<string, unknown>
 }
 
-function SectionCaption({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground/70">
-      {children}
-    </p>
-  )
+function hydrateProjectNodeIdentity<T extends ProjectNodeWithIdentity>(
+  projectNode: T | undefined,
+  data: WorkflowNodeData,
+): T | undefined {
+  const canonical = readCanonical(data)
+  if (!projectNode || !canonical) return projectNode
+  const catalogId = typeof projectNode.ui?.catalogId === "string" ? projectNode.ui.catalogId : canonical.catalogId
+  const params = canonical.params ? { ...canonical.params, ...projectNode.params } : projectNode.params
+  return {
+    ...projectNode,
+    params,
+    ui: {
+      ...projectNode.ui,
+      ...(catalogId ? { catalogId } : {}),
+    },
+  }
 }
 
-function MonoRow({ k, v }: { k: string; v: string | number }) {
-  return (
-    <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
-      <span className="text-muted-foreground">{k}</span>
-      <span className="truncate text-foreground">{v}</span>
-    </div>
-  )
+type CanonicalNodeData = {
+  catalogId?: string
+  params?: Record<string, unknown>
 }
 
-function PanelStatus({ status }: { status?: string }) {
-  if (!status) return null
-  return (
-    <span
-      className="inline-flex shrink-0 items-center gap-1.5 text-muted-foreground"
-      title={`Status: ${stateText[status] ?? status}`}
-    >
-      <span className={cn("size-1.5 rounded-full border", stateDotClass[status] ?? stateDotClass.idle)} />
-      <span>{stateText[status] ?? status}</span>
-    </span>
-  )
-}
-
-function PanelShell({
-  title,
-  typeLine,
-  status,
-  onClose,
-  children,
-}: {
-  title: string
-  typeLine: string
-  status?: string
-  onClose: () => void
-  children: React.ReactNode
-}) {
-  const { kind, version } = splitTypeLine(typeLine)
-
-  return (
-    <aside
-      data-health="inspector"
-      className="absolute bottom-3 right-3 top-3 z-40 flex w-[min(380px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[4px] border border-[#252a31] bg-[#08090b]/96 shadow-2xl backdrop-blur-sm duration-150 animate-in fade-in slide-in-from-right-4"
-      aria-label="参数面板"
-    >
-      <div className="border-b border-[#20242a] bg-[#0d0f12] px-3 py-2">
-        <div className="grid grid-cols-[96px_minmax(0,1fr)_auto_20px] items-center gap-2">
-          <span className="flex h-7 min-w-0 items-center truncate rounded-[2px] border border-[#2a3038] bg-[#181b20] px-2 font-mono text-[9px] uppercase tracking-[0.08em] text-muted-foreground">
-            {kind}
-          </span>
-          <div className="flex h-7 min-w-0 items-center rounded-[2px] border border-[#2a3038] bg-[#050607] px-2 shadow-inner">
-            <h2 className="truncate font-mono text-[12px] font-semibold text-foreground">{title}</h2>
-          </div>
-          <PanelStatus status={status} />
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex size-5 shrink-0 items-center justify-center rounded-[2px] text-muted-foreground transition-colors hover:bg-[#20242a] hover:text-foreground"
-            aria-label="关闭参数面板"
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
-        <div className="mt-1 flex h-4 items-center gap-2 pl-[104px] font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground/70">
-          <span>Parameter Interface</span>
-          {version ? <span className="tracking-[0.08em]">{version}</span> : null}
-        </div>
-      </div>
-      <div
-        data-inspector-scroll
-        className="workflow-inspector-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
-      >
-        {children}
-      </div>
-    </aside>
-  )
+function readCanonical(data: WorkflowNodeData): CanonicalNodeData | undefined {
+  const canonical = data.canonical
+  if (!canonical || typeof canonical !== "object" || Array.isArray(canonical)) return undefined
+  return canonical as CanonicalNodeData
 }
 
 export function Inspector() {
@@ -263,7 +197,10 @@ export function Inspector() {
   const node = selected[0]
   const data = node.data as WorkflowNodeData
   const canonical = data.canonical as { kind?: string; capability?: string; adapter?: string; params?: Record<string, unknown> } | undefined
-  const projectNode = workflowProject.nodes.find((candidate) => candidate.id === node.id)
+  const projectNode = hydrateProjectNodeIdentity(
+    workflowProject.nodes.find((candidate) => candidate.id === node.id),
+    data,
+  )
   const projectAdapter = projectNode?.adapter
     ? workflowProject.adapters.find((candidate) => candidate.id === projectNode.adapter)
     : undefined
@@ -510,6 +447,7 @@ export function Inspector() {
     ? parameterGroupTab
     : parameterGroups[0]?.id
   const activeParameterFields = parameterInterfaceView?.fields.filter((field) => field.groupId === activeParameterGroupId) ?? []
+  const blockedAction = blockedActionViewForRuntime(data)
 
   return (
     <PanelShell
@@ -585,6 +523,39 @@ export function Inspector() {
           </div>
         ) : (
           <>
+        {blockedAction ? (
+          <div className="overflow-hidden rounded-[3px] border border-[#7f1d1d]/60 bg-[#180b0b]/70">
+            <div className="flex items-center justify-between gap-3 border-b border-[#7f1d1d]/50 bg-[#2a1010]/72 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <AlertTriangle className="size-3.5 shrink-0 text-[#f87171]" />
+                <SectionCaption>Blocked Action</SectionCaption>
+              </div>
+              <Link
+                href={blockedAction.href}
+                className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[2px] border border-[#f87171]/35 bg-[#3a1515] px-2 font-mono text-[10px] uppercase tracking-[0.06em] text-[#fecaca] transition-colors hover:border-[#fecaca]/50 hover:bg-[#4a1717]"
+              >
+                <PlugZap className="size-3" />
+                <span>{blockedAction.actionLabel}</span>
+              </Link>
+            </div>
+            <div className="space-y-2 p-3">
+              <p className="line-clamp-2 text-[11px] leading-relaxed text-[#fecaca]/85">{blockedAction.message}</p>
+              {blockedAction.missingLabels.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {blockedAction.missingLabels.map((label) => (
+                    <span
+                      key={label}
+                      className="rounded-[2px] border border-[#7f1d1d]/60 bg-[#120707] px-2 py-1 font-mono text-[10px] text-[#fecaca]/75"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         {parameterInterfaceView ? (
           <div className="overflow-hidden rounded-[3px] border border-[#20242a] bg-[#101216]/84">
             <div className="flex flex-wrap gap-0 border-b border-[#24282f] bg-[#1d2025] p-0 font-mono text-[10px] uppercase">

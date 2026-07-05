@@ -22,6 +22,9 @@ export async function POST(req: Request) {
         ...(typeof body?.packageNodeId === "string" ? { packageNodeId: body.packageNodeId } : {}),
         ...(typeof body?.runId === "string" ? { runId: body.runId } : {}),
         ...(typeof body?.traceId === "string" ? { traceId: body.traceId } : {}),
+        ...(body?.sourceOutputs && typeof body.sourceOutputs === "object"
+          ? { sourceOutputs: body.sourceOutputs }
+          : {}),
       }),
     })
     const payload = await response.json().catch(() => null)

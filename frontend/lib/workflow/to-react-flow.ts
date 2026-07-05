@@ -8,9 +8,12 @@ const KIND_TO_NODE_TYPE: Record<WorkflowProjectNode["kind"], WorkflowNodeType> =
   source: "http",
   agent: "action",
   router: "condition",
+  flow: "condition",
+  control: "condition",
   notify: "action",
   inbox: "action",
   action: "action",
+  sink: "action",
 }
 
 const KIND_TO_CATEGORY: Record<WorkflowProjectNode["kind"], NodeCategory> = {
@@ -18,9 +21,12 @@ const KIND_TO_CATEGORY: Record<WorkflowProjectNode["kind"], NodeCategory> = {
   source: "data",
   agent: "action",
   router: "logic",
+  flow: "logic",
+  control: "logic",
   notify: "action",
   inbox: "data",
   action: "action",
+  sink: "data",
 }
 
 const KIND_TO_ICON: Record<WorkflowProjectNode["kind"], string> = {
@@ -28,9 +34,12 @@ const KIND_TO_ICON: Record<WorkflowProjectNode["kind"], string> = {
   source: "Globe",
   agent: "Sparkles",
   router: "GitBranch",
+  flow: "GitMerge",
+  control: "BadgeCheck",
   notify: "Send",
   inbox: "Inbox",
   action: "Play",
+  sink: "Database",
 }
 
 export function workflowProjectToReactFlow(project: WorkflowProject): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {

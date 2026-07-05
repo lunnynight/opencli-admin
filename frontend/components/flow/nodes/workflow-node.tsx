@@ -174,6 +174,8 @@ function readMapBadges(data: WorkflowNodeType["data"]) {
 
 type CanonicalNodeData = {
   catalogId?: string
+  kind?: string
+  capability?: string
   params?: Record<string, unknown>
 }
 
@@ -182,6 +184,22 @@ function readCanonical(data: WorkflowNodeType["data"]): CanonicalNodeData | unde
   return canonical && typeof canonical === "object" && !Array.isArray(canonical)
     ? canonical as CanonicalNodeData
     : undefined
+}
+
+function isCollectionNeedData(data: WorkflowNodeType["data"]): boolean {
+  const canonical = readCanonical(data)
+  if (canonical?.catalogId === COLLECTION_NEED_CATALOG_ID) return true
+  if (canonical?.kind !== "schedule" || canonical.capability !== "trigger") return false
+  if (canonical.params?.mode === "demand-draft") return true
+  return hasNeedShape(canonical?.params) && !hasScheduleShape(canonical?.params)
+}
+
+function hasNeedShape(params: Record<string, unknown> | undefined): boolean {
+  return typeof params?.text === "string" || typeof params?.locale === "string"
+}
+
+function hasScheduleShape(params: Record<string, unknown> | undefined): boolean {
+  return typeof params?.interval === "string" || typeof params?.timezone === "string"
 }
 
 function stringParam(params: Record<string, unknown> | undefined, key: string, fallback = "") {
@@ -263,7 +281,7 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNodeTyp
   const zoom = useStore((s) => s.transform[2])
   const canonical = readCanonical(data)
   const displayId = getNodeDisplayId(data)
-  const isCollectionNeed = displayId === COLLECTION_NEED_CATALOG_ID
+  const isCollectionNeed = displayId === COLLECTION_NEED_CATALOG_ID || isCollectionNeedData(data)
   const demandParams = canonical?.params
   const demandTextValue = stringParam(demandParams, "text", "抓小红书热帖")
   const demandLocale = stringParam(demandParams, "locale", "zh-CN")
@@ -318,13 +336,6 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNodeTyp
     outputs.length === 1
       ? { left: "50%" }
       : { left: `${((i + 1) / (outputs.length + 1)) * 100}%` }
-
-  const persistDemandText = () => {
-    if (!isCollectionNeed) return
-    const text = draftText.trim()
-    if (!text || text === demandTextValue) return
-    updateWorkflowNodeParams(id, { text, locale: demandLocale, mode: "demand-draft" })
-  }
 
   const assembleCollectionNeed = async (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -402,7 +413,7 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNodeTyp
       data-package-state={internalLocked ? "locked" : internalDraft ? "draft" : "canonical"}
       className={cn(
         "workflow-node-card group relative overflow-hidden bg-card text-card-foreground transition-colors",
-        isCollectionNeed && detail === "high" ? "w-[288px]" : "w-[204px]",
+        "w-[204px]",
         selected ? "ring-1 ring-foreground/30" : "ring-1 ring-border hover:ring-[#3a3d42]",
         proposalFocused && "ring-2 ring-[#ff7a17]/40",
       )}
@@ -454,21 +465,17 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNodeTyp
 
           {detail === "high" && isCollectionNeed ? (
             <div className="nodrag nopan mt-2 space-y-1.5" onPointerDown={(event) => event.stopPropagation()}>
-              <textarea
-                value={draftText}
-                onChange={(event) => setDraftText(event.target.value)}
-                onBlur={persistDemandText}
-                className="h-16 w-full resize-none rounded-[3px] border border-border bg-background/70 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-foreground/40"
-                placeholder="抓小红书热帖"
-              />
+              <div className="rounded-[3px] border border-border/70 bg-background/45 px-2 py-1.5">
+                <p className="line-clamp-2 font-mono text-[10px] leading-snug text-foreground">{draftText}</p>
+              </div>
               <button
                 type="button"
                 onClick={assembleCollectionNeed}
                 disabled={draftStatus === "running"}
-                className="flex h-7 w-full items-center justify-center gap-1.5 rounded-[3px] border border-border bg-background/80 font-mono text-[10px] uppercase tracking-[0.08em] text-foreground transition-colors hover:border-foreground/40 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-6 w-full items-center justify-center gap-1.5 rounded-[3px] border border-border bg-background/80 font-mono text-[9px] uppercase tracking-[0.08em] text-foreground transition-colors hover:border-foreground/40 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {draftStatus === "running" ? <Loader2 className="size-3 animate-spin" /> : <Wand2 className="size-3" />}
-                Assemble Nodes
+                Assemble
               </button>
               {draftError ? (
                 <p className="line-clamp-2 font-mono text-[9px] leading-snug text-destructive">{draftError}</p>

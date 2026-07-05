@@ -14,6 +14,8 @@ export type WorkflowNodeRunEventType =
   | "started"
   | "blocked"
   | "batch_ready"
+  | "tool_call_started"
+  | "tool_call_completed"
   | "partial"
   | "completed"
   | "failed"
@@ -79,6 +81,37 @@ export type WorkflowRunProjection = {
   errors: Array<{ code: string; message: string; node_id?: string | null; edge_id?: string | null }>
 }
 
+export type WorkflowRunCheckpoint = {
+  checkpointId: string
+  workflowId: string
+  runId: string
+  traceId: string
+  status: WorkflowRunStatus
+  valid: boolean
+  eventCount: number
+  lastSequence: number
+  updatedAt: string
+  nodeStates: WorkflowRunNodeState[]
+  sourceOutputNodeIds: string[]
+  sourceOutputItemCount: number
+  canContinueWithSourceOutputs: boolean
+  continuationPath: string
+  tracePath: string
+}
+
+export type WorkflowRunTraceResponse = {
+  projection: WorkflowRunProjection
+  checkpoint: WorkflowRunCheckpoint
+  events: WorkflowNodeRunEvent[]
+  filters: {
+    afterSequence?: number | null
+    nodeId?: string | null
+    eventType?: WorkflowNodeRunEventType | null
+    limit?: number | null
+  }
+  nextAfterSequence: number
+}
+
 export type WorkflowRunStreamReplay = {
   events: WorkflowNodeRunEvent[]
   projection: WorkflowRunProjection | null
@@ -86,7 +119,13 @@ export type WorkflowRunStreamReplay = {
 
 export async function startWorkflowRun(
   project: WorkflowProject,
-  options: { authorization?: string | null } = {},
+  options: {
+    authorization?: string | null
+    runId?: string
+    traceId?: string
+    packageNodeId?: string
+    sourceOutputs?: Record<string, Array<Record<string, unknown>>>
+  } = {},
 ): Promise<WorkflowRunProjection> {
   const response = await fetch("/api/workflow/run", {
     method: "POST",
@@ -94,7 +133,13 @@ export async function startWorkflowRun(
       "Content-Type": "application/json",
       ...(options.authorization ? { Authorization: options.authorization } : {}),
     },
-    body: JSON.stringify({ project }),
+    body: JSON.stringify({
+      project,
+      ...(options.runId ? { runId: options.runId } : {}),
+      ...(options.traceId ? { traceId: options.traceId } : {}),
+      ...(options.packageNodeId ? { packageNodeId: options.packageNodeId } : {}),
+      ...(options.sourceOutputs ? { sourceOutputs: options.sourceOutputs } : {}),
+    }),
   })
   return readApiResponse(response, "Workflow run failed")
 }
@@ -112,17 +157,83 @@ export async function fetchWorkflowRunProjection(
   return readApiResponse(response, "Workflow run projection failed")
 }
 
-export async function fetchWorkflowRunEvents(
+export async function fetchWorkflowRunCheckpoint(
   runId: string,
   options: { authorization?: string | null } = {},
+): Promise<WorkflowRunCheckpoint> {
+  const response = await fetch(`/api/workflow/runs/${encodeURIComponent(runId)}/checkpoint`, {
+    headers: {
+      ...(options.authorization ? { Authorization: options.authorization } : {}),
+    },
+    cache: "no-store",
+  })
+  return readApiResponse(response, "Workflow run checkpoint failed")
+}
+
+export async function queryWorkflowRunTrace(
+  runId: string,
+  options: {
+    authorization?: string | null
+    afterSequence?: number
+    nodeId?: string
+    eventType?: WorkflowNodeRunEventType
+    limit?: number
+  } = {},
+): Promise<WorkflowRunTraceResponse> {
+  const search = new URLSearchParams()
+  if (typeof options.afterSequence === "number") search.set("afterSequence", String(options.afterSequence))
+  if (options.nodeId) search.set("nodeId", options.nodeId)
+  if (options.eventType) search.set("eventType", options.eventType)
+  if (typeof options.limit === "number") search.set("limit", String(options.limit))
+  const suffix = search.size > 0 ? `?${search.toString()}` : ""
+  const response = await fetch(`/api/workflow/runs/${encodeURIComponent(runId)}/trace${suffix}`, {
+    headers: {
+      ...(options.authorization ? { Authorization: options.authorization } : {}),
+    },
+    cache: "no-store",
+  })
+  return readApiResponse(response, "Workflow run trace query failed")
+}
+
+export async function fetchWorkflowRunEvents(
+  runId: string,
+  options: {
+    authorization?: string | null
+    afterSequence?: number
+    nodeId?: string
+    eventType?: WorkflowNodeRunEventType
+    limit?: number
+  } = {},
 ): Promise<WorkflowNodeRunEvent[]> {
-  const response = await fetch(`/api/workflow/runs/${encodeURIComponent(runId)}/events`, {
+  const search = new URLSearchParams()
+  if (typeof options.afterSequence === "number") search.set("afterSequence", String(options.afterSequence))
+  if (options.nodeId) search.set("nodeId", options.nodeId)
+  if (options.eventType) search.set("eventType", options.eventType)
+  if (typeof options.limit === "number") search.set("limit", String(options.limit))
+  const suffix = search.size > 0 ? `?${search.toString()}` : ""
+  const response = await fetch(`/api/workflow/runs/${encodeURIComponent(runId)}/events${suffix}`, {
     headers: {
       ...(options.authorization ? { Authorization: options.authorization } : {}),
     },
     cache: "no-store",
   })
   return readApiResponse(response, "Workflow run events failed")
+}
+
+export async function continueWorkflowRunWithSourceOutputs(
+  runId: string,
+  sourceOutputs: Record<string, Array<Record<string, unknown>>>,
+  options: { authorization?: string | null } = {},
+): Promise<WorkflowRunProjection> {
+  const response = await fetch(`/api/workflow/runs/${encodeURIComponent(runId)}/source-outputs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.authorization ? { Authorization: options.authorization } : {}),
+    },
+    body: JSON.stringify({ sourceOutputs }),
+  })
+  return readApiResponse(response, "Workflow run continuation failed")
 }
 
 export async function replayWorkflowRunEventStream(

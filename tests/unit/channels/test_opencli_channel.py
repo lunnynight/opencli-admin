@@ -179,7 +179,6 @@ async def test_collect_via_agent_timeout():
 
 @pytest.mark.asyncio
 async def test_collect_via_agent_http_error():
-    import httpx
 
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(side_effect=OSError("connection refused"))
@@ -247,9 +246,11 @@ async def test_run_opencli_file_not_found():
 async def test_run_opencli_timeout():
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock()
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = AsyncMock()
 
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+        with patch("asyncio.wait_for", side_effect=TimeoutError()):
             with pytest.raises(asyncio.TimeoutError):
                 await _run_opencli(["/opt/opencli-cdp/bin/opencli", "site", "cmd"], {})
 
@@ -259,6 +260,28 @@ async def test_run_opencli_timeout():
 @pytest.fixture
 def channel():
     return OpenCLIChannel()
+
+
+@pytest.fixture(autouse=True)
+def opencli_manifest_mocks(monkeypatch):
+    """Keep unit tests offline: command manifest probing is tested by collect paths."""
+    state = {"named_options": frozenset(), "requires_browser": True}
+
+    async def fake_get_named_options(*_args, **_kwargs):
+        return state["named_options"]
+
+    async def fake_command_requires_browser(*_args, **_kwargs):
+        return state["requires_browser"]
+
+    monkeypatch.setattr(
+        "backend.channels.opencli_channel._get_named_options",
+        fake_get_named_options,
+    )
+    monkeypatch.setattr(
+        "backend.channels.opencli_channel._command_requires_browser",
+        fake_command_requires_browser,
+    )
+    yield state
 
 
 @pytest.mark.asyncio
@@ -308,7 +331,10 @@ async def test_health_check_agent_mode_skips_pool_probe(channel):
     since a remote agent's health is a separate registration concern."""
     with (
         patch("os.path.isfile", return_value=True),
-        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="agent")),
+        patch(
+            "backend.config.get_settings",
+            return_value=_make_mock_settings(collection_mode="agent"),
+        ),
         patch("backend.browser_pool.get_pool") as mock_get_pool,
     ):
         result = await channel.health_check()
@@ -323,7 +349,10 @@ async def test_health_check_bridge_mode_skips_cdp_probe(channel):
     mock_pool = _make_mock_pool(mode="bridge")
     with (
         patch("os.path.isfile", return_value=True),
-        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="local")),
+        patch(
+            "backend.config.get_settings",
+            return_value=_make_mock_settings(collection_mode="local"),
+        ),
         patch("backend.browser_pool.get_pool", return_value=mock_pool),
     ):
         result = await channel.health_check()
@@ -343,7 +372,10 @@ async def test_health_check_cdp_mode_reachable_returns_true(channel):
 
     with (
         patch("os.path.isfile", return_value=True),
-        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="local")),
+        patch(
+            "backend.config.get_settings",
+            return_value=_make_mock_settings(collection_mode="local"),
+        ),
         patch("backend.browser_pool.get_pool", return_value=mock_pool),
         patch("httpx.AsyncClient", return_value=mock_client_ctx),
     ):
@@ -364,7 +396,10 @@ async def test_health_check_cdp_mode_unreachable_returns_false(channel):
 
     with (
         patch("os.path.isfile", return_value=True),
-        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="local")),
+        patch(
+            "backend.config.get_settings",
+            return_value=_make_mock_settings(collection_mode="local"),
+        ),
         patch("backend.browser_pool.get_pool", return_value=mock_pool),
         patch("httpx.AsyncClient", return_value=mock_client_ctx),
     ):
@@ -398,7 +433,10 @@ async def test_health_check_routes_to_source_bound_endpoint(channel, db_engine):
 
     with (
         patch("os.path.isfile", return_value=True),
-        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="local")),
+        patch(
+            "backend.config.get_settings",
+            return_value=_make_mock_settings(collection_mode="local"),
+        ),
         patch("backend.browser_pool.get_pool", return_value=mock_pool),
         patch("backend.database.AsyncSessionLocal", sm),
         patch("httpx.AsyncClient", return_value=mock_client_ctx),
@@ -426,7 +464,10 @@ async def test_health_check_no_binding_falls_back_to_default_pool_member(channel
 
     with (
         patch("os.path.isfile", return_value=True),
-        patch("backend.config.get_settings", return_value=_make_mock_settings(collection_mode="local")),
+        patch(
+            "backend.config.get_settings",
+            return_value=_make_mock_settings(collection_mode="local"),
+        ),
         patch("backend.browser_pool.get_pool", return_value=mock_pool),
         patch("backend.database.AsyncSessionLocal", sm),
         patch("httpx.AsyncClient", return_value=mock_client_ctx),
@@ -463,9 +504,12 @@ def _make_mock_settings(collection_mode="local", task_executor="local"):
 @pytest.mark.asyncio
 async def test_collect_agent_mode_http_success(channel):
     """Agent mode with http protocol dispatches to _collect_via_agent."""
-    from backend.browser_pool import LocalBrowserPool
 
-    mock_pool = _make_mock_pool(mode="cdp", agent_url="http://agent:8000", agent_protocol="http")
+    mock_pool = _make_mock_pool(
+        mode="cdp",
+        agent_url="http://agent:8000",
+        agent_protocol="http",
+    )
     mock_settings = _make_mock_settings(collection_mode="agent")
 
     agent_result = ChannelResult.ok([{"item": 1}], site="example.com", command="list")
@@ -473,7 +517,10 @@ async def test_collect_agent_mode_http_success(channel):
     with (
         patch("backend.browser_pool.get_pool", return_value=mock_pool),
         patch("backend.config.get_settings", return_value=mock_settings),
-        patch("backend.channels.opencli_channel._collect_via_agent", new=AsyncMock(return_value=agent_result)),
+        patch(
+            "backend.channels.opencli_channel._collect_via_agent",
+            new=AsyncMock(return_value=agent_result),
+        ),
     ):
         result = await channel.collect(
             {"site": "example.com", "command": "list", "format": "json"}, {}
@@ -486,8 +533,9 @@ async def test_collect_agent_mode_http_success(channel):
 @pytest.mark.asyncio
 async def test_collect_agent_mode_ws_protocol_not_implemented(channel):
     """Agent mode with ws protocol returns fail (not yet implemented)."""
-    from backend.browser_pool import LocalBrowserPool
     from unittest.mock import create_autospec
+
+    from backend.browser_pool import LocalBrowserPool
 
     # Use create_autospec so isinstance(mock_pool, LocalBrowserPool) is True
     mock_pool = create_autospec(LocalBrowserPool, instance=True)
@@ -517,8 +565,9 @@ async def test_collect_agent_mode_ws_protocol_not_implemented(channel):
 @pytest.mark.asyncio
 async def test_collect_agent_mode_unknown_protocol(channel):
     """Agent mode with unknown protocol returns fail."""
-    from backend.browser_pool import LocalBrowserPool
     from unittest.mock import create_autospec
+
+    from backend.browser_pool import LocalBrowserPool
 
     mock_pool = create_autospec(LocalBrowserPool, instance=True)
     mock_pool.get_mode.return_value = "cdp"
@@ -545,6 +594,44 @@ async def test_collect_agent_mode_unknown_protocol(channel):
 
 
 # ── collect: local (subprocess) mode tests ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_collect_local_nonbrowser_command_bypasses_browser_pool(
+    channel, opencli_manifest_mocks
+):
+    """Static/news commands should collect directly without requiring Chrome."""
+    opencli_manifest_mocks["named_options"] = frozenset({"limit"})
+    opencli_manifest_mocks["requires_browser"] = False
+    mock_settings = _make_mock_settings(collection_mode="local")
+    captured: list[list[str]] = []
+
+    async def fake_run_opencli(cmd, env):
+        captured.append(cmd)
+        return 0, '[{"title": "news"}]', ""
+
+    with (
+        patch("backend.browser_pool.get_pool") as mock_get_pool,
+        patch("backend.config.get_settings", return_value=mock_settings),
+        patch(
+            "backend.channels.opencli_channel._run_opencli",
+            new=AsyncMock(side_effect=fake_run_opencli),
+        ),
+    ):
+        result = await channel.collect(
+            {
+                "site": "bbc",
+                "command": "news",
+                "format": "json",
+                "args": {"limit": 1},
+            },
+            {},
+        )
+
+    assert result.success is True
+    assert result.items == [{"title": "news"}]
+    mock_get_pool.assert_not_called()
+    assert captured[0][-4:] == ["--limit", "1", "-f", "json"]
+
 
 @pytest.mark.asyncio
 async def test_collect_local_cdp_success(channel):
@@ -590,6 +677,33 @@ async def test_collect_local_bridge_mode(channel):
 
 
 @pytest.mark.asyncio
+async def test_collect_local_bridge_probe_failure_does_not_block_subprocess(channel):
+    """The bridge readiness probe is advisory; the opencli command decides success."""
+    mock_pool = _make_mock_pool(mode="bridge")
+    mock_settings = _make_mock_settings(collection_mode="local")
+
+    with (
+        patch("backend.browser_pool.get_pool", return_value=mock_pool),
+        patch("backend.config.get_settings", return_value=mock_settings),
+        patch(
+            "backend.channels.opencli_channel._check_bridge_ready",
+            new=AsyncMock(return_value="bridge not connected"),
+        ) as mock_bridge_probe,
+        patch(
+            "backend.channels.opencli_channel._run_opencli",
+            new=AsyncMock(return_value=(0, '[{"r": 1}]', "")),
+        ) as mock_run_opencli,
+    ):
+        result = await channel.collect(
+            {"site": "twitter", "command": "search", "format": "json"}, {}
+        )
+
+    assert result.success is True
+    mock_bridge_probe.assert_awaited_once()
+    mock_run_opencli.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_collect_local_nonzero_exit_code(channel):
     """Non-zero exit code returns failed ChannelResult."""
     mock_pool = _make_mock_pool(mode="cdp")
@@ -622,7 +736,7 @@ async def test_collect_local_timeout(channel):
         patch("backend.config.get_settings", return_value=mock_settings),
         patch(
             "backend.channels.opencli_channel._run_opencli",
-            new=AsyncMock(side_effect=asyncio.TimeoutError()),
+            new=AsyncMock(side_effect=TimeoutError()),
         ),
     ):
         result = await channel.collect(

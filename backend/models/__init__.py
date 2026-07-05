@@ -19,6 +19,7 @@ from backend.models.source_cursor import SourceCursor
 from backend.models.source_measurement import SourceMeasurement
 from backend.models.task import CollectionTask, TaskRun, TaskRunEvent
 from backend.models.worker import WorkerNode
+from backend.models.workflow_run import WorkflowRun, WorkflowRunEvent
 
 __all__ = [
     "TimestampMixin",
@@ -47,4 +48,6 @@ __all__ = [
     "NotificationRule",
     "NotificationLog",
     "WorkerNode",
+    "WorkflowRun",
+    "WorkflowRunEvent",
 ]

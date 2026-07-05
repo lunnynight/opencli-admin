@@ -15,7 +15,16 @@ import {
   type WorkflowRuntimeCapability,
 } from "./capabilities"
 
-export type WorkflowNodeCatalogCategory = "trigger" | "source" | "processing" | "decision" | "output" | "package"
+export type WorkflowNodeCatalogCategory =
+  | "trigger"
+  | "source"
+  | "processing"
+  | "flow"
+  | "decision"
+  | "control"
+  | "sink"
+  | "output"
+  | "package"
 
 export type WorkflowNodeCatalogItem = {
   id: string
@@ -38,6 +47,7 @@ export type WorkflowNodeCatalogItem = {
 }
 
 export const COLLECTION_NEED_CATALOG_ID = "intelligence.input.collection-need"
+export const TURBOPUSH_PUBLISH_CATALOG_ID = "intelligence.output.turbopush-publish"
 
 const JIN10_ADAPTER: AdapterBinding = {
   id: "jin10-kuaixun",
@@ -53,6 +63,14 @@ const WEBHOOK_NOTIFY_ADAPTER: AdapterBinding = {
   provider: "webhook",
   mode: "webhook",
   config: { notifierType: "webhook", target: "webhook" },
+}
+
+const TURBOPUSH_ADAPTER: AdapterBinding = {
+  id: "turbopush-local",
+  type: "notification",
+  provider: "turbopush",
+  mode: "live",
+  config: { channel: "turbopush", mcpServer: "turbo-push", resourceMode: "auto" },
 }
 
 export type OpenCLISourceSlot = {
@@ -103,6 +121,21 @@ export function opencliAdaptersForSourceSlots(sources: OpenCLISourceSlot[]): Ada
 }
 
 export function buildOpenCLIMultiSourceHDAInternals(sources: OpenCLISourceSlot[]): WorkflowProjectNode["internals"] {
+  const sourceGroups = sources.map((source) => source.sourceGroup || source.site)
+  const sourcePoolNode = {
+    id: "source-pool",
+    kind: "agent" as const,
+    capability: "normalize" as const,
+    params: { sourceCount: sources.length, sourceGroups, fanout: "parallel" },
+    ui: {
+      label: "Source Pool",
+      description: "Fanout source intent into parallel OpenCLI source slots",
+      icon: "Network",
+      color: "var(--chart-4)",
+      catalogId: "intelligence.source.pool",
+      position: { x: 0, y: Math.max(0, ((sources.length - 1) * 150) / 2) },
+    },
+  }
   const sourceNodes = sources.map((source, index) => ({
     id: opencliSourceNodeId(source),
     kind: "source" as const,
@@ -127,13 +160,28 @@ export function buildOpenCLIMultiSourceHDAInternals(sources: OpenCLISourceSlot[]
       icon: "Globe",
       color: "var(--chart-4)",
       catalogId: "intelligence.source.opencli-slot",
-      position: { x: 0, y: index * 150 },
+      position: { x: 280, y: index * 150 },
     },
   }))
   const midpointY = Math.max(0, ((sourceNodes.length - 1) * 150) / 2)
+  const outputNode = {
+    id: "collection-output",
+    kind: "inbox" as const,
+    capability: "store" as const,
+    params: { queue: "opencli-hda-output", archive: false },
+    ui: {
+      label: "Collection Output",
+      description: "Expose normalized items as the package output",
+      icon: "Inbox",
+      color: "var(--chart-4)",
+      catalogId: "intelligence.output.collection-result",
+      position: { x: 920, y: midpointY },
+    },
+  }
   return {
     locked: true,
     nodes: [
+      sourcePoolNode,
       ...sourceNodes,
       {
         id: "internal-normalize",
@@ -146,15 +194,34 @@ export function buildOpenCLIMultiSourceHDAInternals(sources: OpenCLISourceSlot[]
           icon: "ArrowRightLeft",
           color: "var(--chart-2)",
           catalogId: "intelligence.processing.normalize",
-          position: { x: 430, y: midpointY },
+          position: { x: 620, y: midpointY },
         },
       },
+      outputNode,
     ],
-    edges: sourceNodes.map((sourceNode) => ({
-      id: `${sourceNode.id}-normalize`,
-      source: sourceNode.id,
-      target: "internal-normalize",
-    })),
+    edges: [
+      ...sourceNodes.map((sourceNode) => ({
+        id: `source-pool-${sourceNode.id}`,
+        source: "source-pool",
+        target: sourceNode.id,
+        sourcePort: "trigger",
+        targetPort: "trigger",
+      })),
+      ...sourceNodes.map((sourceNode) => ({
+        id: `${sourceNode.id}-normalize`,
+        source: sourceNode.id,
+        target: "internal-normalize",
+        sourcePort: "items",
+        targetPort: "items",
+      })),
+      {
+        id: "internal-normalize-output",
+        source: "internal-normalize",
+        target: "collection-output",
+        sourcePort: "items",
+        targetPort: "items",
+      },
+    ],
   }
 }
 
@@ -244,6 +311,25 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
     keywords: ["dedupe", "duplicate", "去重", "重复"],
   },
   {
+    id: "intelligence.flow.merge",
+    idPrefix: "merge",
+    label: "Merge",
+    description: "Houdini-style typed fan-in，合并多路候选流并保留 lineage",
+    category: "flow",
+    profile: "intelligence",
+    kind: "flow",
+    capability: "merge",
+    icon: "GitMerge",
+    color: "var(--chart-5)",
+    params: {
+      strategy: "concat",
+      preserveLineage: true,
+      inputType: "recordCandidate[]",
+      outputType: "recordCandidate[]",
+    },
+    keywords: ["merge", "join", "fan-in", "lineage", "合并", "汇流"],
+  },
+  {
     id: "intelligence.agent.summary",
     idPrefix: "summary",
     label: "LLM Summary",
@@ -300,6 +386,26 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
     keywords: ["score", "router", "condition", "threshold", "路由", "阈值"],
   },
   {
+    id: "intelligence.control.record-acceptance",
+    idPrefix: "record-acceptance",
+    label: "Record Acceptance Gate",
+    description: "把 Record Candidate 通过 schema、去重、质量和 lineage 检查后接收为 Record",
+    category: "control",
+    profile: "intelligence",
+    kind: "control",
+    capability: "accept",
+    icon: "BadgeCheck",
+    color: "var(--chart-3)",
+    params: {
+      mode: "automatic_with_review",
+      schema: "record.v1",
+      dedupe: "required",
+      lineageRequired: true,
+      minQuality: 0,
+    },
+    keywords: ["record", "acceptance", "gate", "quality", "lineage", "入库", "审核"],
+  },
+  {
     id: "intelligence.output.inbox",
     idPrefix: "inbox",
     label: "Inbox Store",
@@ -312,6 +418,20 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
     color: "var(--chart-4)",
     params: { queue: "macro-watch", archive: true },
     keywords: ["inbox", "store", "cache", "archive", "收件箱", "归档"],
+  },
+  {
+    id: "intelligence.sink.records",
+    idPrefix: "record-sink",
+    label: "Record Sink",
+    description: "把已接收的 Record 写入 records 系统，保留 lineage 和 run trace 指针",
+    category: "sink",
+    profile: "intelligence",
+    kind: "sink",
+    capability: "store",
+    icon: "Database",
+    color: "var(--chart-4)",
+    params: { target: "records", writeMode: "append", preserveLineage: true },
+    keywords: ["record", "sink", "database", "records", "落库", "存储"],
   },
   {
     id: "intelligence.output.webhook",
@@ -330,6 +450,46 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
     keywords: ["feishu", "wecom", "tg", "telegram", "qq", "notify", "webhook", "通知"],
   },
   {
+    id: TURBOPUSH_PUBLISH_CATALOG_ID,
+    idPrefix: "turbopush-publish",
+    label: "TurboPush Publish",
+    description: "通过本机 TurboPush 服务发布文章/图文/视频到已登录平台账号",
+    category: "output",
+    profile: "intelligence",
+    kind: "notify",
+    capability: "send",
+    icon: "Send",
+    color: "var(--state-action)",
+    adapter: TURBOPUSH_ADAPTER.id,
+    requiredAdapters: [TURBOPUSH_ADAPTER],
+    params: {
+      contentType: "graph_text",
+      contentSource: "upstream",
+      title: "{{item.title}}",
+      markdown: "{{item.markdown}}",
+      desc: "{{item.summary}}",
+      files: [],
+      thumb: [],
+      targetPlatforms: ["xiaohongshu"],
+      accountSelector: "logged_accounts_by_platform",
+      platformSettings: {},
+      syncDraft: false,
+    },
+    keywords: [
+      "turbopush",
+      "publish",
+      "send",
+      "wechat",
+      "douyin",
+      "xiaohongshu",
+      "youtube",
+      "bilibili",
+      "多平台",
+      "发布",
+      "发送",
+    ],
+  },
+  {
     id: "package.collection.pipeline",
     idPrefix: "pkg-collection",
     label: "Collection Pipeline",
@@ -346,10 +506,24 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
     keywords: ["package", "collection", "source", "rss", "http", "采集", "封装"],
   },
   {
+    id: "intelligence.source.pool",
+    idPrefix: "source-pool",
+    label: "Source Pool",
+    description: "把业务来源组展开为并行 source slots，资源由 runtime resolver 隐式处理",
+    category: "source",
+    profile: "intelligence",
+    kind: "agent",
+    capability: "normalize",
+    icon: "Network",
+    color: "var(--chart-4)",
+    params: { sourceCount: 2, sourceGroups: ["video", "social"], fanout: "parallel" },
+    keywords: ["source", "pool", "fanout", "registry", "来源池", "数据源"],
+  },
+  {
     id: "intelligence.source.opencli-slot",
     idPrefix: "source-opencli",
     label: "OpenCLI Source Slot",
-    description: "一个可由 HDA/AI 填参的 OpenCLI source 槽位，运行时交给 OpenCLI channel/worker 执行",
+    description: "一个由 HDA/source planner 生成的 OpenCLI source 槽位，运行时交给 OpenCLI channel 执行",
     category: "source",
     profile: "intelligence",
     kind: "source",
@@ -358,6 +532,20 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
     color: "var(--chart-4)",
     params: { site: "bilibili", command: "search", sourceGroup: "video", args: { keyword: "ai" } },
     keywords: ["opencli", "source", "slot", "bilibili", "xiaohongshu", "adapter", "来源槽"],
+  },
+  {
+    id: "intelligence.output.collection-result",
+    idPrefix: "collection-output",
+    label: "Collection Output",
+    description: "把 HDA 内部标准化结果暴露为可审计的 items[] 输出",
+    category: "output",
+    profile: "intelligence",
+    kind: "inbox",
+    capability: "store",
+    icon: "Inbox",
+    color: "var(--chart-4)",
+    params: { queue: "opencli-hda-output", archive: false },
+    keywords: ["output", "items", "collection", "result", "采集输出", "结果"],
   },
   {
     id: "package.opencli.multi-source-hda",
@@ -378,18 +566,17 @@ export const WORKFLOW_NODE_CATALOG: WorkflowNodeCatalogItem[] = [
       execution: {
         fanout: "parallel",
         maxConcurrency: 4,
-        workerPool: "docker-browser-workers",
       },
       sources: DEFAULT_OPENCLI_HDA_SOURCES,
       aiCallable: {
         schema: "opencli.multi_source_hda.v1",
-        editable: ["sources", "sources[].args", "execution.maxConcurrency", "execution.workerPool"],
+        editable: ["sources", "sources[].args", "execution.maxConcurrency"],
         sourceMode: "parallel",
       },
     },
     topicCollapse: {
       groupId: "opencli-package",
-      nodeCount: DEFAULT_OPENCLI_HDA_SOURCES.length + 1,
+      nodeCount: DEFAULT_OPENCLI_HDA_SOURCES.length + 3,
       mode: "locked",
       packageInternal: true,
     },

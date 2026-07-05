@@ -24,6 +24,7 @@ export type WorkflowRuntimeCapability = {
   missing: string[]
   tags: string[]
   source?: string | null
+  manifest?: Record<string, unknown>
 }
 
 export type WorkflowCapabilitiesResponse = {
@@ -39,6 +40,23 @@ export type WorkflowCapabilitiesResponse = {
 export type WorkflowCapabilitiesIndex = {
   catalog: Map<string, WorkflowRuntimeCapability>
   primitives: Map<string, WorkflowRuntimeCapability>
+}
+
+type WorkflowRunBlockReasonLike = {
+  message?: string | null
+  details?: Record<string, unknown>
+}
+
+type WorkflowRunStateLike = {
+  status?: string
+  blockReasons?: WorkflowRunBlockReasonLike[]
+}
+
+export type BlockedActionView = {
+  message: string
+  actionLabel: string
+  href: string
+  missingLabels: string[]
 }
 
 export function indexWorkflowCapabilities(
@@ -92,4 +110,76 @@ export function runtimeStatusTone(status: WorkflowCapabilityStatus | undefined):
     default:
       return "border-border bg-background/60 text-muted-foreground"
   }
+}
+
+export function blockedActionViewForRuntime(data: {
+  runtimeCapability?: WorkflowRuntimeCapability
+  runtimeRunState?: WorkflowRunStateLike
+}): BlockedActionView | null {
+  const runtimeCapability = data.runtimeCapability
+  const runState = data.runtimeRunState
+  const blockReasons = runState?.blockReasons ?? []
+  const blocked =
+    runtimeCapability?.status === "blocked" ||
+    runState?.status === "blocked" ||
+    blockReasons.length > 0
+  if (!blocked) return null
+
+  const missing = safeMissingKeys([
+    ...(runtimeCapability?.missing ?? []),
+    ...blockReasons.flatMap((reason) => missingKeysFromDetails(reason.details)),
+  ])
+  const keyText = missing.join(" ")
+  const firstReason = blockReasons.find((reason) => reason.message)?.message
+  return {
+    message: sanitizeResourceText(firstReason ?? runtimeCapability?.reason ?? "Runtime resources must be resolved before this node can run."),
+    actionLabel: actionLabelForMissing(keyText),
+    href: actionHrefForMissing(keyText),
+    missingLabels: missing.map(displayMissingLabel),
+  }
+}
+
+function missingKeysFromDetails(details: Record<string, unknown> | undefined): string[] {
+  if (!details) return []
+  return ["required_params", "missing", "missing_params", "resources"].flatMap((key) => {
+    const value = details[key]
+    if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === "string")
+    return typeof value === "string" ? [value] : []
+  })
+}
+
+function safeMissingKeys(values: string[]): string[] {
+  const hidden = /(cookie|profile|worker|headless|browser|command)/i
+  return Array.from(new Set(values.filter((value) => value && !hidden.test(value)))).slice(0, 4)
+}
+
+function displayMissingLabel(value: string): string {
+  if (value.includes("turbopush")) return "TurboPush Service"
+  if (value.includes("send_permission") || value.includes("notification_permission")) return "Send Permission"
+  if (value.includes("webhook")) return "Webhook Config"
+  if (value.includes("projection")) return "Runtime Projection"
+  if (value.includes("resource")) return "Runtime Resource"
+  return value.split("_").filter(Boolean).map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ")
+}
+
+function actionLabelForMissing(keyText: string): string {
+  if (keyText.includes("turbopush")) return "Connect TurboPush"
+  if (keyText.includes("send_permission") || keyText.includes("notification_permission")) return "Enable Send"
+  if (keyText.includes("webhook")) return "Configure Webhook"
+  if (keyText.includes("resource") || keyText.includes("projection")) return "Resolve Resources"
+  return "Open Runtime Center"
+}
+
+function actionHrefForMissing(keyText: string): string {
+  if (keyText.includes("turbopush") || keyText.includes("resource")) return "/nodes"
+  if (keyText.includes("webhook")) return "/notifications"
+  return "/tasks"
+}
+
+function sanitizeResourceText(value: string): string {
+  return value
+    .replace(/\bcookies?\b/gi, "runtime session")
+    .replace(/\bprofiles?\b/gi, "runtime identity")
+    .replace(/\bworkers?\b/gi, "runtime capacity")
+    .replace(/\bheadless\b/gi, "runtime")
 }

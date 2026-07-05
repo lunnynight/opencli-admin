@@ -15,7 +15,9 @@ from backend.schemas.workflow import (
 )
 
 OPENCLI_MULTI_SOURCE_TEMPLATE = "opencli-multi-source"
+OPENCLI_SOURCE_POOL_CATALOG_ID = "intelligence.source.pool"
 OPENCLI_SOURCE_SLOT_CATALOG_ID = "intelligence.source.opencli-slot"
+OPENCLI_COLLECTION_OUTPUT_CATALOG_ID = "intelligence.output.collection-result"
 OPENCLI_HDA_CATALOG_ID = "package.opencli.multi-source-hda"
 
 
@@ -84,7 +86,11 @@ def _source_slots(value: Any) -> list[dict[str, Any]]:
         command = _read_string(raw.get("command"))
         if not site or not command:
             continue
-        source_group = _read_string(raw.get("sourceGroup")) or _read_string(raw.get("source_group")) or site
+        source_group = (
+            _read_string(raw.get("sourceGroup"))
+            or _read_string(raw.get("source_group"))
+            or site
+        )
         requested_id = _read_string(raw.get("id")) or source_group or site or f"source-{index}"
         slot_id = _unique_id(_safe_id(requested_id), used_ids)
         slots.append(
@@ -100,6 +106,7 @@ def _source_slots(value: Any) -> list[dict[str, Any]]:
 
 
 def _opencli_multi_source_internals(sources: list[dict[str, Any]]) -> WorkflowPackageInternals:
+    source_pool_node = _source_pool_node(sources)
     source_nodes = [_opencli_source_node(source, index) for index, source in enumerate(sources)]
     normalize_node = WorkflowProjectNode(
         id="internal-normalize",
@@ -109,23 +116,74 @@ def _opencli_multi_source_internals(sources: list[dict[str, Any]]) -> WorkflowPa
         ui={
             "catalogId": "intelligence.processing.normalize",
             "label": "Internal Normalize",
-            "position": {"x": 420, "y": 64 + max(len(sources) - 1, 0) * 72},
+            "position": {"x": 620, "y": 64 + max(len(sources) - 1, 0) * 72},
+        },
+    )
+    output_node = WorkflowProjectNode(
+        id="collection-output",
+        kind="inbox",
+        capability="store",
+        params={"queue": "opencli-hda-output", "archive": False},
+        ui={
+            "catalogId": OPENCLI_COLLECTION_OUTPUT_CATALOG_ID,
+            "label": "Collection Output",
+            "position": {"x": 920, "y": 64 + max(len(sources) - 1, 0) * 72},
         },
     )
     edges = [
         WorkflowProjectEdge(
+            id=f"source-pool-{source.id}",
+            source=source_pool_node.id,
+            target=source.id,
+            sourcePort="out",
+            targetPort="in",
+        )
+        for source in source_nodes
+    ] + [
+        WorkflowProjectEdge(
             id=f"{source.id}-normalize",
             source=source.id,
             target=normalize_node.id,
-            sourcePort="records",
-            targetPort="records",
+            sourcePort="out",
+            targetPort="in",
         )
         for source in source_nodes
+    ] + [
+        WorkflowProjectEdge(
+            id="internal-normalize-output",
+            source=normalize_node.id,
+            target=output_node.id,
+            sourcePort="out",
+            targetPort="in",
+        )
     ]
     return WorkflowPackageInternals(
         locked=True,
-        nodes=[*source_nodes, normalize_node],
+        nodes=[source_pool_node, *source_nodes, normalize_node, output_node],
         edges=edges,
+    )
+
+
+def _source_pool_node(sources: list[dict[str, Any]]) -> WorkflowProjectNode:
+    return WorkflowProjectNode(
+        id="source-pool",
+        kind="agent",
+        capability="normalize",
+        params={
+            "sourceCount": len(sources),
+            "sourceGroups": [
+                _read_string(source.get("sourceGroup"))
+                or _read_string(source.get("site"))
+                or "source"
+                for source in sources
+            ],
+            "fanout": "parallel",
+        },
+        ui={
+            "catalogId": OPENCLI_SOURCE_POOL_CATALOG_ID,
+            "label": "Source Pool",
+            "position": {"x": 0, "y": 64 + max(len(sources) - 1, 0) * 72},
+        },
     )
 
 
@@ -149,7 +207,7 @@ def _opencli_source_node(source: dict[str, Any], index: int) -> WorkflowProjectN
         ui={
             "catalogId": OPENCLI_SOURCE_SLOT_CATALOG_ID,
             "label": _read_string(source.get("label")) or f"OpenCLI {source['site']}",
-            "position": {"x": 0, "y": index * 150},
+            "position": {"x": 280, "y": index * 150},
             "sourceSlot": {
                 "sourceGroup": source["sourceGroup"],
                 "parallel": True,

@@ -101,6 +101,145 @@ def _opencli_workflow_project() -> dict:
     return project
 
 
+def _native_nodes_first_loop_project() -> dict:
+    return {
+        "id": "wf-native-nodes-first-loop",
+        "name": "Native nodes first loop",
+        "profile": "intelligence",
+        "version": 1,
+        "nodes": [
+            {
+                "id": "source-bilibili",
+                "kind": "source",
+                "capability": "fetch",
+                "adapter": "opencli-bilibili",
+                "params": {"site": "bilibili", "command": "search"},
+                "ui": {"catalogId": "intelligence.source.opencli-slot"},
+            },
+            {
+                "id": "source-xhs",
+                "kind": "source",
+                "capability": "fetch",
+                "adapter": "opencli-xhs",
+                "params": {"site": "xiaohongshu", "command": "search"},
+                "ui": {"catalogId": "intelligence.source.opencli-slot"},
+            },
+            {
+                "id": "normalize-bilibili",
+                "kind": "agent",
+                "capability": "normalize",
+                "params": {"language": "zh-CN", "preserveSourceRefs": True},
+                "ui": {"catalogId": "intelligence.processing.normalize"},
+            },
+            {
+                "id": "normalize-xhs",
+                "kind": "agent",
+                "capability": "normalize",
+                "params": {"language": "zh-CN", "preserveSourceRefs": True},
+                "ui": {"catalogId": "intelligence.processing.normalize"},
+            },
+            {
+                "id": "merge-candidates",
+                "kind": "flow",
+                "capability": "merge",
+                "params": {
+                    "strategy": "concat",
+                    "preserveLineage": True,
+                    "inputType": "recordCandidate[]",
+                    "outputType": "recordCandidate[]",
+                },
+                "ui": {"catalogId": "intelligence.flow.merge"},
+            },
+            {
+                "id": "accept-records",
+                "kind": "control",
+                "capability": "accept",
+                "params": {
+                    "mode": "automatic_with_review",
+                    "schema": "record.v1",
+                    "dedupe": "required",
+                    "lineageRequired": True,
+                    "minQuality": 0,
+                },
+                "ui": {"catalogId": "intelligence.control.record-acceptance"},
+            },
+            {
+                "id": "record-sink",
+                "kind": "sink",
+                "capability": "store",
+                "params": {
+                    "target": "records",
+                    "writeMode": "append",
+                    "preserveLineage": True,
+                },
+                "ui": {"catalogId": "intelligence.sink.records"},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e-bilibili-normalize",
+                "source": "source-bilibili",
+                "target": "normalize-bilibili",
+            },
+            {
+                "id": "e-xhs-normalize",
+                "source": "source-xhs",
+                "target": "normalize-xhs",
+            },
+            {
+                "id": "e-bilibili-merge",
+                "source": "normalize-bilibili",
+                "target": "merge-candidates",
+                "sourcePort": "out",
+                "targetPort": "in1",
+            },
+            {
+                "id": "e-xhs-merge",
+                "source": "normalize-xhs",
+                "target": "merge-candidates",
+                "sourcePort": "out",
+                "targetPort": "in2",
+            },
+            {
+                "id": "e-merge-accept",
+                "source": "merge-candidates",
+                "target": "accept-records",
+                "sourcePort": "out",
+                "targetPort": "candidates",
+            },
+            {
+                "id": "e-accept-sink",
+                "source": "accept-records",
+                "target": "record-sink",
+                "sourcePort": "records",
+                "targetPort": "records",
+            },
+        ],
+        "adapters": [
+            {
+                "id": "opencli-bilibili",
+                "type": "source",
+                "provider": "opencli",
+                "mode": "live",
+                "config": {"channel": "opencli"},
+            },
+            {
+                "id": "opencli-xhs",
+                "type": "source",
+                "provider": "opencli",
+                "mode": "live",
+                "config": {"channel": "opencli"},
+            },
+        ],
+        "agentPermissions": {
+            "canFetchNetwork": True,
+            "canSendNotifications": False,
+            "canWriteInbox": True,
+            "allowedDomains": ["bilibili.com", "xiaohongshu.com"],
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_compile_valid_workflow_returns_plan_preview(client):
     response = await client.post(
@@ -147,7 +286,118 @@ async def test_compile_resolves_opencli_source_to_iii_runtime_binding(client):
 
 
 @pytest.mark.asyncio
-async def test_compile_marks_unsupported_nodes_with_structured_missing_runtime(client):
+async def test_compile_projects_native_first_loop_nodes_to_runtime_bindings(client):
+    response = await client.post(
+        "/api/v1/workflows/compile",
+        json={"project": _native_nodes_first_loop_project()},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is True
+    runtime_nodes = {
+        node["id"]: node for node in data["plan"]["runtime"]["nodes"]
+    }
+
+    merge = runtime_nodes["merge-candidates"]
+    assert merge["kind"] == "flow"
+    assert merge["capability"] == "merge"
+    assert merge["runtime"]["binding"]["binding_id"] == "workflow.flow.merge"
+    assert merge["runtime"]["merge"] == {
+        "node_id": "merge-candidates",
+        "strategy": "concat",
+        "lineage": "preserved",
+    }
+
+    gate = runtime_nodes["accept-records"]
+    assert gate["kind"] == "control"
+    assert gate["capability"] == "accept"
+    assert gate["runtime"]["binding"]["binding_id"] == (
+        "workflow.gate.record-acceptance"
+    )
+    assert gate["runtime"]["record_acceptance"] == {
+        "node_id": "accept-records",
+        "candidate_port": "recordCandidate[]",
+        "record_port": "record[]",
+    }
+
+    sink = runtime_nodes["record-sink"]
+    assert sink["kind"] == "sink"
+    assert sink["capability"] == "store"
+    assert sink["runtime"]["binding"]["binding_id"] == "workflow.record-sink.records"
+
+    plan_nodes = {
+        node["id"]: node for node in data["plan"]["runtime"]["plan_ir"]["nodes"]
+    }
+    assert plan_nodes["merge-candidates"]["kind"] == "merge"
+    assert plan_nodes["merge-candidates"]["inputs"] == [
+        {"name": "in1", "type": "recordCandidate[]"},
+        {"name": "in2", "type": "recordCandidate[]"},
+    ]
+    assert plan_nodes["accept-records"]["outputs"] == [
+        {"name": "records", "type": "record[]"}
+    ]
+    assert plan_nodes["record-sink"]["kind"] == "sink"
+    assert plan_nodes["record-sink"]["inputs"] == [
+        {"name": "records", "type": "record[]"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compile_rejects_incompatible_typed_native_edge(client):
+    project = _native_nodes_first_loop_project()
+    project["edges"][-1] = {
+        "id": "e-merge-sink-invalid",
+        "source": "merge-candidates",
+        "target": "record-sink",
+        "sourcePort": "out",
+        "targetPort": "records",
+    }
+
+    response = await client.post(
+        "/api/v1/workflows/compile",
+        json={"project": project},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is False
+    assert data["plan"] is None
+    errors = [error for error in data["errors"] if error["code"] == "incompatible_edge_ports"]
+    assert errors == [
+        {
+            "code": "incompatible_edge_ports",
+            "message": (
+                'Workflow edge "e-merge-sink-invalid" connects incompatible '
+                "port types: recordCandidate[] -> record[]"
+            ),
+            "node_id": None,
+            "edge_id": "e-merge-sink-invalid",
+            "path": ["edges", "e-merge-sink-invalid"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compile_rejects_invalid_typed_native_port_id(client):
+    project = _native_nodes_first_loop_project()
+    project["edges"][-1]["sourcePort"] = "out"
+
+    response = await client.post(
+        "/api/v1/workflows/compile",
+        json={"project": project},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["valid"] is False
+    errors = [error for error in data["errors"] if error["code"] == "invalid_edge_source_port"]
+    assert errors[0]["edge_id"] == "e-accept-sink"
+    assert errors[0]["path"] == ["edges", "e-accept-sink", "sourcePort"]
+
+
+@pytest.mark.asyncio
+async def test_compile_resolves_normalize_to_native_transform_binding(client):
     response = await client.post(
         "/api/v1/workflows/compile",
         json={"project": _opencli_workflow_project()},
@@ -157,13 +407,21 @@ async def test_compile_marks_unsupported_nodes_with_structured_missing_runtime(c
     runtime_nodes = response.json()["data"]["plan"]["runtime"]["nodes"]
     normalize_node = runtime_nodes[1]
     assert normalize_node["id"] == "normalize-items"
-    assert normalize_node["runtime"]["missing_runtime"] == {
-        "status": "missing",
-        "code": "missing_runtime_binding",
+    assert normalize_node["runtime"]["binding"] == {
+        "status": "bound",
+        "binding_id": "workflow.transform.normalize",
+        "runtime": "workflow",
+        "channel": "transform",
+        "input": {
+            "language": "zh-CN",
+            "preserveSourceRefs": True,
+            "inputPort": "items[]",
+            "outputPort": "recordCandidate[]",
+        },
+    }
+    assert normalize_node["runtime"]["normalize"] == {
         "node_id": "normalize-items",
-        "kind": "agent",
-        "capability": "normalize",
-        "message": "No runtime binding registered for workflow.agent.normalize",
+        "candidate_port": "recordCandidate[]",
     }
 
 
@@ -438,22 +696,39 @@ async def test_compile_materializes_opencli_hda_sources_from_ai_params_in_parall
     runtime = data["plan"]["runtime"]
     assert runtime["node_ids"] == [
         "multi-source-opencli",
+        "multi-source-opencli::source-pool",
         "multi-source-opencli::source-bili",
         "multi-source-opencli::source-xhs",
         "multi-source-opencli::internal-normalize",
+        "multi-source-opencli::collection-output",
     ]
     package_node = runtime["nodes"][0]
-    source_bili = runtime["nodes"][1]
-    source_xhs = runtime["nodes"][2]
-    normalize = runtime["nodes"][3]
+    source_pool = runtime["nodes"][1]
+    source_bili = runtime["nodes"][2]
+    source_xhs = runtime["nodes"][3]
+    normalize = runtime["nodes"][4]
+    collection_output = runtime["nodes"][5]
     assert package_node["params"]["execution"]["fanout"] == "parallel"
     assert package_node["params"]["execution"]["maxConcurrency"] == 4
-    assert source_bili["depends_on"] == ["multi-source-opencli"]
-    assert source_xhs["depends_on"] == ["multi-source-opencli"]
+    assert source_pool["depends_on"] == ["multi-source-opencli"]
+    assert source_pool["runtime"]["binding"]["binding_id"] == (
+        "workflow.source-pool.parallel-fanout"
+    )
+    assert source_pool["runtime"]["binding"]["input"] == {
+        "sourceCount": 2,
+        "sourceGroups": ["video", "social"],
+        "fanout": "parallel",
+    }
+    assert source_bili["depends_on"] == ["multi-source-opencli::source-pool"]
+    assert source_xhs["depends_on"] == ["multi-source-opencli::source-pool"]
     assert normalize["depends_on"] == [
         "multi-source-opencli::source-bili",
         "multi-source-opencli::source-xhs",
     ]
+    assert collection_output["depends_on"] == ["multi-source-opencli::internal-normalize"]
+    assert collection_output["runtime"]["binding"]["binding_id"] == (
+        "workflow.collection-output.items"
+    )
     assert source_bili["runtime"]["origin"]["catalog_id"] == "intelligence.source.opencli-slot"
     assert source_bili["runtime"]["binding"]["function_id"] == "odp.collect::opencli_snapshot"
     assert source_xhs["runtime"]["binding"]["input"] == {
@@ -461,6 +736,15 @@ async def test_compile_materializes_opencli_hda_sources_from_ai_params_in_parall
         "command": "search",
     }
     assert package_node["package"]["internal_node_ids"] == [
+        "multi-source-opencli::source-pool",
+        "multi-source-opencli::source-bili",
+        "multi-source-opencli::source-xhs",
+        "multi-source-opencli::internal-normalize",
+        "multi-source-opencli::collection-output",
+    ]
+    assert [edge["source"] for edge in runtime["edges"]] == [
+        "multi-source-opencli::source-pool",
+        "multi-source-opencli::source-pool",
         "multi-source-opencli::source-bili",
         "multi-source-opencli::source-xhs",
         "multi-source-opencli::internal-normalize",

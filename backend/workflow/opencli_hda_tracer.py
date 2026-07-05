@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.models.record import CollectedRecord
+from backend.models.source import DataSource
+from backend.models.task import CollectionTask
+from backend.models.workflow_run import WorkflowRun as WorkflowRunRow
+from backend.models.workflow_run import WorkflowRunEvent as WorkflowRunEventRow
+from backend.pipeline.normalizer import normalize_item
+from backend.pipeline.storer import store_records
 from backend.schemas.workflow import (
     CompiledWorkflowNode,
     WorkflowCompileError,
@@ -15,15 +27,43 @@ from backend.schemas.workflow import (
     WorkflowProject,
     WorkflowRunBatchReference,
     WorkflowRunBlockReason,
+    WorkflowRunCheckpoint,
     WorkflowRunNodeState,
     WorkflowRunProjection,
+    WorkflowRunSourceOutputsRequest,
     WorkflowRunStartRequest,
     WorkflowRunStatus,
 )
 from backend.workflow.compiler import INTERNAL_ID_SEPARATOR, compile_workflow_project
-from backend.workflow.runtime_registry import OPENCLI_FUNCTION_ID, OPENCLI_WORKER
+from backend.workflow.realtime_market_executor import (
+    OKX_MARKET_TICKER_SNAPSHOT_EXECUTOR,
+    RealtimeMarketExecutionError,
+    execute_okx_market_ticker_snapshot,
+)
+from backend.workflow.runtime_registry import (
+    EXTERNAL_TOOL_BINDING_ID,
+    MERGE_BINDING_ID,
+    NORMALIZE_BINDING_ID,
+    OPENCLI_FUNCTION_ID,
+    OPENCLI_WORKER,
+    RECORD_ACCEPTANCE_BINDING_ID,
+    RECORD_SINK_BINDING_ID,
+)
+from backend.workflow.turbopush_executor import (
+    TurboPushPublishError,
+    execute_turbopush_publish,
+)
+from backend.workflow.turbopush_runtime import TURBOPUSH_BINDING_ID
 
-_RUNS: dict[str, tuple[WorkflowRunProjection, list[WorkflowNodeRunEvent]]] = {}
+
+@dataclass
+class _StoredWorkflowRun:
+    request: WorkflowRunStartRequest
+    projection: WorkflowRunProjection
+    events: list[WorkflowNodeRunEvent]
+
+
+_RUNS: dict[str, _StoredWorkflowRun] = {}
 
 
 def build_opencli_hda_trace(
@@ -116,12 +156,18 @@ def build_opencli_hda_trace(
     )
 
 
-def start_workflow_run(body: WorkflowRunStartRequest) -> WorkflowRunProjection:
+async def start_workflow_run(
+    body: WorkflowRunStartRequest,
+    *,
+    session: AsyncSession | None = None,
+    existing_events: list[WorkflowNodeRunEvent] | None = None,
+) -> WorkflowRunProjection:
     """Create a replayable workflow run projection from a compiled WorkflowProject."""
 
     run_id = body.runId or str(uuid.uuid4())
     trace_id = body.traceId or str(uuid.uuid4())
     started_at = _utcnow()
+    prior_events = list(existing_events or [])
     compile_result = compile_workflow_project(body.project)
 
     if not compile_result.valid or compile_result.plan is None:
@@ -142,25 +188,56 @@ def start_workflow_run(body: WorkflowRunStartRequest) -> WorkflowRunProjection:
             runtime_nodes=[],
             events=events,
         )
-        _RUNS[run_id] = (projection, events)
+        stored_events = [*prior_events, *events]
+        projection = _build_projection(
+            workflow_id=body.project.id,
+            run_id=run_id,
+            trace_id=trace_id,
+            package_node_id=body.packageNodeId,
+            started_at=started_at,
+            valid=False,
+            errors=compile_result.errors,
+            runtime_nodes=[],
+            events=stored_events,
+        )
+        await _store_workflow_run(
+            run_id,
+            request=body,
+            projection=projection,
+            events=stored_events,
+            session=session,
+        )
         return projection
 
-    trace = build_opencli_hda_trace(
-        body.project,
-        package_node_id=body.packageNodeId,
-        run_id=run_id,
-        trace_id=trace_id,
-    )
     emitter = _WorkflowRunEventEmitter(
         workflow_id=body.project.id,
         run_id=run_id,
         trace_id=trace_id,
+        initial_sequence=len(prior_events),
     )
     runtime_nodes = compile_result.plan.runtime.nodes
+    runtime_nodes_by_id = {node.id: node for node in runtime_nodes}
+    should_trace_opencli = body.packageNodeId is not None or _select_package_id(
+        runtime_nodes, None
+    ) is not None
+    trace = (
+        build_opencli_hda_trace(
+            body.project,
+            package_node_id=body.packageNodeId,
+            run_id=run_id,
+            trace_id=trace_id,
+        )
+        if should_trace_opencli
+        else None
+    )
     package_nodes = [node for node in runtime_nodes if node.package is not None]
     package_ids = {node.id for node in package_nodes}
-    dispatches_by_node = {dispatch.nodeId: dispatch for dispatch in trace.dispatches}
+    dispatches_by_node = {
+        dispatch.nodeId: dispatch for dispatch in (trace.dispatches if trace else [])
+    }
     blocked_by_package: dict[str, list[WorkflowRunBlockReason]] = {}
+    outputs_by_node: dict[str, list[dict[str, Any]]] = {}
+    materialized_source_tasks: dict[str, tuple[str, str]] = {}
 
     for node in runtime_nodes:
         emitter.emit(node, "queued", message="Node queued for workflow run")
@@ -190,8 +267,151 @@ def start_workflow_run(body: WorkflowRunStartRequest) -> WorkflowRunProjection:
                 blocked_by_package.setdefault(package_parent_id, []).append(reason)
             continue
 
+        request_items = _request_source_items(node, body.sourceOutputs)
+        if request_items:
+            outputs_by_node[node.id] = request_items
+            emitter.emit(node, "started", message="Runtime source output started")
+            emitter.emit(
+                node,
+                "partial",
+                message="Runtime source output loaded as workflow items",
+                details={
+                    "itemCount": len(request_items),
+                    "outputPort": "items[]",
+                    "lineage": _lineage_pointer(node),
+                },
+            )
+            emitter.emit(node, "completed", message="Runtime source output completed")
+            continue
+
+        fixture_items = _fixture_source_items(node)
+        if fixture_items:
+            outputs_by_node[node.id] = fixture_items
+            emitter.emit(node, "started", message="Fixture source items started")
+            emitter.emit(
+                node,
+                "partial",
+                message="Fixture source items ready",
+                details={
+                    "itemCount": len(fixture_items),
+                    "outputPort": "items[]",
+                    "lineage": _lineage_pointer(node),
+                },
+            )
+            emitter.emit(node, "completed", message="Fixture source items completed")
+            continue
+
+        persisted_items = await _bound_source_record_items(node, session=session)
+        if persisted_items:
+            outputs_by_node[node.id] = persisted_items
+            emitter.emit(node, "started", message="Bound source records started")
+            emitter.emit(
+                node,
+                "partial",
+                message="Bound source records loaded as workflow items",
+                details={
+                    "itemCount": len(persisted_items),
+                    "outputPort": "items[]",
+                    "taskId": _bound_task_id(node),
+                    "sourceId": _bound_source_id_from_items(persisted_items),
+                    "lineage": _lineage_pointer(node),
+                },
+            )
+            emitter.emit(node, "completed", message="Bound source records completed")
+            continue
+
+        if _is_turbopush_publish_node(node):
+            if not body.project.agentPermissions.canSendNotifications:
+                reason = WorkflowRunBlockReason(
+                    code="send_permission_required",
+                    message=(
+                        "TurboPush Publish is bound, but workflow "
+                        "agentPermissions.canSendNotifications is false."
+                    ),
+                    source="workflow_permissions",
+                    details={
+                        "nodeId": node.id,
+                        "requiredPermission": "canSendNotifications",
+                    },
+                )
+                emitter.emit(
+                    node,
+                    "blocked",
+                    message=reason.message,
+                    block_reason=reason,
+                )
+                continue
+
+            binding = _read_dict(node.runtime.get("binding"))
+            binding_input = _read_dict(binding.get("input"))
+            emitter.emit(node, "started", message="TurboPush publish binding started")
+            try:
+                result = execute_turbopush_publish(binding_input)
+            except TurboPushPublishError as exc:
+                reason = WorkflowRunBlockReason(
+                    code=exc.code,
+                    message=exc.message,
+                    source="turbopush_runtime",
+                    details=exc.details,
+                )
+                emitter.emit(
+                    node,
+                    "blocked" if exc.status == "blocked" else "failed",
+                    message=exc.message,
+                    block_reason=reason,
+                )
+                continue
+
+            emitter.emit(
+                node,
+                "partial",
+                message="TurboPush publish SSE result received",
+                details={
+                    "bindingId": TURBOPUSH_BINDING_ID,
+                    **result,
+                },
+            )
+            emitter.emit(node, "completed", message="TurboPush publish completed")
+            continue
+
+        if _is_first_loop_native_node(node):
+            details, output_items = await _execute_native_node(
+                node,
+                outputs_by_node,
+                run_id,
+                workflow_id=body.project.id,
+                session=session,
+                runtime_nodes_by_id=runtime_nodes_by_id,
+                materialized_source_tasks=materialized_source_tasks,
+            )
+            outputs_by_node[node.id] = output_items
+            emitter.emit(node, "started", message=_native_node_started_message(node))
+            if _binding_id(node) == EXTERNAL_TOOL_BINDING_ID:
+                emitter.emit(
+                    node,
+                    "tool_call_started",
+                    message="OpenCLI Tool Capability call started",
+                    details=_tool_call_trace_details(details),
+                )
+            emitter.emit(
+                node,
+                "partial",
+                message=_native_node_partial_message(node),
+                details=details,
+            )
+            if _binding_id(node) == EXTERNAL_TOOL_BINDING_ID:
+                emitter.emit(
+                    node,
+                    "tool_call_completed",
+                    message="OpenCLI Tool Capability call completed",
+                    details=_tool_call_trace_details(details),
+                )
+            emitter.emit(node, "completed", message=_native_node_completed_message(node))
+            continue
+
         dispatch = dispatches_by_node.get(node.id)
         if dispatch is None:
+            outputs_by_node.setdefault(node.id, [])
             emitter.emit(node, "started", message="Node started")
             emitter.emit(node, "completed", message="Node completed")
             continue
@@ -218,10 +438,13 @@ def start_workflow_run(body: WorkflowRunStartRequest) -> WorkflowRunProjection:
             },
         )
         emitter.emit(node, "completed", message="OpenCLI source dispatch completed")
+        outputs_by_node[node.id] = []
 
     for package_node in package_nodes:
         trace_errors = [
-            error for error in trace.errors if error.node_id in {None, package_node.id}
+            error
+            for error in (trace.errors if trace else [])
+            if error.node_id in {None, package_node.id}
         ]
         if trace_errors:
             emitter.emit(
@@ -258,37 +481,261 @@ def start_workflow_run(body: WorkflowRunStartRequest) -> WorkflowRunProjection:
 
         emitter.emit(package_node, "completed", message="Package node completed")
 
-    events = emitter.events
+    events = [*prior_events, *emitter.events]
     projection = _build_projection(
         workflow_id=body.project.id,
         run_id=run_id,
         trace_id=trace_id,
-        package_node_id=trace.packageNodeId or body.packageNodeId,
+        package_node_id=(trace.packageNodeId if trace else None) or body.packageNodeId,
         started_at=started_at,
-        valid=trace.valid,
-        errors=trace.errors,
+        valid=trace.valid if trace else True,
+        errors=trace.errors if trace else [],
         runtime_nodes=runtime_nodes,
         events=events,
     )
-    _RUNS[run_id] = (projection, events)
+    await _store_workflow_run(
+        run_id,
+        request=body,
+        projection=projection,
+        events=events,
+        session=session,
+    )
     return projection
 
 
-def get_workflow_run_projection(run_id: str) -> WorkflowRunProjection | None:
+async def get_workflow_run_projection(
+    run_id: str,
+    *,
+    session: AsyncSession | None = None,
+) -> WorkflowRunProjection | None:
     stored = _RUNS.get(run_id)
-    return stored[0] if stored else None
+    if stored:
+        return stored.projection
+    stored = await _load_workflow_run(run_id, session=session)
+    return stored.projection if stored else None
 
 
-def list_workflow_run_events(run_id: str) -> list[WorkflowNodeRunEvent] | None:
+async def list_workflow_run_events(
+    run_id: str,
+    *,
+    session: AsyncSession | None = None,
+    after_sequence: int | None = None,
+    node_id: str | None = None,
+    event_type: WorkflowNodeRunEventType | None = None,
+    limit: int | None = None,
+) -> list[WorkflowNodeRunEvent] | None:
     stored = _RUNS.get(run_id)
-    return list(stored[1]) if stored else None
+    if not stored:
+        stored = await _load_workflow_run(run_id, session=session)
+    if not stored:
+        return None
+    events = _filter_workflow_run_events(
+        stored.events,
+        after_sequence=after_sequence,
+        node_id=node_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    return events
+
+
+async def get_workflow_run_checkpoint(
+    run_id: str,
+    *,
+    session: AsyncSession | None = None,
+) -> WorkflowRunCheckpoint | None:
+    stored = _RUNS.get(run_id) or await _load_workflow_run(run_id, session=session)
+    if stored is None:
+        return None
+    return _build_checkpoint(stored.request, stored.projection, stored.events)
+
+
+async def continue_workflow_run_with_source_outputs(
+    run_id: str,
+    body: WorkflowRunSourceOutputsRequest,
+    *,
+    session: AsyncSession | None = None,
+) -> WorkflowRunProjection | None:
+    stored = _RUNS.get(run_id) or await _load_workflow_run(run_id, session=session)
+    if stored is None:
+        return None
+
+    merged_outputs = _merge_source_outputs(
+        stored.request.sourceOutputs,
+        body.sourceOutputs,
+    )
+    request = stored.request.model_copy(
+        update={
+            "runId": run_id,
+            "traceId": stored.projection.traceId,
+            "sourceOutputs": merged_outputs,
+        },
+        deep=True,
+    )
+    return await start_workflow_run(
+        request,
+        session=session,
+        existing_events=stored.events,
+    )
+
+
+async def _store_workflow_run(
+    run_id: str,
+    *,
+    request: WorkflowRunStartRequest,
+    projection: WorkflowRunProjection,
+    events: list[WorkflowNodeRunEvent],
+    session: AsyncSession | None,
+) -> None:
+    stored = _StoredWorkflowRun(request, projection, list(events))
+    _RUNS[run_id] = stored
+    if session is None:
+        return
+
+    row = await session.get(WorkflowRunRow, run_id)
+    if row is None:
+        row = WorkflowRunRow(id=run_id)
+        session.add(row)
+
+    row.workflow_id = projection.workflowId
+    row.trace_id = projection.traceId
+    row.status = projection.status
+    row.valid = projection.valid
+    row.package_node_id = projection.packageNodeId
+    row.request = request.model_dump(mode="json")
+    row.projection = projection.model_dump(mode="json")
+
+    existing_events = (
+        await session.execute(
+            select(WorkflowRunEventRow).where(WorkflowRunEventRow.run_id == run_id)
+        )
+    ).scalars()
+    for event_row in existing_events:
+        await session.delete(event_row)
+
+    for event in events:
+        session.add(
+            WorkflowRunEventRow(
+                run_id=run_id,
+                workflow_id=event.workflowId,
+                trace_id=event.traceId,
+                event_id=event.id,
+                node_id=event.nodeId,
+                sequence=event.sequence,
+                event_type=event.eventType,
+                payload=event.model_dump(mode="json"),
+            )
+        )
+    await session.flush()
+
+
+async def _load_workflow_run(
+    run_id: str,
+    *,
+    session: AsyncSession | None,
+) -> _StoredWorkflowRun | None:
+    if session is None:
+        return None
+
+    row = await session.get(WorkflowRunRow, run_id)
+    if row is None:
+        return None
+
+    event_rows = (
+        (
+            await session.execute(
+                select(WorkflowRunEventRow)
+                .where(WorkflowRunEventRow.run_id == run_id)
+                .order_by(WorkflowRunEventRow.sequence)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stored = _StoredWorkflowRun(
+        request=WorkflowRunStartRequest.model_validate(row.request),
+        projection=WorkflowRunProjection.model_validate(row.projection),
+        events=[
+            WorkflowNodeRunEvent.model_validate(event_row.payload)
+            for event_row in event_rows
+        ],
+    )
+    _RUNS[run_id] = stored
+    return stored
+
+
+def _merge_source_outputs(
+    existing: dict[str, list[dict[str, Any]]],
+    incoming: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    merged = {node_id: [dict(item) for item in items] for node_id, items in existing.items()}
+    for node_id, items in incoming.items():
+        merged.setdefault(node_id, []).extend(dict(item) for item in items)
+    return merged
+
+
+def _filter_workflow_run_events(
+    events: list[WorkflowNodeRunEvent],
+    *,
+    after_sequence: int | None,
+    node_id: str | None,
+    event_type: WorkflowNodeRunEventType | None,
+    limit: int | None,
+) -> list[WorkflowNodeRunEvent]:
+    filtered = [
+        event
+        for event in events
+        if (after_sequence is None or event.sequence > after_sequence)
+        and (node_id is None or event.nodeId == node_id)
+        and (event_type is None or event.eventType == event_type)
+    ]
+    if limit is not None:
+        filtered = filtered[:limit]
+    return list(filtered)
+
+
+def _build_checkpoint(
+    request: WorkflowRunStartRequest,
+    projection: WorkflowRunProjection,
+    events: list[WorkflowNodeRunEvent],
+) -> WorkflowRunCheckpoint:
+    source_outputs = request.sourceOutputs
+    source_output_node_ids = sorted(source_outputs)
+    source_output_item_count = sum(len(items) for items in source_outputs.values())
+    last_sequence = max((event.sequence for event in events), default=0)
+    checkpoint_id = f"{projection.runId}:{last_sequence:04d}"
+    return WorkflowRunCheckpoint(
+        checkpointId=checkpoint_id,
+        workflowId=projection.workflowId,
+        runId=projection.runId,
+        traceId=projection.traceId,
+        status=projection.status,
+        valid=projection.valid,
+        eventCount=projection.eventCount,
+        lastSequence=last_sequence,
+        updatedAt=projection.updatedAt,
+        nodeStates=projection.nodeStates,
+        sourceOutputNodeIds=source_output_node_ids,
+        sourceOutputItemCount=source_output_item_count,
+        canContinueWithSourceOutputs=True,
+        continuationPath=f"/api/v1/workflows/runs/{projection.runId}/source-outputs",
+        tracePath=f"/api/v1/workflows/runs/{projection.runId}/trace",
+    )
 
 
 class _WorkflowRunEventEmitter:
-    def __init__(self, *, workflow_id: str, run_id: str, trace_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        workflow_id: str,
+        run_id: str,
+        trace_id: str,
+        initial_sequence: int = 0,
+    ) -> None:
         self._workflow_id = workflow_id
         self._run_id = run_id
         self._trace_id = trace_id
+        self._initial_sequence = initial_sequence
         self.events: list[WorkflowNodeRunEvent] = []
 
     def emit(
@@ -301,7 +748,7 @@ class _WorkflowRunEventEmitter:
         batch: WorkflowRunBatchReference | None = None,
         details: dict[str, object] | None = None,
     ) -> None:
-        sequence = len(self.events) + 1
+        sequence = self._initial_sequence + len(self.events) + 1
         package_node_id = _read_string(node.runtime.get("package_parent_id"))
         internal_node_id = _optional_internal_node_id(node.id, package_node_id)
         source_group = _read_string(node.params.get("sourceGroup")) or _read_string(
@@ -464,7 +911,7 @@ def _reason_from_compile_error(error: WorkflowCompileError) -> WorkflowRunBlockR
 def _status_after_event(event_type: WorkflowNodeRunEventType) -> WorkflowRunStatus:
     if event_type == "started":
         return "running"
-    if event_type == "batch_ready":
+    if event_type in {"batch_ready", "tool_call_started", "tool_call_completed"}:
         return "partial"
     if event_type == "failed":
         return "failed"
@@ -514,6 +961,711 @@ def _is_opencli_internal_source(node: CompiledWorkflowNode, package_node_id: str
         return False
     binding = node.runtime.get("binding")
     return isinstance(binding, dict) and binding.get("function_id") == OPENCLI_FUNCTION_ID
+
+
+def _is_turbopush_publish_node(node: CompiledWorkflowNode) -> bool:
+    binding = node.runtime.get("binding")
+    return isinstance(binding, dict) and binding.get("binding_id") == TURBOPUSH_BINDING_ID
+
+
+def _is_first_loop_native_node(node: CompiledWorkflowNode) -> bool:
+    binding = node.runtime.get("binding")
+    if not isinstance(binding, dict):
+        return False
+    return binding.get("binding_id") in {
+        NORMALIZE_BINDING_ID,
+        MERGE_BINDING_ID,
+        RECORD_ACCEPTANCE_BINDING_ID,
+        RECORD_SINK_BINDING_ID,
+        EXTERNAL_TOOL_BINDING_ID,
+    }
+
+
+def _fixture_source_items(node: CompiledWorkflowNode) -> list[dict[str, Any]]:
+    raw_items = _read_dict_list(
+        node.params.get("fixtureItems", node.params.get("sampleItems", node.params.get("items")))
+    )
+    if not raw_items:
+        return []
+    source_group = _source_group(node, node.id)
+    return [
+        {
+            "raw": item,
+            "lineage": [
+                {
+                    "nodeId": node.id,
+                    "sourceGroup": source_group,
+                    "artifact": "fixtureItems",
+                    "index": index,
+                }
+            ],
+        }
+        for index, item in enumerate(raw_items)
+    ]
+
+
+def _request_source_items(
+    node: CompiledWorkflowNode,
+    source_outputs: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    raw_items = _read_dict_list(source_outputs.get(node.id))
+    if not raw_items:
+        return []
+    source_group = _source_group(node, node.id)
+    return [
+        {
+            "raw": item,
+            "lineage": [
+                {
+                    "nodeId": node.id,
+                    "sourceGroup": source_group,
+                    "artifact": "sourceOutputs",
+                    "index": index,
+                }
+            ],
+        }
+        for index, item in enumerate(raw_items)
+    ]
+
+
+async def _bound_source_record_items(
+    node: CompiledWorkflowNode,
+    *,
+    session: AsyncSession | None,
+) -> list[dict[str, Any]]:
+    if session is None:
+        return []
+    task_id = _bound_task_id(node)
+    if not task_id:
+        return []
+    result = await session.execute(
+        select(CollectedRecord)
+        .where(CollectedRecord.task_id == task_id)
+        .order_by(CollectedRecord.created_at, CollectedRecord.id)
+    )
+    records = result.scalars().all()
+    source_group = _source_group(node, node.id)
+    return [
+        {
+            "raw": dict(record.raw_data or {}),
+            "normalizedData": dict(record.normalized_data or {}),
+            "contentHash": record.content_hash,
+            "recordId": record.id,
+            "lineage": [
+                {
+                    "nodeId": node.id,
+                    "sourceGroup": source_group,
+                    "artifact": "collected_records",
+                    "recordId": record.id,
+                    "taskId": record.task_id,
+                    "sourceId": record.source_id,
+                    "index": index,
+                }
+            ],
+        }
+        for index, record in enumerate(records)
+    ]
+
+
+def _bound_task_id(node: CompiledWorkflowNode) -> str | None:
+    return (
+        _read_string(node.params.get("taskId"))
+        or _read_string(node.params.get("collectionTaskId"))
+        or _read_string(node.params.get("boundTaskId"))
+    )
+
+
+def _bound_source_id_from_items(items: list[dict[str, Any]]) -> str | None:
+    for item in items:
+        for entry in _read_dict_list(item.get("lineage")):
+            source_id = _read_string(entry.get("sourceId"))
+            if source_id:
+                return source_id
+    return None
+
+
+async def _execute_native_node(
+    node: CompiledWorkflowNode,
+    outputs_by_node: dict[str, list[dict[str, Any]]],
+    run_id: str,
+    *,
+    workflow_id: str,
+    session: AsyncSession | None = None,
+    runtime_nodes_by_id: dict[str, CompiledWorkflowNode] | None = None,
+    materialized_source_tasks: dict[str, tuple[str, str]] | None = None,
+) -> tuple[dict[str, object], list[dict[str, Any]]]:
+    binding_id = _binding_id(node)
+    input_items = _upstream_outputs(node, outputs_by_node)
+    if binding_id == NORMALIZE_BINDING_ID:
+        candidates = _normalize_runtime_items(node, input_items, run_id)
+        return (
+            {
+                "bindingId": binding_id,
+                "inputPort": "items[]",
+                "outputPort": "recordCandidate[]",
+                "inputItemCount": len(input_items),
+                "recordCandidateCount": len(candidates),
+                "lineage": _lineage_pointer(node),
+            },
+            candidates,
+        )
+    if binding_id == MERGE_BINDING_ID:
+        binding = _read_dict(node.runtime.get("binding"))
+        binding_input = _read_dict(binding.get("input"))
+        merged = [
+            _append_lineage(item, node, step="merge", run_id=run_id)
+            for item in input_items
+        ]
+        return (
+            {
+                "bindingId": binding_id,
+                "strategy": binding_input.get("strategy", "concat"),
+                "inputType": binding_input.get("inputType", "recordCandidate[]"),
+                "outputType": binding_input.get("outputType", "recordCandidate[]"),
+                "preserveLineage": binding_input.get("preserveLineage", True),
+                "inputCandidateCount": len(input_items),
+                "mergedCandidateCount": len(merged),
+                "lineage": _lineage_pointer(node),
+            },
+            merged,
+        )
+    if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
+        binding = _read_dict(node.runtime.get("binding"))
+        binding_input = _read_dict(binding.get("input"))
+        accepted = [
+            _accept_candidate(item, node, run_id=run_id)
+            for item in input_items
+            if _candidate_has_lineage(item) or binding_input.get("lineageRequired") is False
+        ]
+        review_required = len(input_items) - len(accepted)
+        return (
+            {
+                "bindingId": binding_id,
+                "schema": binding_input.get("schema", "record.v1"),
+                "dedupe": binding_input.get("dedupe", "required"),
+                "lineageRequired": binding_input.get("lineageRequired", True),
+                "inputCandidateCount": len(input_items),
+                "acceptedRecordCount": len(accepted),
+                "reviewRequiredCount": review_required,
+                "lineage": _lineage_pointer(node),
+            },
+            accepted,
+        )
+    if binding_id == RECORD_SINK_BINDING_ID:
+        binding = _read_dict(node.runtime.get("binding"))
+        binding_input = _read_dict(binding.get("input"))
+        stored_refs, skipped_count = await _store_record_sink_outputs(
+            node,
+            input_items,
+            run_id=run_id,
+            workflow_id=workflow_id,
+            target=_read_string(binding_input.get("target")) or "records",
+            session=session,
+            runtime_nodes_by_id=runtime_nodes_by_id or {},
+            materialized_source_tasks=materialized_source_tasks or {},
+        )
+        return (
+            {
+                "bindingId": binding_id,
+                "target": binding_input.get("target", "records"),
+                "writeMode": binding_input.get("writeMode", "append"),
+                "inputRecordCount": len(input_items),
+                "storedRecordCount": len(stored_refs),
+                "skippedRecordCount": skipped_count,
+                "storedRefs": stored_refs,
+                "lineage": _lineage_pointer(node),
+            },
+            input_items,
+        )
+    if binding_id == EXTERNAL_TOOL_BINDING_ID:
+        binding = _read_dict(node.runtime.get("binding"))
+        binding_input = _read_dict(binding.get("input"))
+        output_items = _execute_external_tool_capability(
+            node,
+            input_items,
+            run_id=run_id,
+            binding_input=binding_input,
+        )
+        return (
+            {
+                "bindingId": binding_id,
+                "toolCapabilityId": binding_input.get("toolCapabilityId"),
+                "executorMode": binding_input.get("executorMode"),
+                "inputItemCount": len(input_items),
+                "outputItemCount": len(output_items),
+                "outputPort": binding_input.get("outputPort", "unknown"),
+                "sampleOutputs": [
+                    _trace_sample_output(item) for item in output_items[:3]
+                ],
+                "externalWorkflow": binding_input.get("externalWorkflow", {}),
+                "lineage": _lineage_pointer(node),
+            },
+            output_items,
+        )
+    return ({"bindingId": binding_id or "", "lineage": _lineage_pointer(node)}, [])
+
+
+def _execute_external_tool_capability(
+    node: CompiledWorkflowNode,
+    input_items: list[dict[str, Any]],
+    *,
+    run_id: str,
+    binding_input: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if (
+        binding_input.get("executorMode") == OKX_MARKET_TICKER_SNAPSHOT_EXECUTOR
+        and binding_input.get("toolCapabilityId") == "tool.realtime.stream.subscribe"
+    ):
+        output = _execute_okx_market_tool(binding_input)
+        return [_external_tool_output(node, output, input_items, run_id, 0, binding_input)]
+
+    fixture_outputs = _read_dict_list(binding_input.get("fixtureOutputs"))
+    fixture_output = _read_dict(binding_input.get("fixtureOutput"))
+    if not fixture_outputs and fixture_output:
+        fixture_outputs = [fixture_output]
+    if not fixture_outputs:
+        fixture_outputs = [{"inputItemCount": len(input_items)}]
+
+    return [
+        _external_tool_output(node, output, input_items, run_id, index, binding_input)
+        for index, output in enumerate(fixture_outputs)
+    ]
+
+
+def _execute_okx_market_tool(binding_input: dict[str, Any]) -> dict[str, Any]:
+    params = {
+        **_read_dict(binding_input.get("executorParams")),
+        **_read_dict(binding_input.get("toolParams")),
+    }
+    try:
+        return execute_okx_market_ticker_snapshot(params)
+    except RealtimeMarketExecutionError as exc:
+        return {
+            "schema": "event.market.ticker.error.v1",
+            "source": "okx",
+            "eventType": "market.ticker.error",
+            "status": "error",
+            "message": str(exc),
+        }
+
+
+def _external_tool_output(
+    node: CompiledWorkflowNode,
+    output: dict[str, Any],
+    input_items: list[dict[str, Any]],
+    run_id: str,
+    index: int,
+    binding_input: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "raw": output,
+        "normalizedData": output,
+        "lineage": [
+            *[
+                lineage
+                for item in input_items
+                for lineage in _read_dict_list(item.get("lineage"))
+            ],
+            {
+                "nodeId": node.id,
+                "step": "external_tool_capability",
+                "runId": run_id,
+                "toolCapabilityId": binding_input.get("toolCapabilityId"),
+                "index": index,
+            },
+        ],
+    }
+
+
+def _trace_sample_output(item: dict[str, Any]) -> dict[str, Any]:
+    raw = _read_dict(item.get("raw"))
+    if not raw:
+        return {}
+    return {
+        key: raw[key]
+        for key in (
+            "schema",
+            "source",
+            "channel",
+            "instId",
+            "eventType",
+            "eventTime",
+            "latencyMs",
+            "market",
+            "status",
+            "message",
+        )
+        if key in raw
+    }
+
+
+def _tool_call_trace_details(details: dict[str, object]) -> dict[str, object]:
+    return {
+        "bindingId": details.get("bindingId"),
+        "toolCapabilityId": details.get("toolCapabilityId"),
+        "executorMode": details.get("executorMode"),
+        "inputItemCount": details.get("inputItemCount"),
+        "outputItemCount": details.get("outputItemCount"),
+        "externalWorkflow": details.get("externalWorkflow", {}),
+        "lineage": details.get("lineage", {}),
+    }
+
+
+async def _store_record_sink_outputs(
+    node: CompiledWorkflowNode,
+    input_items: list[dict[str, Any]],
+    *,
+    run_id: str,
+    workflow_id: str,
+    target: str,
+    session: AsyncSession | None,
+    runtime_nodes_by_id: dict[str, CompiledWorkflowNode],
+    materialized_source_tasks: dict[str, tuple[str, str]],
+) -> tuple[list[dict[str, Any]], int]:
+    if session is None:
+        return (
+            [
+                {
+                    "recordId": _read_string(item.get("recordId")) or _stable_id(
+                        "record", run_id, node.id, str(index)
+                    ),
+                    "target": target,
+                    "lineage": item.get("lineage", []),
+                }
+                for index, item in enumerate(input_items)
+            ],
+            0,
+        )
+
+    triples_by_source_node: dict[str, list[tuple[dict, dict, str, list[dict[str, Any]]]]] = {}
+    for item in input_items:
+        source_node_id = _origin_source_node_id(item, runtime_nodes_by_id)
+        if not source_node_id:
+            continue
+        source_id, _task_id = await _materialize_source_task(
+            session,
+            runtime_nodes_by_id[source_node_id],
+            run_id=run_id,
+            workflow_id=workflow_id,
+            sink_node_id=node.id,
+            cache=materialized_source_tasks,
+        )
+        raw = dict(_read_dict(item.get("raw")))
+        lineage = _read_dict_list(item.get("lineage"))
+        raw["_workflowLineage"] = lineage
+        raw["_workflowRunId"] = run_id
+        raw["_workflowSinkNodeId"] = node.id
+        normalized, content_hash = normalize_item(raw, source_id)
+        accepted_normalized = _read_dict(item.get("normalizedData"))
+        normalized.update(
+            {
+                key: value
+                for key, value in accepted_normalized.items()
+                if key not in {"source_id"}
+            }
+        )
+        normalized["source_id"] = source_id
+        triples_by_source_node.setdefault(source_node_id, []).append(
+            (raw, normalized, content_hash, lineage)
+        )
+
+    stored_refs: list[dict[str, Any]] = []
+    skipped_total = 0
+    for source_node_id, triples_with_lineage in triples_by_source_node.items():
+        source_id, task_id = await _materialize_source_task(
+            session,
+            runtime_nodes_by_id[source_node_id],
+            run_id=run_id,
+            workflow_id=workflow_id,
+            sink_node_id=node.id,
+            cache=materialized_source_tasks,
+        )
+        records, skipped = await store_records(
+            session,
+            task_id,
+            source_id,
+            [
+                (raw, normalized, content_hash)
+                for raw, normalized, content_hash, _lineage in triples_with_lineage
+            ],
+            channel_type=_read_string(runtime_nodes_by_id[source_node_id].params.get("site"))
+            or "workflow",
+            forward_to_odp=False,
+        )
+        skipped_total += skipped
+        for record, (_raw, _normalized, _content_hash, lineage) in zip(
+            records, triples_with_lineage, strict=False
+        ):
+            stored_refs.append(
+                {
+                    "recordId": record.id,
+                    "target": target,
+                    "sourceId": source_id,
+                    "taskId": task_id,
+                    "lineage": lineage,
+                }
+            )
+
+    await session.flush()
+    return stored_refs, skipped_total
+
+
+async def _materialize_source_task(
+    session: AsyncSession,
+    source_node: CompiledWorkflowNode,
+    *,
+    run_id: str,
+    workflow_id: str,
+    sink_node_id: str,
+    cache: dict[str, tuple[str, str]],
+) -> tuple[str, str]:
+    cached = cache.get(source_node.id)
+    if cached:
+        return cached
+
+    task_id = _read_string(source_node.params.get("taskId")) or _read_string(
+        source_node.params.get("collectionTaskId")
+    )
+    if task_id:
+        task = await session.get(CollectionTask, task_id)
+        if task is not None:
+            cache[source_node.id] = (task.source_id, task.id)
+            return task.source_id, task.id
+
+    source_id = _read_string(source_node.params.get("sourceId")) or _read_string(
+        source_node.params.get("dataSourceId")
+    )
+    source = await session.get(DataSource, source_id) if source_id else None
+    if source is None:
+        source = DataSource(
+            name=f"Workflow Source: {source_node.id}",
+            description=(
+                "Materialized source ownership for a WorkflowProject Record Sink run."
+            ),
+            channel_type=_workflow_source_channel_type(source_node),
+            channel_config={
+                "workflowId": workflow_id,
+                "workflowRunId": run_id,
+                "sourceNodeId": source_node.id,
+                "adapter": _adapter_reference(source_node),
+                "params": _json_safe(source_node.params),
+            },
+            enabled=True,
+            tags=["workflow", "record-sink"],
+        )
+        session.add(source)
+        await session.flush()
+
+    task = CollectionTask(
+        source_id=source.id,
+        trigger_type="workflow",
+        parameters={
+            "workflowId": workflow_id,
+            "workflowRunId": run_id,
+            "sourceNodeId": source_node.id,
+            "sinkNodeId": sink_node_id,
+        },
+        status="completed",
+    )
+    session.add(task)
+    await session.flush()
+    cache[source_node.id] = (source.id, task.id)
+    return source.id, task.id
+
+
+def _origin_source_node_id(
+    item: dict[str, Any],
+    runtime_nodes_by_id: dict[str, CompiledWorkflowNode],
+) -> str | None:
+    for entry in _read_dict_list(item.get("lineage")):
+        node_id = _read_string(entry.get("nodeId"))
+        if not node_id:
+            continue
+        node = runtime_nodes_by_id.get(node_id)
+        if node and node.kind == "source":
+            return node.id
+    return None
+
+
+def _workflow_source_channel_type(node: CompiledWorkflowNode) -> str:
+    adapter = _read_string(node.adapter)
+    binding = _read_dict(node.runtime.get("binding"))
+    channel = _read_string(binding.get("channel"))
+    if channel:
+        return channel
+    if adapter and adapter.startswith("opencli"):
+        return "opencli"
+    site = _read_string(node.params.get("site"))
+    return site or "workflow"
+
+
+def _adapter_reference(node: CompiledWorkflowNode) -> str | None:
+    adapter = _read_string(node.adapter)
+    if adapter:
+        return adapter
+    if hasattr(node.adapter, "id"):
+        return _read_string(getattr(node.adapter, "id"))
+    if hasattr(node.adapter, "model_dump"):
+        dumped = node.adapter.model_dump(mode="json")
+        if isinstance(dumped, dict):
+            return _read_string(dumped.get("id"))
+    return None
+
+
+def _json_safe(value: object) -> object:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, str | int | float | bool) or value is None:
+        return value
+    return str(value)
+
+
+def _upstream_outputs(
+    node: CompiledWorkflowNode,
+    outputs_by_node: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for upstream_id in node.depends_on
+        for item in outputs_by_node.get(upstream_id, [])
+    ]
+
+
+def _normalize_runtime_items(
+    node: CompiledWorkflowNode,
+    input_items: list[dict[str, Any]],
+    run_id: str,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    source_id = _read_string(node.params.get("sourceId")) or node.id
+    for index, item in enumerate(input_items):
+        raw = _read_dict(item.get("raw")) or _read_dict(item)
+        normalized, content_hash = normalize_item(raw, source_id)
+        lineage = list(_read_dict_list(item.get("lineage")))
+        lineage.append(
+            {
+                "nodeId": node.id,
+                "step": "normalize",
+                "runId": run_id,
+                "index": index,
+            }
+        )
+        candidates.append(
+            {
+                "candidateId": _stable_id("candidate", run_id, node.id, content_hash),
+                "raw": raw,
+                "normalizedData": normalized,
+                "contentHash": content_hash,
+                "lineage": lineage,
+            }
+        )
+    return candidates
+
+
+def _append_lineage(
+    item: dict[str, Any],
+    node: CompiledWorkflowNode,
+    *,
+    step: str,
+    run_id: str,
+) -> dict[str, Any]:
+    updated = dict(item)
+    lineage = list(_read_dict_list(updated.get("lineage")))
+    lineage.append({"nodeId": node.id, "step": step, "runId": run_id})
+    updated["lineage"] = lineage
+    return updated
+
+
+def _accept_candidate(
+    item: dict[str, Any],
+    node: CompiledWorkflowNode,
+    *,
+    run_id: str,
+) -> dict[str, Any]:
+    accepted = _append_lineage(item, node, step="record_acceptance", run_id=run_id)
+    content_hash = _read_string(accepted.get("contentHash")) or _stable_id(
+        "content", run_id, node.id, str(len(accepted))
+    )
+    return {
+        "recordId": _stable_id("record", run_id, node.id, content_hash),
+        "candidateId": accepted.get("candidateId"),
+        "raw": accepted.get("raw", {}),
+        "normalizedData": accepted.get("normalizedData", {}),
+        "contentHash": content_hash,
+        "status": "accepted",
+        "lineage": accepted.get("lineage", []),
+    }
+
+
+def _candidate_has_lineage(item: dict[str, Any]) -> bool:
+    return bool(_read_dict_list(item.get("lineage")))
+
+
+def _native_node_started_message(node: CompiledWorkflowNode) -> str:
+    binding_id = _binding_id(node)
+    if binding_id == NORMALIZE_BINDING_ID:
+        return "Normalize transform started"
+    if binding_id == MERGE_BINDING_ID:
+        return "Merge node started"
+    if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
+        return "Record acceptance gate started"
+    if binding_id == RECORD_SINK_BINDING_ID:
+        return "Record sink started"
+    if binding_id == EXTERNAL_TOOL_BINDING_ID:
+        return "OpenCLI Tool Capability started"
+    return "Native workflow node started"
+
+
+def _native_node_partial_message(node: CompiledWorkflowNode) -> str:
+    binding_id = _binding_id(node)
+    if binding_id == NORMALIZE_BINDING_ID:
+        return "Record Candidates projected"
+    if binding_id == MERGE_BINDING_ID:
+        return "Candidate streams merged with lineage"
+    if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
+        return "Record Candidates accepted as Records"
+    if binding_id == RECORD_SINK_BINDING_ID:
+        return "Accepted Records stored through Record Sink boundary"
+    if binding_id == EXTERNAL_TOOL_BINDING_ID:
+        return "OpenCLI Tool Capability emitted output"
+    return "Native workflow node emitted trace evidence"
+
+
+def _native_node_completed_message(node: CompiledWorkflowNode) -> str:
+    binding_id = _binding_id(node)
+    if binding_id == NORMALIZE_BINDING_ID:
+        return "Normalize transform completed"
+    if binding_id == MERGE_BINDING_ID:
+        return "Merge node completed"
+    if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
+        return "Record acceptance gate completed"
+    if binding_id == RECORD_SINK_BINDING_ID:
+        return "Record sink completed"
+    if binding_id == EXTERNAL_TOOL_BINDING_ID:
+        return "OpenCLI Tool Capability completed"
+    return "Native workflow node completed"
+
+
+def _lineage_pointer(node: CompiledWorkflowNode) -> dict[str, object]:
+    return {
+        "nodeId": node.id,
+        "dependsOn": node.depends_on,
+        "packageParentId": node.runtime.get("package_parent_id"),
+        "packageInternalId": node.runtime.get("package_internal_id"),
+    }
+
+
+def _binding_id(node: CompiledWorkflowNode) -> str | None:
+    binding = node.runtime.get("binding")
+    if not isinstance(binding, dict):
+        return None
+    return _read_string(binding.get("binding_id"))
 
 
 def _to_dispatch(
@@ -619,6 +1771,16 @@ def _read_string(value: object) -> str | None:
 
 def _read_dict(value: object) -> dict[str, object]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _read_dict_list(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _stable_id(prefix: str, *parts: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"opencli-admin/{prefix}/{'/'.join(parts)}"))
 
 
 def _utcnow() -> str:

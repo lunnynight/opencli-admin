@@ -1,19 +1,26 @@
 """WorkflowProject compile and runtime endpoints."""
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.database import get_db
 from backend.schemas import workflow as workflow_schemas
 from backend.schemas.common import ApiResponse
 from backend.workflow.capability_projection import build_workflow_capabilities
 from backend.workflow.compiler import compile_workflow_project
 from backend.workflow.demand_assembler import draft_workflow_demand
+from backend.workflow.external_importer import import_external_workflow
+from backend.workflow.opencli_adapter_nodes import list_opencli_adapter_nodes
 from backend.workflow.opencli_hda_tracer import (
     build_opencli_hda_trace,
+    continue_workflow_run_with_source_outputs,
+    get_workflow_run_checkpoint,
     get_workflow_run_projection,
     list_workflow_run_events,
     start_workflow_run,
 )
 from backend.workflow.patcher import preview_workflow_patch
+from backend.workflow.tool_capabilities import list_workflow_tool_capabilities
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -41,6 +48,40 @@ async def get_workflow_capabilities() -> ApiResponse[
     """Return Canvas-visible workflow capabilities and their runtime status."""
 
     return ApiResponse.ok(build_workflow_capabilities())
+
+
+@router.get(
+    "/tool-capabilities",
+    response_model=ApiResponse[workflow_schemas.WorkflowToolCapabilitiesResponse],
+)
+async def get_workflow_tool_capabilities() -> ApiResponse[
+    workflow_schemas.WorkflowToolCapabilitiesResponse
+]:
+    """Return registered OpenCLI Admin Tool Capabilities."""
+
+    return ApiResponse.ok(list_workflow_tool_capabilities())
+
+
+@router.get(
+    "/opencli-adapter-nodes",
+    response_model=ApiResponse[workflow_schemas.WorkflowOpenCLIAdapterNodesResponse],
+)
+async def get_opencli_adapter_nodes(
+    site: str | None = None,
+    q: str | None = None,
+    include_write: bool = Query(True, alias="includeWrite"),
+    limit: int = Query(2000, ge=1, le=5000),
+) -> ApiResponse[workflow_schemas.WorkflowOpenCLIAdapterNodesResponse]:
+    """Return OpenCLI adapter commands projected as node-capability manifests."""
+
+    return ApiResponse.ok(
+        list_opencli_adapter_nodes(
+            site=site,
+            q=q,
+            include_write=include_write,
+            limit=limit,
+        )
+    )
 
 
 @router.post(
@@ -84,29 +125,126 @@ async def draft_demand_workflow(
 
 
 @router.post(
+    "/import/external-runtime",
+    response_model=ApiResponse[workflow_schemas.WorkflowPatchResponse],
+)
+async def import_external_runtime_workflow(
+    body: workflow_schemas.WorkflowExternalImportRequest,
+) -> ApiResponse[workflow_schemas.WorkflowPatchResponse]:
+    """Import LangGraph/LangChain graphs as OpenCLI Admin native nodes."""
+
+    return ApiResponse.ok(import_external_workflow(body))
+
+
+@router.post(
     "/runs",
     response_model=ApiResponse[workflow_schemas.WorkflowRunProjection],
     status_code=202,
 )
 async def start_run(
     body: workflow_schemas.WorkflowRunStartRequest,
+    db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[workflow_schemas.WorkflowRunProjection]:
     """Start a WorkflowProject run and emit replayable node-level events."""
 
-    return ApiResponse.ok(start_workflow_run(body))
+    return ApiResponse.ok(await start_workflow_run(body, session=db))
 
 
 @router.get(
     "/runs/{run_id}",
     response_model=ApiResponse[workflow_schemas.WorkflowRunProjection],
 )
-async def get_run_projection(run_id: str) -> ApiResponse[workflow_schemas.WorkflowRunProjection]:
+async def get_run_projection(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[workflow_schemas.WorkflowRunProjection]:
     """Return the latest node-state projection for a workflow run."""
 
-    projection = get_workflow_run_projection(run_id)
+    projection = await get_workflow_run_projection(run_id, session=db)
     if projection is None:
         raise HTTPException(status_code=404, detail="Workflow run not found")
     return ApiResponse.ok(projection)
+
+
+@router.post(
+    "/runs/{run_id}/source-outputs",
+    response_model=ApiResponse[workflow_schemas.WorkflowRunProjection],
+    status_code=202,
+)
+async def continue_run_with_source_outputs(
+    run_id: str,
+    body: workflow_schemas.WorkflowRunSourceOutputsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[workflow_schemas.WorkflowRunProjection]:
+    """Continue a workflow run after external source batches arrive."""
+
+    projection = await continue_workflow_run_with_source_outputs(run_id, body, session=db)
+    if projection is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return ApiResponse.ok(projection)
+
+
+@router.get(
+    "/runs/{run_id}/checkpoint",
+    response_model=ApiResponse[workflow_schemas.WorkflowRunCheckpoint],
+)
+async def get_run_checkpoint(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[workflow_schemas.WorkflowRunCheckpoint]:
+    """Return the latest durable checkpoint descriptor for a workflow run."""
+
+    checkpoint = await get_workflow_run_checkpoint(run_id, session=db)
+    if checkpoint is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return ApiResponse.ok(checkpoint)
+
+
+@router.get(
+    "/runs/{run_id}/trace",
+    response_model=ApiResponse[workflow_schemas.WorkflowRunTraceResponse],
+)
+async def query_run_trace(
+    run_id: str,
+    after_sequence: int | None = Query(default=None, ge=0, alias="afterSequence"),
+    node_id: str | None = Query(default=None, alias="nodeId"),
+    event_type: workflow_schemas.WorkflowNodeRunEventType | None = Query(
+        default=None,
+        alias="eventType",
+    ),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[workflow_schemas.WorkflowRunTraceResponse]:
+    """Query persisted run trace events with a checkpoint for resume/replay."""
+
+    projection = await get_workflow_run_projection(run_id, session=db)
+    checkpoint = await get_workflow_run_checkpoint(run_id, session=db)
+    events = await list_workflow_run_events(
+        run_id,
+        session=db,
+        after_sequence=after_sequence,
+        node_id=node_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    if projection is None or checkpoint is None or events is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+
+    next_after_sequence = max((event.sequence for event in events), default=after_sequence or 0)
+    return ApiResponse.ok(
+        workflow_schemas.WorkflowRunTraceResponse(
+            projection=projection,
+            checkpoint=checkpoint,
+            events=events,
+            filters={
+                "afterSequence": after_sequence,
+                "nodeId": node_id,
+                "eventType": event_type,
+                "limit": limit,
+            },
+            nextAfterSequence=next_after_sequence,
+        )
+    )
 
 
 @router.get(
@@ -115,21 +253,39 @@ async def get_run_projection(run_id: str) -> ApiResponse[workflow_schemas.Workfl
 )
 async def get_run_events(
     run_id: str,
+    after_sequence: int | None = Query(default=None, ge=0, alias="afterSequence"),
+    node_id: str | None = Query(default=None, alias="nodeId"),
+    event_type: workflow_schemas.WorkflowNodeRunEventType | None = Query(
+        default=None,
+        alias="eventType",
+    ),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[workflow_schemas.WorkflowNodeRunEvent]]:
     """Replay node-level events already emitted for a workflow run."""
 
-    events = list_workflow_run_events(run_id)
+    events = await list_workflow_run_events(
+        run_id,
+        session=db,
+        after_sequence=after_sequence,
+        node_id=node_id,
+        event_type=event_type,
+        limit=limit,
+    )
     if events is None:
         raise HTTPException(status_code=404, detail="Workflow run not found")
     return ApiResponse.ok(events)
 
 
 @router.get("/runs/{run_id}/events/stream")
-async def stream_run_events(run_id: str) -> Response:
+async def stream_run_events(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
     """Replay node events as a server-sent event response."""
 
-    projection = get_workflow_run_projection(run_id)
-    events = list_workflow_run_events(run_id)
+    projection = await get_workflow_run_projection(run_id, session=db)
+    events = await list_workflow_run_events(run_id, session=db)
     if projection is None or events is None:
         raise HTTPException(status_code=404, detail="Workflow run not found")
 

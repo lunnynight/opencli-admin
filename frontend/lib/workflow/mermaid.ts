@@ -22,6 +22,9 @@ const KIND_KEYWORDS: Array<[WorkflowNodeKind, RegExp]> = [
   ["source", /\b(source|feed|fetch|api|rss|jin10|input)\b/i],
   ["agent", /\b(agent|normalize|summari[sz]e|score|tag|dedupe|llm)\b/i],
   ["router", /\b(router|route|branch|condition|decision|filter)\b/i],
+  ["flow", /\b(flow|merge|join|fan-?in|split)\b/i],
+  ["control", /\b(gate|approval|accept|quality|policy|control)\b/i],
+  ["sink", /\b(sink|records|database|write|persist)\b/i],
   ["notify", /\b(notify|notification|webhook|alert|send|slack|email)\b/i],
   ["inbox", /\b(inbox|queue|store|review|archive)\b/i],
   ["action", /\b(action|tool|execute|write|update)\b/i],
@@ -36,6 +39,8 @@ const CAPABILITY_KEYWORDS: Array<[WorkflowCapability, RegExp]> = [
   ["score", /\b(score|rank|priority|importance)\b/i],
   ["tag", /\b(tag|label|classify)\b/i],
   ["route", /\b(router|route|branch|condition|decision|filter)\b/i],
+  ["merge", /\b(merge|join|fan-?in)\b/i],
+  ["accept", /\b(accept|approval|quality|gate)\b/i],
   ["send", /\b(notify|notification|webhook|alert|send|slack|email)\b/i],
   ["store", /\b(inbox|queue|store|review|archive)\b/i],
 ]
@@ -45,9 +50,12 @@ const CAPABILITY_BY_KIND: Record<WorkflowNodeKind, WorkflowCapability> = {
   source: "fetch",
   agent: "normalize",
   router: "route",
+  flow: "merge",
+  control: "accept",
   notify: "send",
   inbox: "store",
   action: "send",
+  sink: "store",
 }
 
 type DraftNode = {

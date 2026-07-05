@@ -463,8 +463,6 @@ function materializeProjectInternals(
       id: `e-${parentId}__${edge.id}`,
       source: scopedInternalId(parentId, edge.source),
       target: scopedInternalId(parentId, edge.target),
-      sourceHandle: edge.sourcePort,
-      targetHandle: edge.targetPort,
       label: edge.label,
       type: "workflow" as const,
       animated: true,

@@ -17,7 +17,18 @@ from backend.schemas.plan_ir import PlanGraph
 WORKFLOW_COMPILE_VERSION = "1.0.0"
 
 WorkflowProfile = Literal["intelligence", "agent-debug", "sdk-dev"]
-WorkflowNodeKind = Literal["schedule", "source", "agent", "router", "notify", "inbox", "action"]
+WorkflowNodeKind = Literal[
+    "schedule",
+    "source",
+    "agent",
+    "router",
+    "notify",
+    "inbox",
+    "action",
+    "flow",
+    "control",
+    "sink",
+]
 WorkflowCapability = Literal[
     "trigger",
     "fetch",
@@ -29,6 +40,8 @@ WorkflowCapability = Literal[
     "route",
     "send",
     "store",
+    "merge",
+    "accept",
 ]
 AdapterBindingType = Literal["source", "notification", "storage", "agent", "utility"]
 AdapterBindingMode = Literal["fixture", "mock", "webhook", "live"]
@@ -198,12 +211,16 @@ class WorkflowPatchOperation(BaseModel):
         "add_node",
         "connect_nodes",
         "update_parameters",
+        "add_adapter",
+        "materialize_opencli_adapter",
         "package_nodes",
         "request_missing_capability",
     ]
     node: Optional[WorkflowProjectNode] = None
     edge: Optional[WorkflowProjectEdge] = None
+    adapter: Optional[WorkflowAdapterBinding] = None
     nodeId: Optional[str] = None
+    adapterNodeId: Optional[str] = None
     params: dict[str, Any] = Field(default_factory=dict)
     packageNode: Optional[WorkflowProjectNode] = None
     internalNodeIds: list[str] = Field(default_factory=list)
@@ -219,6 +236,17 @@ class WorkflowPatchRequest(BaseModel):
 class WorkflowDemandDraftRequest(BaseModel):
     project: WorkflowProject
     text: str = Field(..., min_length=1)
+    locale: Optional[str] = None
+
+
+ExternalWorkflowRuntime = Literal["langgraph", "langchain"]
+
+
+class WorkflowExternalImportRequest(BaseModel):
+    project: WorkflowProject
+    runtime: ExternalWorkflowRuntime
+    graph: dict[str, Any] = Field(..., min_length=1)
+    name: Optional[str] = None
     locale: Optional[str] = None
 
 
@@ -310,6 +338,7 @@ class WorkflowRuntimeCapability(BaseModel):
     missing: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     source: Optional[str] = None
+    manifest: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkflowCapabilitiesResponse(BaseModel):
@@ -320,6 +349,73 @@ class WorkflowCapabilitiesResponse(BaseModel):
     notifiers: list[WorkflowRuntimeCapability] = Field(default_factory=list)
     triggers: list[WorkflowRuntimeCapability] = Field(default_factory=list)
     resources: list[WorkflowRuntimeCapability] = Field(default_factory=list)
+
+
+class WorkflowToolCapabilityPort(BaseModel):
+    name: str = Field(..., min_length=1)
+    type: str = Field(..., min_length=1)
+
+
+class WorkflowToolCapabilityExecutor(BaseModel):
+    mode: Literal["fixture", "okx_market_ticker_snapshot"]
+    description: Optional[str] = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowToolCapability(BaseModel):
+    id: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    status: Literal["runnable", "blocked"] = "runnable"
+    provider: str = "opencli-admin"
+    inputPorts: list[WorkflowToolCapabilityPort] = Field(default_factory=list)
+    outputPorts: list[WorkflowToolCapabilityPort] = Field(default_factory=list)
+    executor: WorkflowToolCapabilityExecutor
+    tags: list[str] = Field(default_factory=list)
+    manifest: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowToolCapabilitiesResponse(BaseModel):
+    version: str = WORKFLOW_COMPILE_VERSION
+    tools: list[WorkflowToolCapability] = Field(default_factory=list)
+
+
+class WorkflowOpenCLIAdapterNodeArg(BaseModel):
+    name: str = Field(..., min_length=1)
+    type: Optional[str] = None
+    required: bool = False
+    valueRequired: bool = False
+    positional: bool = False
+    choices: list[Any] = Field(default_factory=list)
+    default: Any = None
+    help: Optional[str] = None
+
+
+class WorkflowOpenCLIAdapterNode(BaseModel):
+    id: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+    description: str = ""
+    status: WorkflowCapabilityStatus
+    site: str = Field(..., min_length=1)
+    command: str = Field(..., min_length=1)
+    access: str = "read"
+    browser: bool = False
+    strategy: Optional[str] = None
+    domain: Optional[str] = None
+    catalogId: str = Field(..., min_length=1)
+    kind: WorkflowNodeKind
+    capability: WorkflowCapability
+    requiredArgs: list[str] = Field(default_factory=list)
+    args: list[WorkflowOpenCLIAdapterNodeArg] = Field(default_factory=list)
+    adapter: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+    manifest: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowOpenCLIAdapterNodesResponse(BaseModel):
+    total: int = Field(..., ge=0)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    nodes: list[WorkflowOpenCLIAdapterNode] = Field(default_factory=list)
 
 
 class WorkflowOpenCLIHDATraceRequest(BaseModel):
@@ -358,6 +454,8 @@ WorkflowNodeRunEventType = Literal[
     "started",
     "blocked",
     "batch_ready",
+    "tool_call_started",
+    "tool_call_completed",
     "partial",
     "completed",
     "failed",
@@ -369,6 +467,11 @@ class WorkflowRunStartRequest(BaseModel):
     packageNodeId: Optional[str] = None
     runId: Optional[str] = None
     traceId: Optional[str] = None
+    sourceOutputs: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+
+
+class WorkflowRunSourceOutputsRequest(BaseModel):
+    sourceOutputs: dict[str, list[dict[str, Any]]] = Field(..., min_length=1)
 
 
 class WorkflowRunBlockReason(BaseModel):
@@ -430,6 +533,32 @@ class WorkflowRunProjection(BaseModel):
     eventCount: int = Field(..., ge=0)
     nodeStates: list[WorkflowRunNodeState] = Field(default_factory=list)
     errors: list[WorkflowCompileError] = Field(default_factory=list)
+
+
+class WorkflowRunCheckpoint(BaseModel):
+    checkpointId: str = Field(..., min_length=1)
+    workflowId: str = Field(..., min_length=1)
+    runId: str = Field(..., min_length=1)
+    traceId: str = Field(..., min_length=1)
+    status: WorkflowRunStatus
+    valid: bool
+    eventCount: int = Field(..., ge=0)
+    lastSequence: int = Field(0, ge=0)
+    updatedAt: str = Field(..., min_length=1)
+    nodeStates: list[WorkflowRunNodeState] = Field(default_factory=list)
+    sourceOutputNodeIds: list[str] = Field(default_factory=list)
+    sourceOutputItemCount: int = Field(0, ge=0)
+    canContinueWithSourceOutputs: bool = True
+    continuationPath: str = Field(..., min_length=1)
+    tracePath: str = Field(..., min_length=1)
+
+
+class WorkflowRunTraceResponse(BaseModel):
+    projection: WorkflowRunProjection
+    checkpoint: WorkflowRunCheckpoint
+    events: list[WorkflowNodeRunEvent] = Field(default_factory=list)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    nextAfterSequence: int = Field(0, ge=0)
 
 
 class WorkflowMissingCapability(BaseModel):

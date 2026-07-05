@@ -18,12 +18,23 @@ from backend.schemas.workflow import (
     WorkflowRuntimeCapability,
 )
 from backend.workflow.node_registry import WORKFLOW_PRIMITIVE_IDS
+from backend.workflow.opencli_adapter_nodes import get_opencli_adapter_node_summary
 from backend.workflow.runtime_registry import (
+    COLLECTION_OUTPUT_BINDING_ID,
     DEMAND_DRAFT_BINDING_ID,
+    EXTERNAL_TOOL_BINDING_ID,
+    MERGE_BINDING_ID,
+    NORMALIZE_BINDING_ID,
     OPENCLI_BINDING_ID,
+    RECORD_ACCEPTANCE_BINDING_ID,
+    RECORD_SINK_BINDING_ID,
     SCHEDULE_TRIGGER_BINDING_ID,
+    SOURCE_POOL_BINDING_ID,
+    TURBOPUSH_BINDING_ID,
     WEBHOOK_NOTIFY_BINDING_ID,
 )
+from backend.workflow.tool_capabilities import list_workflow_tool_capabilities
+from backend.workflow.turbopush_runtime import TURBOPUSH_PROVIDER
 
 
 def build_workflow_capabilities() -> WorkflowCapabilitiesResponse:
@@ -56,6 +67,7 @@ def _capability(
     missing: list[str] | None = None,
     tags: list[str] | None = None,
     source: str | None = None,
+    manifest: dict[str, object] | None = None,
 ) -> WorkflowRuntimeCapability:
     return WorkflowRuntimeCapability(
         id=id,
@@ -73,6 +85,7 @@ def _capability(
         missing=missing or [],
         tags=tags or [],
         source=source,
+        manifest=manifest or {},
     )
 
 
@@ -92,6 +105,15 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             "to assemble existing real source/package nodes into a reviewable patch.",
             tags=["input", "demand", "patch"],
             source="backend.workflow.demand_assembler",
+            manifest=_manifest(
+                schema="capability.workflow.demand-draft.v1",
+                output_ports=[_port("patch", "workflowPatch")],
+                resources=["capability_catalog"],
+                permissions=["canvas_review_required"],
+                runtime_binding=DEMAND_DRAFT_BINDING_ID,
+                trace_events=["patch_preview", "compile_preview"],
+                probes=["demand_draft_endpoint_available"],
+            ),
         ),
         _capability(
             id="intelligence.schedule.cron",
@@ -139,21 +161,109 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             missing=["canvas_resource_resolution"],
             tags=["source", "opencli", "hda"],
             source="backend.workflow.runtime_registry",
+            manifest=_manifest(
+                schema="capability.source.opencli-slot.v1",
+                input_ports=[_port("in", "trigger")],
+                output_ports=[_port("out", "items[]")],
+                resources=[
+                    "opencli_channel",
+                    "sourceOutputs_or_bound_task_or_worker_dispatch",
+                ],
+                permissions=["canFetchNetwork"],
+                runtime_binding=OPENCLI_BINDING_ID,
+                trace_events=[
+                    "batch_ready",
+                    "sourceOutputs",
+                    "bound_task_records",
+                    "completed",
+                ],
+                probes=["opencli_adapter_registered", "source_output_ingest_available"],
+            ),
         ),
-        _blocked_catalog(
-            "intelligence.processing.normalize",
-            "Normalize Items",
-            "agent",
-            "normalize",
-            reason="Normalize exists as a package internal trace node, but has no "
-            "standalone workflow executor binding.",
-            missing=["workflow_transform_executor"],
+        _capability(
+            id="intelligence.source.pool",
+            label="Source Pool",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="agent",
+            capability="normalize",
+            provider="workflow",
+            runtime_binding=SOURCE_POOL_BINDING_ID,
+            reason="OpenCLI HDA internals use this real workflow node to "
+            "fan out package demand to source slots in parallel.",
+            tags=["source", "pool", "fanout", "hda"],
+            source="backend.workflow.runtime_registry",
+            manifest=_manifest(
+                schema="capability.source.pool.v1",
+                input_ports=[_port("in", "trigger")],
+                output_ports=[_port("out", "trigger")],
+                resources=["capability_catalog"],
+                permissions=[],
+                runtime_binding=SOURCE_POOL_BINDING_ID,
+                trace_events=["partial:sourceCount", "completed"],
+                probes=["source_slots_present"],
+            ),
+        ),
+        _capability(
+            id="intelligence.processing.normalize",
+            label="Normalize Items",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="agent",
+            capability="normalize",
+            provider="workflow",
+            runtime_binding=NORMALIZE_BINDING_ID,
+            reason="OpenCLI Admin owns normalization as a native Transform node "
+            "that turns source items into Record Candidates while preserving "
+            "source references.",
+            tags=["transform", "normalize", "record-candidate", "lineage"],
+            source="backend.workflow.runtime_registry",
+            manifest=_manifest(
+                schema="capability.transform.normalize.v1",
+                input_ports=[_port("in", "items[]")],
+                output_ports=[_port("out", "recordCandidate[]")],
+                resources=[],
+                permissions=[],
+                runtime_binding=NORMALIZE_BINDING_ID,
+                trace_events=["partial:recordCandidate[]", "completed"],
+                probes=["normalizer_import_available"],
+            ),
         ),
         _blocked_catalog(
             "intelligence.processing.dedupe",
             "Dedupe Items",
             "agent",
             "dedupe",
+        ),
+        _capability(
+            id="intelligence.flow.merge",
+            label="Merge",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="flow",
+            capability="merge",
+            provider="workflow",
+            runtime_binding=MERGE_BINDING_ID,
+            reason="OpenCLI Admin owns typed fan-in as a native Flow node. "
+            "The first loop supports concat while preserving lineage.",
+            tags=["flow", "merge", "lineage", "typed-port"],
+            source="backend.workflow.runtime_registry",
+            manifest=_manifest(
+                schema="capability.flow.merge.v1",
+                input_ports=[
+                    _port("in1", "recordCandidate[]"),
+                    _port("in2", "recordCandidate[]"),
+                ],
+                output_ports=[_port("out", "recordCandidate[]")],
+                resources=[],
+                permissions=[],
+                runtime_binding=MERGE_BINDING_ID,
+                trace_events=["partial:mergedCandidateCount", "completed"],
+                probes=["typed_port_contract_registered"],
+            ),
         ),
         _blocked_catalog(
             "intelligence.agent.summary",
@@ -172,6 +282,36 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             "route",
             missing=["workflow_router_executor"],
         ),
+        _capability(
+            id="intelligence.control.record-acceptance",
+            label="Record Acceptance Gate",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="control",
+            capability="accept",
+            provider="workflow",
+            runtime_binding=RECORD_ACCEPTANCE_BINDING_ID,
+            reason="Record acceptance is a native Gate node that promotes "
+            "Record Candidates to Records only after schema, dedupe, quality, "
+            "and lineage checks.",
+            tags=["control", "gate", "record", "quality", "lineage"],
+            source="backend.workflow.runtime_registry",
+            manifest=_manifest(
+                schema="capability.control.record-acceptance.v1",
+                input_ports=[_port("candidates", "recordCandidate[]")],
+                output_ports=[_port("records", "record[]")],
+                resources=["record_schema_registry"],
+                permissions=["record_acceptance_policy"],
+                runtime_binding=RECORD_ACCEPTANCE_BINDING_ID,
+                trace_events=[
+                    "partial:acceptedRecordCount",
+                    "partial:reviewRequiredCount",
+                    "completed",
+                ],
+                probes=["record_schema_available", "lineage_required_check"],
+            ),
+        ),
         _blocked_catalog(
             "intelligence.output.inbox",
             "Inbox Store",
@@ -179,6 +319,60 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             "store",
             backend_available=True,
             missing=["workflow_storage_sink_binding"],
+        ),
+        _capability(
+            id="intelligence.output.collection-result",
+            label="Collection Output",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="inbox",
+            capability="store",
+            provider="workflow",
+            runtime_binding=COLLECTION_OUTPUT_BINDING_ID,
+            reason="OpenCLI HDA internals expose normalized items through this "
+            "real package output boundary.",
+            tags=["output", "items", "hda"],
+            source="backend.workflow.runtime_registry",
+            manifest=_manifest(
+                schema="capability.output.collection-result.v1",
+                input_ports=[_port("in", "recordCandidate[]")],
+                output_ports=[_port("out", "storedItems[]")],
+                resources=["run_trace"],
+                permissions=[],
+                runtime_binding=COLLECTION_OUTPUT_BINDING_ID,
+                trace_events=["partial:itemCount", "completed"],
+                probes=["package_output_boundary_available"],
+            ),
+        ),
+        _capability(
+            id="intelligence.sink.records",
+            label="Record Sink",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="sink",
+            capability="store",
+            provider="workflow",
+            runtime_binding=RECORD_SINK_BINDING_ID,
+            reason="Accepted Records write through this native sink boundary "
+            "instead of raw scrape output entering records directly.",
+            tags=["sink", "records", "lineage"],
+            source="backend.workflow.runtime_registry",
+            manifest=_manifest(
+                schema="capability.sink.records.v1",
+                input_ports=[_port("records", "record[]")],
+                output_ports=[_port("stored", "storedItems[]")],
+                resources=[
+                    "data_sources",
+                    "collection_tasks",
+                    "collected_records",
+                ],
+                permissions=["canWriteInbox"],
+                runtime_binding=RECORD_SINK_BINDING_ID,
+                trace_events=["partial:storedRefs", "completed"],
+                probes=["record_table_available", "task_source_ownership_available"],
+            ),
         ),
         _capability(
             id="intelligence.output.webhook",
@@ -202,6 +396,66 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             ],
             tags=["catalog", "notify", "webhook"],
             source="backend.workflow.runtime_registry",
+        ),
+        _capability(
+            id="intelligence.output.turbopush-publish",
+            label="TurboPush Publish",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="notify",
+            capability="send",
+            provider=TURBOPUSH_PROVIDER,
+            notifier_type=TURBOPUSH_PROVIDER,
+            runtime_binding=TURBOPUSH_BINDING_ID,
+            reason="Backend workflow compile resolves this node to the local "
+            "TurboPush MCP/HTTP publishing flow: logged accounts, platform "
+            "setting schemas, content creation, SSE publish, and records.",
+            missing=["local_turbopush_service_when_not_running", "send_permission"],
+            tags=["catalog", "notify", "publish", "turbopush"],
+            source="backend.workflow.turbopush_runtime",
+        ),
+        _capability(
+            id="external.tool.capability",
+            label="Imported Tool Capability",
+            surface="catalog",
+            status="runnable",
+            backend_available=True,
+            kind="action",
+            capability="store",
+            provider="opencli-admin",
+            runtime_binding=EXTERNAL_TOOL_BINDING_ID,
+            reason="LangGraph, LangChain, and other external runtime tool nodes "
+            "import as OpenCLI Admin Tool Capability placeholders. The original "
+            "runtime remains provenance only; each node must still provide an "
+            "OpenCLI Admin toolCapability binding before execution.",
+            missing=["node_level_tool_capability_binding_when_unconfigured"],
+            tags=["catalog", "external-runtime", "tool-capability", "import"],
+            source="backend.workflow.external_importer",
+            manifest=_manifest(
+                schema="capability.external.tool.v1",
+                input_ports=[_port("in", "unknown")],
+                output_ports=[_port("out", "unknown")],
+                resources=[
+                    "capability_catalog",
+                    "tool_capability_registry",
+                    "external_workflow_origin",
+                    "node_params.toolCapability",
+                ],
+                permissions=["canvas_review_required"],
+                runtime_binding=EXTERNAL_TOOL_BINDING_ID,
+                trace_events=[
+                    "blocked:missing_tool_capability_binding",
+                    "tool_call_started",
+                    "partial:outputItemCount",
+                    "tool_call_completed",
+                    "completed",
+                ],
+                probes=[
+                    "external_origin_metadata_present",
+                    "tool_capability_binding_present_when_runnable",
+                ],
+            ),
         ),
         _blocked_catalog(
             "package.collection.pipeline",
@@ -280,6 +534,39 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             missing=["workflow_review_sink_binding"],
         ),
     ]
+
+
+def _manifest(
+    *,
+    schema: str,
+    input_ports: list[dict[str, str]] | None = None,
+    output_ports: list[dict[str, str]] | None = None,
+    resources: list[str] | None = None,
+    permissions: list[str] | None = None,
+    runtime_binding: str | None = None,
+    trace_events: list[str] | None = None,
+    probes: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema": schema,
+        "ports": {
+            "inputs": input_ports or [],
+            "outputs": output_ports or [],
+        },
+        "resources": resources or [],
+        "permissions": permissions or [],
+        "runtime": {
+            "binding": runtime_binding,
+        },
+        "trace": {
+            "events": trace_events or ["queued", "started", "partial", "completed"],
+        },
+        "probes": probes or [],
+    }
+
+
+def _port(name: str, type: str) -> dict[str, str]:
+    return {"name": name, "type": type}
 
 
 def _blocked_catalog(
@@ -511,12 +798,69 @@ def _trigger_capabilities() -> list[WorkflowRuntimeCapability]:
 
 
 def _resource_capabilities() -> list[WorkflowRuntimeCapability]:
-    return [
+    opencli_adapter_summary = get_opencli_adapter_node_summary()
+    rows = [
         _resource("resource.source-credentials", "Source credentials"),
         _resource("resource.cookie-jar", "Cookie/session state"),
         _resource("resource.browser-profile", "Browser profile binding"),
         _resource("resource.browser-worker-pool", "Browser worker pool"),
+        _resource("resource.turbopush-local-service", "TurboPush local service"),
+        _capability(
+            id="resource.opencli-adapter-nodes",
+            label="OpenCLI Adapter Node Registry",
+            surface="resource",
+            status="runnable" if opencli_adapter_summary.get("total") else "blocked",
+            backend_available=bool(opencli_adapter_summary.get("total")),
+            provider="opencli",
+            runtime_binding=OPENCLI_BINDING_ID,
+            reason=(
+                "Every OpenCLI adapter command is projected as a stable node "
+                "manifest. Read adapters materialize through OpenCLI Source Slot; "
+                "write adapters require Tool Capability review."
+            ),
+            missing=[] if opencli_adapter_summary.get("total") else ["opencli_catalog"],
+            tags=["resource", "opencli", "adapter-node-registry"],
+            source="backend.workflow.opencli_adapter_nodes",
+            manifest={
+                "schema": "resource.opencli-adapter-node-registry.v1",
+                "endpoint": "/api/v1/workflows/opencli-adapter-nodes",
+                "summary": opencli_adapter_summary,
+                "canvas": {"node": False},
+                "materialization": {
+                    "readNoRequiredArgs": "intelligence.source.opencli-slot",
+                    "readRequiredArgs": "intelligence.source.opencli-slot with params",
+                    "write": "external.tool.capability with review",
+                },
+                "runtime": {"binding": OPENCLI_BINDING_ID},
+            },
+        ),
     ]
+    rows.extend(
+        _capability(
+            id=f"resource.tool-capability.{tool.id}",
+            label=tool.label,
+            surface="resource",
+            status=tool.status,
+            backend_available=tool.status == "runnable",
+            provider=tool.provider,
+            runtime_binding=_read_manifest_runtime_binding(tool.manifest),
+            reason=tool.description,
+            missing=[] if tool.status == "runnable" else ["tool_capability_unavailable"],
+            tags=["resource", "tool-capability", *tool.tags],
+            source="backend.workflow.tool_capabilities",
+            manifest={
+                **tool.manifest,
+                "toolCapability": {
+                    "id": tool.id,
+                    "inputPorts": [port.model_dump() for port in tool.inputPorts],
+                    "outputPorts": [port.model_dump() for port in tool.outputPorts],
+                    "executor": tool.executor.model_dump(),
+                },
+            },
+        )
+        for tool in list_workflow_tool_capabilities().tools
+    )
+    return rows
 
 
 def _resource(id: str, label: str) -> WorkflowRuntimeCapability:
@@ -531,6 +875,14 @@ def _resource(id: str, label: str) -> WorkflowRuntimeCapability:
         missing=["canvas_resource_resolver"],
         tags=["resource"],
     )
+
+
+def _read_manifest_runtime_binding(manifest: dict[str, object]) -> str | None:
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        return None
+    binding = runtime.get("binding")
+    return binding if isinstance(binding, str) else None
 
 
 def _label_from_id(value: str) -> str:

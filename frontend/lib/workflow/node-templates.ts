@@ -118,7 +118,7 @@ const NODE_TEMPLATES: NodeTemplate[] = [
   {
     id: "intelligence.source.opencli-slot",
     title: "OpenCLI Source Slot",
-    summary: "Fetch one selected source through the OpenCLI worker channel.",
+    summary: "Fetch one selected source through the OpenCLI channel.",
     dataShape: "trigger -> items[]",
     fields: [
       { id: "site", source: "params", type: "text", label: "Site", placeholder: "bilibili" },
@@ -223,6 +223,53 @@ const NODE_TEMPLATES: NodeTemplate[] = [
       },
     ],
   },
+  {
+    id: "intelligence.output.turbopush-publish",
+    title: "TurboPush Publish",
+    summary: "Publish content through the local TurboPush service and logged accounts.",
+    dataShape: "items[] -> delivery",
+    fields: [
+      {
+        id: "contentType",
+        source: "params",
+        type: "select",
+        label: "Content Type",
+        options: turboPushContentTypeOptions(),
+      },
+      {
+        id: "contentSource",
+        source: "params",
+        type: "select",
+        label: "Content Source",
+        options: [
+          { value: "upstream", label: "upstream" },
+          { value: "inline", label: "inline" },
+          { value: "existing_article", label: "existing article" },
+        ],
+      },
+      { id: "title", source: "params", type: "text", label: "Title" },
+      { id: "markdown", source: "params", type: "textarea", label: "Markdown" },
+      { id: "desc", source: "params", type: "textarea", label: "Description" },
+      {
+        id: "targetPlatforms",
+        source: "params",
+        type: "tokens",
+        label: "Platforms",
+        options: turboPushPlatformOptions(),
+      },
+      {
+        id: "accountSelector",
+        source: "params",
+        type: "select",
+        label: "Accounts",
+        options: [
+          { value: "logged_accounts_by_platform", label: "logged accounts by platform" },
+          { value: "all_logged", label: "all logged accounts" },
+        ],
+      },
+      { id: "syncDraft", source: "params", type: "boolean", label: "Sync Draft" },
+    ],
+  },
 ]
 
 export function getNodeTemplate(node: WorkflowProjectNode | undefined): NodeTemplate | undefined {
@@ -232,7 +279,7 @@ export function getNodeTemplate(node: WorkflowProjectNode | undefined): NodeTemp
   if (!node) return undefined
   return NODE_TEMPLATES.find((template) => {
     if (template.id === "intelligence.input.collection-need") {
-      return node.kind === "schedule" && node.capability === "trigger" && node.params.mode === "demand-draft"
+      return isCollectionNeedNode(node)
     }
     if (template.id === "intelligence.schedule.cron") return node.kind === "schedule" && node.capability === "trigger"
     if (template.id === "intelligence.source.jin10") return node.kind === "source" && node.adapter === "jin10-kuaixun"
@@ -240,6 +287,7 @@ export function getNodeTemplate(node: WorkflowProjectNode | undefined): NodeTemp
     if (template.id === "intelligence.agent.summary") return node.kind === "agent" && node.capability === "summarize"
     if (template.id === "intelligence.agent.score") return node.kind === "agent" && node.capability === "score"
     if (template.id === "intelligence.router.importance") return node.kind === "router" && node.capability === "route"
+    if (template.id === "intelligence.output.turbopush-publish") return node.kind === "notify" && Boolean(node.adapter?.startsWith("turbopush"))
     if (template.id === "intelligence.output.webhook") return node.kind === "notify"
     return false
   })
@@ -263,4 +311,52 @@ function timezoneOptions() {
     { value: "UTC", label: "UTC" },
     { value: "America/New_York", label: "America/New_York" },
   ]
+}
+
+function turboPushContentTypeOptions() {
+  return [
+    { value: "article", label: "article" },
+    { value: "graph_text", label: "graph text" },
+    { value: "video", label: "video" },
+  ]
+}
+
+function turboPushPlatformOptions() {
+  return [
+    { value: "wechat", label: "wechat" },
+    { value: "wechat-video", label: "wechat-video" },
+    { value: "douyin", label: "douyin" },
+    { value: "toutiaohao", label: "toutiaohao" },
+    { value: "kuaishou", label: "kuaishou" },
+    { value: "xiaohongshu", label: "xiaohongshu" },
+    { value: "bilibili", label: "bilibili" },
+    { value: "zhihu", label: "zhihu" },
+    { value: "sina", label: "sina" },
+    { value: "csdn", label: "csdn" },
+    { value: "juejin", label: "juejin" },
+    { value: "jianshuhao", label: "jianshuhao" },
+    { value: "tiktok", label: "tiktok" },
+    { value: "youtube", label: "youtube" },
+    { value: "x", label: "x" },
+    { value: "pinduoduo", label: "pinduoduo" },
+    { value: "acfun", label: "acfun" },
+    { value: "omtencent", label: "omtencent" },
+    { value: "weishi", label: "weishi" },
+    { value: "baijiahao", label: "baijiahao" },
+  ]
+}
+
+function isCollectionNeedNode(node: WorkflowProjectNode): boolean {
+  if (node.ui?.catalogId === "intelligence.input.collection-need") return true
+  if (node.kind !== "schedule" || node.capability !== "trigger") return false
+  if (node.params.mode === "demand-draft") return true
+  return hasNeedShape(node.params) && !hasScheduleShape(node.params)
+}
+
+function hasNeedShape(params: Record<string, unknown>): boolean {
+  return typeof params.text === "string" || typeof params.locale === "string"
+}
+
+function hasScheduleShape(params: Record<string, unknown>): boolean {
+  return typeof params.interval === "string" || typeof params.timezone === "string"
 }

@@ -1,6 +1,13 @@
 """HTTP-seam tests for Multi Source OpenCLI HDA tracing."""
 
 import pytest
+from sqlalchemy import select
+
+from backend.models.record import CollectedRecord
+from backend.models.source import DataSource
+from backend.models.task import CollectionTask
+from backend.models.workflow_run import WorkflowRun, WorkflowRunEvent
+from backend.workflow.opencli_hda_tracer import _RUNS
 
 
 def _multi_source_opencli_hda_project() -> dict:
@@ -16,12 +23,23 @@ def _multi_source_opencli_hda_project() -> dict:
                 "capability": "normalize",
                 "topicCollapse": {
                     "groupId": "opencli-package",
-                    "nodeCount": 3,
+                    "nodeCount": 5,
                     "mode": "draft",
                     "packageInternal": True,
                 },
                 "internals": {
                     "nodes": [
+                        {
+                            "id": "source-pool",
+                            "kind": "agent",
+                            "capability": "normalize",
+                            "params": {
+                                "sourceCount": 2,
+                                "sourceGroups": ["video", "social"],
+                                "fanout": "parallel",
+                            },
+                            "ui": {"catalogId": "intelligence.source.pool"},
+                        },
                         {
                             "id": "source-bilibili",
                             "kind": "source",
@@ -52,17 +70,54 @@ def _multi_source_opencli_hda_project() -> dict:
                             "capability": "normalize",
                             "params": {"language": "zh-CN"},
                         },
+                        {
+                            "id": "collection-output",
+                            "kind": "inbox",
+                            "capability": "store",
+                            "params": {
+                                "queue": "opencli-hda-output",
+                                "archive": False,
+                            },
+                            "ui": {
+                                "catalogId": "intelligence.output.collection-result"
+                            },
+                        },
                     ],
                     "edges": [
+                        {
+                            "id": "pool-bilibili",
+                            "source": "source-pool",
+                            "target": "source-bilibili",
+                            "sourcePort": "out",
+                            "targetPort": "in",
+                        },
+                        {
+                            "id": "pool-xiaohongshu",
+                            "source": "source-pool",
+                            "target": "source-xiaohongshu",
+                            "sourcePort": "out",
+                            "targetPort": "in",
+                        },
                         {
                             "id": "bilibili-normalize",
                             "source": "source-bilibili",
                             "target": "internal-normalize",
+                            "sourcePort": "out",
+                            "targetPort": "in",
                         },
                         {
                             "id": "xiaohongshu-normalize",
                             "source": "source-xiaohongshu",
                             "target": "internal-normalize",
+                            "sourcePort": "out",
+                            "targetPort": "in",
+                        },
+                        {
+                            "id": "normalize-output",
+                            "source": "internal-normalize",
+                            "target": "collection-output",
+                            "sourcePort": "out",
+                            "targetPort": "in",
                         },
                     ],
                 },
@@ -92,6 +147,210 @@ def _multi_source_opencli_hda_project() -> dict:
             "allowedDomains": ["bilibili.com", "xiaohongshu.com"],
         },
     }
+
+
+def _native_first_loop_project() -> dict:
+    return {
+        "id": "wf-native-first-loop",
+        "name": "Native first loop",
+        "profile": "intelligence",
+        "version": 1,
+        "nodes": [
+            {
+                "id": "source-bilibili",
+                "kind": "source",
+                "capability": "fetch",
+                "adapter": "opencli-bilibili",
+                "params": {
+                    "site": "bilibili",
+                    "command": "search",
+                    "fixtureItems": [
+                        {
+                            "title": "Bilibili AI video",
+                            "url": "https://www.bilibili.com/video/ai",
+                            "content": "AI video update",
+                        }
+                    ],
+                },
+                "ui": {"catalogId": "intelligence.source.opencli-slot"},
+            },
+            {
+                "id": "source-xhs",
+                "kind": "source",
+                "capability": "fetch",
+                "adapter": "opencli-xhs",
+                "params": {
+                    "site": "xiaohongshu",
+                    "command": "search",
+                    "fixtureItems": [
+                        {
+                            "title": "XHS AI note",
+                            "url": "https://www.xiaohongshu.com/explore/ai",
+                            "content": "AI note update",
+                        }
+                    ],
+                },
+                "ui": {"catalogId": "intelligence.source.opencli-slot"},
+            },
+            {
+                "id": "normalize-bilibili",
+                "kind": "agent",
+                "capability": "normalize",
+                "params": {"language": "zh-CN", "preserveSourceRefs": True},
+                "ui": {"catalogId": "intelligence.processing.normalize"},
+            },
+            {
+                "id": "normalize-xhs",
+                "kind": "agent",
+                "capability": "normalize",
+                "params": {"language": "zh-CN", "preserveSourceRefs": True},
+                "ui": {"catalogId": "intelligence.processing.normalize"},
+            },
+            {
+                "id": "merge-candidates",
+                "kind": "flow",
+                "capability": "merge",
+                "params": {
+                    "strategy": "concat",
+                    "preserveLineage": True,
+                    "inputType": "recordCandidate[]",
+                    "outputType": "recordCandidate[]",
+                },
+                "ui": {"catalogId": "intelligence.flow.merge"},
+            },
+            {
+                "id": "accept-records",
+                "kind": "control",
+                "capability": "accept",
+                "params": {
+                    "mode": "automatic_with_review",
+                    "schema": "record.v1",
+                    "dedupe": "required",
+                    "lineageRequired": True,
+                    "minQuality": 0,
+                },
+                "ui": {"catalogId": "intelligence.control.record-acceptance"},
+            },
+            {
+                "id": "record-sink",
+                "kind": "sink",
+                "capability": "store",
+                "params": {
+                    "target": "records",
+                    "writeMode": "append",
+                    "preserveLineage": True,
+                },
+                "ui": {"catalogId": "intelligence.sink.records"},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e-source1-normalize",
+                "source": "source-bilibili",
+                "target": "normalize-bilibili",
+            },
+            {
+                "id": "e-source2-normalize",
+                "source": "source-xhs",
+                "target": "normalize-xhs",
+            },
+            {
+                "id": "e-normalize1-merge",
+                "source": "normalize-bilibili",
+                "target": "merge-candidates",
+                "sourcePort": "out",
+                "targetPort": "in1",
+            },
+            {
+                "id": "e-normalize2-merge",
+                "source": "normalize-xhs",
+                "target": "merge-candidates",
+                "sourcePort": "out",
+                "targetPort": "in2",
+            },
+            {
+                "id": "e-merge-accept",
+                "source": "merge-candidates",
+                "target": "accept-records",
+                "sourcePort": "out",
+                "targetPort": "candidates",
+            },
+            {
+                "id": "e-accept-sink",
+                "source": "accept-records",
+                "target": "record-sink",
+                "sourcePort": "records",
+                "targetPort": "records",
+            },
+        ],
+        "adapters": [
+            {
+                "id": "opencli-bilibili",
+                "type": "source",
+                "provider": "opencli",
+                "mode": "live",
+                "config": {"channel": "opencli"},
+            },
+            {
+                "id": "opencli-xhs",
+                "type": "source",
+                "provider": "opencli",
+                "mode": "live",
+                "config": {"channel": "opencli"},
+            },
+        ],
+        "agentPermissions": {
+            "canFetchNetwork": True,
+            "canSendNotifications": False,
+            "canWriteInbox": True,
+            "allowedDomains": ["bilibili.com", "xiaohongshu.com"],
+        },
+    }
+
+
+async def _seed_collected_record(
+    db_session,
+    *,
+    source_name: str,
+    site: str,
+    title: str,
+    url: str,
+    content: str,
+    content_hash: str,
+) -> tuple[DataSource, CollectionTask, CollectedRecord]:
+    source = DataSource(
+        name=source_name,
+        channel_type="opencli",
+        channel_config={"site": site, "command": "search"},
+        enabled=True,
+        tags=["workflow-test"],
+    )
+    db_session.add(source)
+    await db_session.flush()
+    task = CollectionTask(
+        source_id=source.id,
+        trigger_type="manual",
+        parameters={"site": site, "command": "search"},
+        status="completed",
+    )
+    db_session.add(task)
+    await db_session.flush()
+    record = CollectedRecord(
+        task_id=task.id,
+        source_id=source.id,
+        raw_data={"title": title, "url": url, "content": content},
+        normalized_data={
+            "title": title,
+            "url": url,
+            "content": content,
+            "source_id": source.id,
+        },
+        content_hash=content_hash,
+        status="normalized",
+    )
+    db_session.add(record)
+    await db_session.flush()
+    return source, task, record
 
 
 @pytest.mark.asyncio
@@ -278,13 +537,11 @@ async def test_workflow_run_events_projection_and_stream(client):
 
     data = start.json()["data"]
     assert start.status_code == 202
-    assert data["status"] == "blocked"
+    assert data["status"] == "completed"
     states = {state["nodeId"]: state for state in data["nodeStates"]}
-    assert states["multi-source-opencli"]["status"] == "blocked"
+    assert states["multi-source-opencli"]["status"] == "completed"
     assert states["multi-source-opencli::source-bilibili"]["status"] == "completed"
-    assert states["multi-source-opencli::internal-normalize"]["blockReasons"][0]["code"] == (
-        "missing_runtime_binding"
-    )
+    assert states["multi-source-opencli::internal-normalize"]["status"] == "completed"
 
     events = (await client.get("/api/v1/workflows/runs/run-events-001/events")).json()["data"]
     source_events = [
@@ -309,14 +566,14 @@ async def test_workflow_run_events_projection_and_stream(client):
     assert "records" not in batch_event
     assert "iii" not in batch_event["details"]
 
-    blocked = next(
+    normalize_partial = next(
         event
         for event in events
         if event["nodeId"] == "multi-source-opencli::internal-normalize"
-        and event["eventType"] == "blocked"
+        and event["eventType"] == "partial"
     )
-    assert blocked["blockReason"]["source"] == "runtime_registry"
-    assert blocked["blockReason"]["details"]["capability"] == "normalize"
+    assert normalize_partial["details"]["bindingId"] == "workflow.transform.normalize"
+    assert normalize_partial["details"]["outputPort"] == "recordCandidate[]"
 
     late = await client.get("/api/v1/workflows/runs/run-events-001")
     assert late.json()["data"]["nodeStates"] == data["nodeStates"]
@@ -331,6 +588,489 @@ async def test_workflow_run_events_projection_and_stream(client):
     assert "event: run_state" in body
     assert '"workflowRunId":"run-events-001"' in body
     assert '"nodeId":"multi-source-opencli::source-bilibili"' in body
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_emits_native_first_loop_trace_events(client, db_session):
+    response = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": _native_first_loop_project(),
+            "runId": "run-native-first-loop",
+            "traceId": "trace-native-first-loop",
+        },
+    )
+
+    assert response.status_code == 202
+    data = response.json()["data"]
+    assert data["status"] == "completed"
+    states = {state["nodeId"]: state for state in data["nodeStates"]}
+    assert states["normalize-bilibili"]["status"] == "completed"
+    assert states["merge-candidates"]["status"] == "completed"
+    assert states["accept-records"]["status"] == "completed"
+    assert states["record-sink"]["status"] == "completed"
+
+    events = (
+        await client.get("/api/v1/workflows/runs/run-native-first-loop/events")
+    ).json()["data"]
+    by_node = {}
+    for event in events:
+        by_node.setdefault(event["nodeId"], []).append(event)
+
+    assert [event["eventType"] for event in by_node["merge-candidates"]] == [
+        "queued",
+        "started",
+        "partial",
+        "completed",
+    ]
+    merge_partial = by_node["merge-candidates"][2]
+    assert merge_partial["details"]["bindingId"] == "workflow.flow.merge"
+    assert merge_partial["details"]["strategy"] == "concat"
+    assert merge_partial["details"]["preserveLineage"] is True
+    assert merge_partial["details"]["inputCandidateCount"] == 2
+    assert merge_partial["details"]["mergedCandidateCount"] == 2
+    assert merge_partial["details"]["lineage"]["dependsOn"] == [
+        "normalize-bilibili",
+        "normalize-xhs",
+    ]
+
+    gate_partial = by_node["accept-records"][2]
+    assert gate_partial["details"]["bindingId"] == "workflow.gate.record-acceptance"
+    assert gate_partial["details"]["schema"] == "record.v1"
+    assert gate_partial["details"]["lineageRequired"] is True
+    assert gate_partial["details"]["inputCandidateCount"] == 2
+    assert gate_partial["details"]["acceptedRecordCount"] == 2
+    assert gate_partial["details"]["reviewRequiredCount"] == 0
+
+    sink_partial = by_node["record-sink"][2]
+    assert sink_partial["details"]["bindingId"] == "workflow.record-sink.records"
+    assert sink_partial["details"]["target"] == "records"
+    assert sink_partial["details"]["inputRecordCount"] == 2
+    assert sink_partial["details"]["storedRecordCount"] == 2
+    assert len(sink_partial["details"]["storedRefs"]) == 2
+    assert sink_partial["details"]["storedRefs"][0]["target"] == "records"
+    assert sink_partial["details"]["storedRefs"][0]["lineage"][0]["nodeId"] == (
+        "source-bilibili"
+    )
+
+    records = (
+        await db_session.execute(
+            select(CollectedRecord).order_by(CollectedRecord.created_at)
+        )
+    ).scalars().all()
+    assert len(records) == 2
+    assert {record.normalized_data["title"] for record in records} == {
+        "Bilibili AI video",
+        "XHS AI note",
+    }
+    assert {record.status for record in records} == {"normalized"}
+    assert {
+        record.raw_data["_workflowLineage"][0]["nodeId"] for record in records
+    } == {"source-bilibili", "source-xhs"}
+
+    tasks = (
+        await db_session.execute(select(CollectionTask).order_by(CollectionTask.created_at))
+    ).scalars().all()
+    assert len(tasks) == 2
+    assert {task.trigger_type for task in tasks} == {"workflow"}
+    assert {task.status for task in tasks} == {"completed"}
+    assert {task.parameters["workflowRunId"] for task in tasks} == {
+        "run-native-first-loop"
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_loads_bound_source_task_records_as_items(client, db_session):
+    _bili_source, bili_task, _bili_record = await _seed_collected_record(
+        db_session,
+        source_name="Bilibili bound source",
+        site="bilibili",
+        title="Bound Bilibili AI video",
+        url="https://www.bilibili.com/video/bound-ai",
+        content="Bound AI video update",
+        content_hash="seed-bilibili-bound",
+    )
+    _xhs_source, xhs_task, _xhs_record = await _seed_collected_record(
+        db_session,
+        source_name="XHS bound source",
+        site="xiaohongshu",
+        title="Bound XHS AI note",
+        url="https://www.xiaohongshu.com/explore/bound-ai",
+        content="Bound AI note update",
+        content_hash="seed-xhs-bound",
+    )
+    project = _native_first_loop_project()
+    source_bilibili = next(node for node in project["nodes"] if node["id"] == "source-bilibili")
+    source_xhs = next(node for node in project["nodes"] if node["id"] == "source-xhs")
+    source_bilibili["params"].pop("fixtureItems")
+    source_xhs["params"].pop("fixtureItems")
+    source_bilibili["params"]["taskId"] = bili_task.id
+    source_xhs["params"]["taskId"] = xhs_task.id
+
+    response = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": project,
+            "runId": "run-bound-source-records",
+            "traceId": "trace-bound-source-records",
+        },
+    )
+
+    assert response.status_code == 202
+    data = response.json()["data"]
+    assert data["status"] == "completed"
+
+    events = (
+        await client.get("/api/v1/workflows/runs/run-bound-source-records/events")
+    ).json()["data"]
+    by_node = {}
+    for event in events:
+        by_node.setdefault(event["nodeId"], []).append(event)
+
+    source_partial = by_node["source-bilibili"][2]
+    assert source_partial["message"] == "Bound source records loaded as workflow items"
+    assert source_partial["details"]["taskId"] == bili_task.id
+    assert source_partial["details"]["itemCount"] == 1
+    assert by_node["normalize-bilibili"][2]["details"]["inputItemCount"] == 1
+    assert by_node["merge-candidates"][2]["details"]["mergedCandidateCount"] == 2
+    assert by_node["record-sink"][2]["details"]["storedRecordCount"] == 2
+    assert by_node["record-sink"][2]["details"]["storedRefs"][0]["lineage"][0][
+        "artifact"
+    ] == "collected_records"
+
+    records = (
+        await db_session.execute(
+            select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+        )
+    ).scalars().all()
+    assert len(records) == 4
+    workflow_record_run_ids = {
+        record.raw_data.get("_workflowRunId")
+        for record in records
+        if "_workflowRunId" in record.raw_data
+    }
+    assert workflow_record_run_ids == {
+        "run-bound-source-records"
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_uses_runtime_source_outputs_as_items(client, db_session):
+    project = _native_first_loop_project()
+    for node in project["nodes"]:
+        if node["id"] in {"source-bilibili", "source-xhs"}:
+            node["params"].pop("fixtureItems")
+
+    response = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": project,
+            "runId": "run-runtime-source-outputs",
+            "traceId": "trace-runtime-source-outputs",
+            "sourceOutputs": {
+                "source-bilibili": [
+                    {
+                        "title": "Runtime Bilibili AI video",
+                        "url": "https://www.bilibili.com/video/runtime-ai",
+                        "content": "Runtime AI video update",
+                    }
+                ],
+                "source-xhs": [
+                    {
+                        "title": "Runtime XHS AI note",
+                        "url": "https://www.xiaohongshu.com/explore/runtime-ai",
+                        "content": "Runtime AI note update",
+                    }
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    data = response.json()["data"]
+    assert data["status"] == "completed"
+    events = (
+        await client.get("/api/v1/workflows/runs/run-runtime-source-outputs/events")
+    ).json()["data"]
+    by_node = {}
+    for event in events:
+        by_node.setdefault(event["nodeId"], []).append(event)
+
+    source_partial = by_node["source-bilibili"][2]
+    assert source_partial["message"] == "Runtime source output loaded as workflow items"
+    assert source_partial["details"]["itemCount"] == 1
+    assert by_node["merge-candidates"][2]["details"]["mergedCandidateCount"] == 2
+    sink_partial = by_node["record-sink"][2]
+    assert sink_partial["details"]["storedRecordCount"] == 2
+    assert sink_partial["details"]["storedRefs"][0]["lineage"][0]["artifact"] == (
+        "sourceOutputs"
+    )
+
+    records = (
+        await db_session.execute(
+            select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+        )
+    ).scalars().all()
+    assert len(records) == 2
+    assert {record.normalized_data["title"] for record in records} == {
+        "Runtime Bilibili AI video",
+        "Runtime XHS AI note",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_continues_with_late_source_outputs(client, db_session):
+    project = _native_first_loop_project()
+    for node in project["nodes"]:
+        if node["id"] in {"source-bilibili", "source-xhs"}:
+            node["params"].pop("fixtureItems")
+
+    initial = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": project,
+            "runId": "run-late-source-outputs",
+            "traceId": "trace-late-source-outputs",
+        },
+    )
+
+    assert initial.status_code == 202
+    initial_data = initial.json()["data"]
+    assert initial_data["status"] == "completed"
+    initial_event_count = initial_data["eventCount"]
+    initial_records = (
+        await db_session.execute(select(CollectedRecord))
+    ).scalars().all()
+    assert initial_records == []
+
+    continued = await client.post(
+        "/api/v1/workflows/runs/run-late-source-outputs/source-outputs",
+        json={
+            "sourceOutputs": {
+                "source-bilibili": [
+                    {
+                        "title": "Late Bilibili AI video",
+                        "url": "https://www.bilibili.com/video/late-ai",
+                        "content": "Late AI video update",
+                    }
+                ],
+                "source-xhs": [
+                    {
+                        "title": "Late XHS AI note",
+                        "url": "https://www.xiaohongshu.com/explore/late-ai",
+                        "content": "Late AI note update",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert continued.status_code == 202
+    continued_data = continued.json()["data"]
+    assert continued_data["status"] == "completed"
+    assert continued_data["eventCount"] > initial_event_count
+
+    events = (
+        await client.get("/api/v1/workflows/runs/run-late-source-outputs/events")
+    ).json()["data"]
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+    late_source_events = [
+        event
+        for event in events
+        if event["nodeId"] == "source-bilibili"
+        and event["message"] == "Runtime source output loaded as workflow items"
+    ]
+    assert len(late_source_events) == 1
+    assert late_source_events[0]["sequence"] > initial_event_count
+
+    records = (
+        await db_session.execute(
+            select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+        )
+    ).scalars().all()
+    assert len(records) == 2
+    assert {record.normalized_data["title"] for record in records} == {
+        "Late Bilibili AI video",
+        "Late XHS AI note",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_trace_persists_and_recovers_without_memory_cache(
+    client, db_session
+):
+    project = _native_first_loop_project()
+    for node in project["nodes"]:
+        if node["id"] in {"source-bilibili", "source-xhs"}:
+            node["params"].pop("fixtureItems")
+
+    started = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": project,
+            "runId": "run-persisted-trace",
+            "traceId": "trace-persisted-trace",
+            "sourceOutputs": {
+                "source-bilibili": [
+                    {
+                        "title": "Persisted Bilibili AI video",
+                        "url": "https://www.bilibili.com/video/persisted-ai",
+                        "content": "Persisted AI video update",
+                    }
+                ],
+                "source-xhs": [
+                    {
+                        "title": "Persisted XHS AI note",
+                        "url": "https://www.xiaohongshu.com/explore/persisted-ai",
+                        "content": "Persisted AI note update",
+                    }
+                ],
+            },
+        },
+    )
+    assert started.status_code == 202
+    started_projection = started.json()["data"]
+
+    persisted_run = await db_session.get(WorkflowRun, "run-persisted-trace")
+    assert persisted_run is not None
+    assert persisted_run.request["traceId"] == "trace-persisted-trace"
+    assert persisted_run.projection["eventCount"] == started_projection["eventCount"]
+    persisted_events = (
+        await db_session.execute(
+            select(WorkflowRunEvent)
+            .where(WorkflowRunEvent.run_id == "run-persisted-trace")
+            .order_by(WorkflowRunEvent.sequence)
+        )
+    ).scalars().all()
+    assert len(persisted_events) == started_projection["eventCount"]
+    assert persisted_events[0].event_id == "run-persisted-trace:0001:queued:source-bilibili"
+
+    _RUNS.pop("run-persisted-trace", None)
+
+    recovered = await client.get("/api/v1/workflows/runs/run-persisted-trace")
+    assert recovered.status_code == 200
+    assert recovered.json()["data"] == started_projection
+
+    recovered_events = await client.get("/api/v1/workflows/runs/run-persisted-trace/events")
+    assert recovered_events.status_code == 200
+    assert len(recovered_events.json()["data"]) == started_projection["eventCount"]
+
+    _RUNS.pop("run-persisted-trace", None)
+    continued = await client.post(
+        "/api/v1/workflows/runs/run-persisted-trace/source-outputs",
+        json={
+            "sourceOutputs": {
+                "source-bilibili": [
+                    {
+                        "title": "Persisted continuation",
+                        "url": "https://www.bilibili.com/video/persisted-continuation",
+                        "content": "Continuation update",
+                    }
+                ]
+            }
+        },
+    )
+    assert continued.status_code == 202
+    continued_projection = continued.json()["data"]
+    assert continued_projection["traceId"] == "trace-persisted-trace"
+    assert continued_projection["eventCount"] > started_projection["eventCount"]
+
+    continued_events = (
+        await db_session.execute(
+            select(WorkflowRunEvent)
+            .where(WorkflowRunEvent.run_id == "run-persisted-trace")
+            .order_by(WorkflowRunEvent.sequence)
+        )
+    ).scalars().all()
+    assert [event.sequence for event in continued_events] == list(
+        range(1, continued_projection["eventCount"] + 1)
+    )
+    assert any(
+        event.payload["message"] == "Runtime source output loaded as workflow items"
+        and event.sequence > started_projection["eventCount"]
+        for event in continued_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_checkpoint_and_trace_query_resume_cursor(client):
+    project = _native_first_loop_project()
+    for node in project["nodes"]:
+        if node["id"] in {"source-bilibili", "source-xhs"}:
+            node["params"].pop("fixtureItems")
+
+    started = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": project,
+            "runId": "run-checkpoint-query",
+            "traceId": "trace-checkpoint-query",
+            "sourceOutputs": {
+                "source-bilibili": [
+                    {
+                        "title": "Checkpoint Bilibili AI video",
+                        "url": "https://www.bilibili.com/video/checkpoint-ai",
+                        "content": "Checkpoint AI video update",
+                    }
+                ],
+                "source-xhs": [
+                    {
+                        "title": "Checkpoint XHS AI note",
+                        "url": "https://www.xiaohongshu.com/explore/checkpoint-ai",
+                        "content": "Checkpoint AI note update",
+                    }
+                ],
+            },
+        },
+    )
+    assert started.status_code == 202
+    started_projection = started.json()["data"]
+    _RUNS.pop("run-checkpoint-query", None)
+
+    checkpoint_response = await client.get(
+        "/api/v1/workflows/runs/run-checkpoint-query/checkpoint"
+    )
+    assert checkpoint_response.status_code == 200
+    checkpoint = checkpoint_response.json()["data"]
+    assert checkpoint["checkpointId"] == (
+        f"run-checkpoint-query:{started_projection['eventCount']:04d}"
+    )
+    assert checkpoint["lastSequence"] == started_projection["eventCount"]
+    assert checkpoint["sourceOutputNodeIds"] == ["source-bilibili", "source-xhs"]
+    assert checkpoint["sourceOutputItemCount"] == 2
+    assert checkpoint["canContinueWithSourceOutputs"] is True
+    assert checkpoint["continuationPath"] == (
+        "/api/v1/workflows/runs/run-checkpoint-query/source-outputs"
+    )
+
+    trace_response = await client.get(
+        "/api/v1/workflows/runs/run-checkpoint-query/trace",
+        params={"afterSequence": 4, "nodeId": "source-xhs", "limit": 2},
+    )
+    assert trace_response.status_code == 200
+    trace = trace_response.json()["data"]
+    assert trace["projection"] == started_projection
+    assert trace["checkpoint"] == checkpoint
+    assert trace["filters"] == {
+        "afterSequence": 4,
+        "nodeId": "source-xhs",
+        "eventType": None,
+        "limit": 2,
+    }
+    assert [event["nodeId"] for event in trace["events"]] == ["source-xhs", "source-xhs"]
+    trace_sequences = [event["sequence"] for event in trace["events"]]
+    assert trace_sequences == sorted(trace_sequences)
+    assert all(sequence > 4 for sequence in trace_sequences)
+    assert trace["nextAfterSequence"] == trace_sequences[-1]
+
+    partial_events = await client.get(
+        "/api/v1/workflows/runs/run-checkpoint-query/events",
+        params={"eventType": "partial", "limit": 3},
+    )
+    assert partial_events.status_code == 200
+    partial_data = partial_events.json()["data"]
+    assert len(partial_data) == 3
+    assert {event["eventType"] for event in partial_data} == {"partial"}
 
 
 @pytest.mark.asyncio
@@ -399,7 +1139,12 @@ async def test_workflow_run_blocks_webhook_notify_until_projection_delivery(clie
 @pytest.mark.asyncio
 async def test_workflow_run_emits_node_failed_events_for_compile_errors(client):
     project = _multi_source_opencli_hda_project()
-    del project["nodes"][0]["internals"]["nodes"][0]["adapter"]
+    source_bilibili = next(
+        node
+        for node in project["nodes"][0]["internals"]["nodes"]
+        if node["id"] == "source-bilibili"
+    )
+    del source_bilibili["adapter"]
 
     response = await client.post(
         "/api/v1/workflows/runs",

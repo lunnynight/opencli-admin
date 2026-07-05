@@ -40,6 +40,7 @@ import {
   Network,
   FileCode2,
   ServerCog,
+  Send,
   type LucideIcon,
 } from "lucide-react"
 
@@ -85,6 +86,7 @@ const ICONS: Record<string, LucideIcon> = {
   Network,
   FileCode2,
   ServerCog,
+  Send,
 }
 
 export function getIcon(name?: string): LucideIcon {
