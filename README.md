@@ -485,6 +485,7 @@ docker compose --profile nas up -d
 
 详细文档见：
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - 架构设计
+- [ptt-acceptance.md](docs/ptt-acceptance.md) - 集群联机 PTT 验收门
 - [SURVEY_superset.md](docs/SURVEY_superset.md) - 技术选型
 - [PROJECT_MANAGEMENT.md](docs/PROJECT_MANAGEMENT.md) - 任务看板
 - [DEVELOPMENT_STANDARD.md](docs/DEVELOPMENT_STANDARD.md) - 开发规范
