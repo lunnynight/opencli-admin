@@ -69,7 +69,7 @@ async def _seed_fleet_state(db_session) -> None:
                 node_type="shell",
                 status="online",
                 last_seen_at=datetime.now(UTC),
-                runtimes=["pi"],
+                runtimes=["pi", "miniflow"],
             ),
             BrowserBinding(
                 site="twitter",
@@ -110,6 +110,7 @@ async def test_workflow_fleet_inventory_projects_existing_agent_state(
     assert x_agent["sites"] == ["twitter"]
     assert "site.twitter" in x_agent["capabilities"]
     assert "runtime.pi" in x_agent["capabilities"]
+    assert "runtime.miniflow" in x_agent["capabilities"]
     assert data["siteBindings"] == [
         {
             "site": "twitter",

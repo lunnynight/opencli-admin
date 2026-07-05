@@ -27,7 +27,6 @@ from backend.agent_runtimes.registry import (
     register_runtime,
 )
 
-
 # ── event constructors ───────────────────────────────────────────────────────
 
 
@@ -258,6 +257,8 @@ def test_pi_adapter_registered_by_default_discovery():
     """_load_all_runtimes() at import time registers the pi adapter."""
     assert "pi" in list_runtime_types()
     assert get_runtime("pi").runtime_type == "pi"
+    assert "miniflow" in list_runtime_types()
+    assert get_runtime("miniflow").runtime_type == "miniflow"
 
 
 def test_available_runtimes_filters_by_is_available(monkeypatch):

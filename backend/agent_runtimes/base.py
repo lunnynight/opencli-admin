@@ -37,7 +37,7 @@ class RuntimeCapabilities:
     """What an agent runtime adapter can do; callers branch on this
     declaration, exactly like ``channels.base.Capabilities``."""
 
-    transport: str  # "stdio" | "http"
+    transport: str  # "stdio" | "http" | "inprocess"
     streaming: bool = True
     resume_by_id: bool = False  # can reopen a session by launcher-assigned id
     checkpoint: str = "none"  # none | memory | sqlite | postgres
@@ -51,7 +51,8 @@ class AgentTask:
     task_id: str
     workflow: str  # runtime-native workflow/agent identifier
     input: dict[str, Any] = field(default_factory=dict)
-    config: dict[str, Any] = field(default_factory=dict)  # runtime-specific (model, tools, cwd, ...)
+    # Runtime-specific settings such as model, tools, cwd, or sidecar config.
+    config: dict[str, Any] = field(default_factory=dict)
     session_id: str | None = None  # resume handle
 
 
