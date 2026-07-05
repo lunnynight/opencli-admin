@@ -5,21 +5,31 @@ Both HTTP-mode agents (center calls agent) and WS-mode agents (agent initiates
 reverse channel) register here and have their online/offline history tracked.
 """
 
-import asyncio
 import logging
-import socket
-from datetime import datetime, timezone, timedelta
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.schemas.common import ApiResponse
-from backend.schemas.edge_node import EdgeNodeRead, EdgeNodeEventRead
+from backend.schemas.edge_node import EdgeNodeEventRead, EdgeNodeRead
+
+if TYPE_CHECKING:
+    from backend.models.edge_node import EdgeNode
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 logger = logging.getLogger(__name__)
@@ -27,8 +37,9 @@ logger = logging.getLogger(__name__)
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
+
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 async def _upsert_node(
@@ -40,7 +51,7 @@ async def _upsert_node(
     ip: str | None = None,
     node_type: str = "chrome",
     runtimes: list[str] | None = None,
-) -> "EdgeNode":  # type: ignore[name-defined]
+) -> "EdgeNode":
     from backend.models.edge_node import EdgeNode
 
     result = await db.execute(select(EdgeNode).where(EdgeNode.url == url))
@@ -91,7 +102,8 @@ async def _write_event(
 def _pool_add(url: str, mode: str, protocol: str, node_type: str = "chrome") -> None:
     """Hot-add a node URL to the in-memory browser pool."""
     try:
-        from backend.browser_pool import get_pool, LocalBrowserPool
+        from backend.browser_pool import LocalBrowserPool, get_pool
+
         pool = get_pool()
         if isinstance(pool, LocalBrowserPool):
             if url not in pool.endpoints:
@@ -106,7 +118,8 @@ def _pool_add(url: str, mode: str, protocol: str, node_type: str = "chrome") -> 
 
 def _pool_remove(url: str) -> None:
     try:
-        from backend.browser_pool import get_pool, LocalBrowserPool
+        from backend.browser_pool import LocalBrowserPool, get_pool
+
         pool = get_pool()
         if isinstance(pool, LocalBrowserPool) and url in pool.endpoints:
             pool.remove_endpoint(url)
@@ -124,8 +137,6 @@ def _extract_ip(request: Request | None) -> str | None:
 
 
 # ── Registration (HTTP mode) ──────────────────────────────────────────────────
-
-from pydantic import BaseModel
 
 
 class NodeRegisterRequest(BaseModel):
@@ -162,14 +173,23 @@ async def register_node(
         raise HTTPException(status_code=400, detail="agent_protocol must be 'http' or 'ws'")
 
     ip = _extract_ip(request)
-    node = await _upsert_node(db, url, body.label, body.agent_protocol, body.mode, ip, body.node_type)
-    await _write_event(db, node.id, "registered", ip=ip,
-                       event_meta={"mode": body.mode, "node_type": body.node_type, "protocol": body.agent_protocol})
+    node = await _upsert_node(
+        db, url, body.label, body.agent_protocol, body.mode, ip, body.node_type
+    )
+    await _write_event(
+        db,
+        node.id,
+        "registered",
+        ip=ip,
+        event_meta={
+            "mode": body.mode,
+            "node_type": body.node_type,
+            "protocol": body.agent_protocol,
+        },
+    )
 
     # Maintain backwards-compatible BrowserInstance record for pool config
-    result = await db.execute(
-        select(BrowserInstance).where(BrowserInstance.endpoint == url)
-    )
+    result = await db.execute(select(BrowserInstance).where(BrowserInstance.endpoint == url))
     inst = result.scalar_one_or_none()
     if inst:
         inst.mode = body.mode
@@ -179,8 +199,11 @@ async def register_node(
             inst.label = body.label
     else:
         inst = BrowserInstance(
-            endpoint=url, mode=body.mode,
-            agent_url=url, agent_protocol=body.agent_protocol, label=body.label,
+            endpoint=url,
+            mode=body.mode,
+            agent_url=url,
+            agent_protocol=body.agent_protocol,
+            label=body.label,
         )
         db.add(inst)
 
@@ -188,18 +211,24 @@ async def register_node(
     await db.refresh(node)
 
     _pool_add(url, body.mode, body.agent_protocol, body.node_type)
-    logger.info("Node registered (HTTP): %s (node_type=%s mode=%s label=%r)",
-                url, body.node_type, body.mode, body.label)
+    logger.info(
+        "Node registered (HTTP): %s (node_type=%s mode=%s label=%r)",
+        url,
+        body.node_type,
+        body.mode,
+        body.label,
+    )
     return ApiResponse.ok(EdgeNodeRead.model_validate(node))
 
 
 # ── Node list & events ────────────────────────────────────────────────────────
 
+
 @router.get("", response_model=ApiResponse[list[EdgeNodeRead]])
 async def list_nodes(db: AsyncSession = Depends(get_db)) -> ApiResponse:
     """List all registered edge nodes, with real-time WS online status overlaid."""
-    from backend.models.edge_node import EdgeNode
     from backend import ws_agent_manager
+    from backend.models.edge_node import EdgeNode
 
     result = await db.execute(select(EdgeNode).order_by(EdgeNode.created_at))
     nodes = result.scalars().all()
@@ -219,14 +248,14 @@ async def list_nodes(db: AsyncSession = Depends(get_db)) -> ApiResponse:
 async def get_node_stats(
     node_id: str,
     range: str = Query("7d", description="Time range: all | today | yesterday | 7d | 30d | custom"),
-    start: Optional[datetime] = Query(None),
-    end: Optional[datetime] = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
     """Return task run statistics for a specific edge node."""
+    from backend.api.v1.dashboard import _parse_time_range
     from backend.models.edge_node import EdgeNode
     from backend.models.task import TaskRun
-    from backend.api.v1.dashboard import _parse_time_range
 
     result = await db.execute(select(EdgeNode).where(EdgeNode.id == node_id))
     node = result.scalar_one_or_none()
@@ -256,13 +285,15 @@ async def get_node_stats(
     records_collected = (await db.execute(rec_q)).scalar_one() or 0
 
     finished = success + failed
-    return ApiResponse.ok({
-        "total": total,
-        "success": success,
-        "failed": failed,
-        "success_rate": round(success / finished * 100, 1) if finished > 0 else 0.0,
-        "records_collected": int(records_collected),
-    })
+    return ApiResponse.ok(
+        {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "success_rate": round(success / finished * 100, 1) if finished > 0 else 0.0,
+            "records_collected": int(records_collected),
+        }
+    )
 
 
 @router.get("/{node_id}/events", response_model=ApiResponse[list[EdgeNodeEventRead]])
@@ -298,6 +329,7 @@ async def delete_node(node_id: str, db: AsyncSession = Depends(get_db)) -> ApiRe
 
     # Also remove BrowserInstance record
     from backend.models.browser import BrowserInstance
+
     bi_result = await db.execute(
         select(BrowserInstance).where(BrowserInstance.endpoint == node.url)
     )
@@ -313,6 +345,7 @@ async def delete_node(node_id: str, db: AsyncSession = Depends(get_db)) -> ApiRe
 
 # ── Install script ────────────────────────────────────────────────────────────
 
+
 @router.get("/install/agent.sh", response_class=PlainTextResponse)
 async def get_install_script(request: Request) -> PlainTextResponse:
     """Return the agent install script with CENTRAL_API_URL pre-filled.
@@ -324,6 +357,7 @@ async def get_install_script(request: Request) -> PlainTextResponse:
     4. request.base_url fallback (may be internal when behind changeOrigin proxy)
     """
     from backend.config import get_settings
+
     settings = get_settings()
 
     if settings.public_url:
@@ -352,35 +386,139 @@ async def get_install_script(request: Request) -> PlainTextResponse:
     ]:
         if candidate.exists():
             content = candidate.read_text()
-            content = content.replace("__CENTRAL_API_URL__", base_url)
-            content = content.replace("__IMAGE_TAG__", settings.image_tag)
+            content = _render_install_script(content, base_url, settings)
             return PlainTextResponse(content, media_type="text/plain")
 
     # Inline fallback (Docker: only ./backend is mounted)
-    content = _install_script_template(base_url, settings.image_tag)
+    content = _install_script_template(
+        base_url,
+        image_tag=settings.image_tag,
+        agent_api_token=settings.api_auth_token,
+        fleet_network_provider=settings.fleet_network_provider,
+        netbird_mode=settings.netbird_mode,
+        netbird_setup_key=settings.netbird_setup_key,
+        netbird_management_url=settings.netbird_management_url,
+        netbird_image_tag=settings.netbird_image_tag,
+    )
     return PlainTextResponse(content, media_type="text/plain")
 
 
-def _install_script_template(central_url: str, image_tag: str = "latest") -> str:
-    return f'''#!/usr/bin/env bash
+def _render_install_script(content: str, base_url: str, settings) -> str:
+    replacements = {
+        "__CENTRAL_API_URL__": base_url,
+        "__IMAGE_TAG__": settings.image_tag,
+        "__AGENT_API_TOKEN__": settings.api_auth_token,
+        "__FLEET_NETWORK_PROVIDER__": settings.fleet_network_provider,
+        "__NETBIRD_MODE__": settings.netbird_mode,
+        "__NETBIRD_SETUP_KEY__": settings.netbird_setup_key,
+        "__NETBIRD_MANAGEMENT_URL__": settings.netbird_management_url,
+        "__NETBIRD_IMAGE_TAG__": settings.netbird_image_tag,
+    }
+    for placeholder, value in replacements.items():
+        content = content.replace(placeholder, value or "")
+    return content
+
+
+def _install_script_template(
+    central_url: str,
+    image_tag: str = "latest",
+    agent_api_token: str = "",
+    fleet_network_provider: str = "lan",
+    netbird_mode: str = "off",
+    netbird_setup_key: str = "",
+    netbird_management_url: str = "",
+    netbird_image_tag: str = "latest",
+) -> str:
+    return f"""#!/usr/bin/env bash
 # OpenCLI Agent — one-line install
 # Usage: curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | bash
-# Or:    curl -fsSL {central_url}/api/v1/nodes/install/agent.sh | AGENT_API_TOKEN=... AGENT_REGISTER=ws bash
+# Or with API auth:
+#   curl -fsSL -H "Authorization: Bearer $API_AUTH_TOKEN" \\
+#     {central_url}/api/v1/nodes/install/agent.sh | bash
 
 set -euo pipefail
 CENTRAL_API_URL="${{CENTRAL_API_URL:-{central_url}}}"
+AGENT_API_TOKEN="${{AGENT_API_TOKEN:-{agent_api_token}}}"
 AGENT_REGISTER="${{AGENT_REGISTER:-ws}}"
 AGENT_PORT="${{AGENT_PORT:-19823}}"
+AGENT_ADVERTISE_URL="${{AGENT_ADVERTISE_URL:-}}"
 AGENT_LABEL="${{AGENT_LABEL:-$(hostname)}}"
-AGENT_API_TOKEN="${{AGENT_API_TOKEN:-}}"
 IMAGE_TAG="${{IMAGE_TAG:-{image_tag}}}"
+FLEET_NETWORK_PROVIDER="${{FLEET_NETWORK_PROVIDER:-{fleet_network_provider}}}"
+NETBIRD_MODE="${{NETBIRD_MODE:-{netbird_mode}}}"
+NETBIRD_SETUP_KEY="${{NETBIRD_SETUP_KEY:-{netbird_setup_key}}}"
+NETBIRD_MANAGEMENT_URL="${{NETBIRD_MANAGEMENT_URL:-{netbird_management_url}}}"
+NETBIRD_IMAGE_TAG="${{NETBIRD_IMAGE_TAG:-{netbird_image_tag}}}"
 INSTALL_MODE="${{1:-docker}}"
 
+if [[ "$NETBIRD_MODE" == "off" && -n "$NETBIRD_SETUP_KEY" ]]; then
+  NETBIRD_MODE="host"
+fi
+
 info() {{ printf "\\e[32m[INFO]\\e[0m  %s\\n" "$*"; }}
+warn() {{ printf "\\e[33m[WARN]\\e[0m  %s\\n" "$*"; }}
 die()  {{ printf "\\e[31m[ERROR]\\e[0m %s\\n" "$*" >&2; exit 1; }}
 
 [[ -z "$CENTRAL_API_URL" ]] && die "CENTRAL_API_URL is required"
 info "Center: $CENTRAL_API_URL | Register: $AGENT_REGISTER | Mode: $INSTALL_MODE"
+info "NetBird: $NETBIRD_MODE"
+
+run_netbird() {{
+  if netbird "$@"; then
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo netbird "$@"
+  else
+    return 1
+  fi
+}}
+
+install_netbird_host() {{
+  [[ -n "$NETBIRD_SETUP_KEY" ]] || die "NETBIRD_SETUP_KEY is required when NETBIRD_MODE=host"
+  if ! command -v netbird >/dev/null 2>&1; then
+    command -v curl >/dev/null 2>&1 || die "curl is required to install NetBird"
+    if [[ "$(id -u)" == "0" ]]; then
+      curl -fsSL https://pkgs.netbird.io/install.sh | sh
+    elif command -v sudo >/dev/null 2>&1; then
+      curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh
+    else
+      die "sudo is required to install NetBird"
+    fi
+  fi
+  up_args=(up --setup-key "$NETBIRD_SETUP_KEY")
+  [[ -n "$NETBIRD_MANAGEMENT_URL" ]] && up_args+=(--management-url "$NETBIRD_MANAGEMENT_URL")
+  run_netbird "${{up_args[@]}}" || die "netbird up failed"
+  run_netbird status || warn "netbird status failed; continuing after successful up"
+}}
+
+install_netbird_docker() {{
+  [[ -n "$NETBIRD_SETUP_KEY" ]] || die "NETBIRD_SETUP_KEY is required when NETBIRD_MODE=docker"
+  command -v docker >/dev/null 2>&1 || die "Docker is required for NETBIRD_MODE=docker"
+  container_name="opencli-netbird"
+  docker rm -f "$container_name" >/dev/null 2>&1 || true
+  netbird_env=(-e NB_SETUP_KEY="$NETBIRD_SETUP_KEY")
+  if [[ -n "$NETBIRD_MANAGEMENT_URL" ]]; then
+    netbird_env+=(-e NB_MANAGEMENT_URL="$NETBIRD_MANAGEMENT_URL")
+  fi
+  docker run -d --name "$container_name" --restart unless-stopped --network host --privileged \\
+    "${{netbird_env[@]}}" \\
+    -v netbird-client:/var/lib/netbird \\
+    "netbirdio/netbird:${{NETBIRD_IMAGE_TAG}}"
+}}
+
+install_netbird() {{
+  case "$NETBIRD_MODE" in
+    off)
+      if [[ "$FLEET_NETWORK_PROVIDER" == "netbird" ]]; then
+        warn "FLEET_NETWORK_PROVIDER=netbird but NETBIRD_MODE=off and no setup key was provided"
+      fi
+      ;;
+    host) install_netbird_host ;;
+    docker) install_netbird_docker ;;
+    *) die "Unknown NETBIRD_MODE '$NETBIRD_MODE'. Use off, host, or docker." ;;
+  esac
+}}
 
 install_docker() {{
   command -v docker >/dev/null 2>&1 || die "Docker not found"
@@ -391,10 +529,16 @@ install_docker() {{
   while docker ps --format '{{{{.Ports}}}}' | grep -q "0.0.0.0:${{AGENT_PORT}}->"; do
     AGENT_PORT=$(( AGENT_PORT + 1 ))
   done
-  [[ "$AGENT_PORT" != "$ORIG_PORT" ]] && printf "\\e[33m[WARN]\\e[0m  Port $ORIG_PORT in use, using $AGENT_PORT instead\\n"
+  if [[ "$AGENT_PORT" != "$ORIG_PORT" ]]; then
+    printf "\\e[33m[WARN]\\e[0m  Port $ORIG_PORT in use, using $AGENT_PORT instead\\n"
+  fi
   # Inside Docker, 'localhost'/'127.0.0.1' refers to the container itself, not the host.
-  DOCKER_CENTRAL_URL=$(echo "$CENTRAL_API_URL" | sed 's|localhost|host.docker.internal|g; s|127\\.0\\.0\\.1|host.docker.internal|g')
-  [[ "$DOCKER_CENTRAL_URL" != "$CENTRAL_API_URL" ]] && printf "\\e[33m[WARN]\\e[0m  Docker networking: using $DOCKER_CENTRAL_URL inside container\\n"
+  DOCKER_CENTRAL_URL=$(echo "$CENTRAL_API_URL" | sed \\
+    -e 's|localhost|host.docker.internal|g' \\
+    -e 's|127\\.0\\.0\\.1|host.docker.internal|g')
+  if [[ "$DOCKER_CENTRAL_URL" != "$CENTRAL_API_URL" ]]; then
+    printf "\\e[33m[WARN]\\e[0m  Docker networking: using $DOCKER_CENTRAL_URL\\n"
+  fi
   PROXY_ARGS=""
   [[ -n "${{HTTP_PROXY:-}}" ]]  && PROXY_ARGS="$PROXY_ARGS -e HTTP_PROXY=$HTTP_PROXY"
   [[ -n "${{HTTPS_PROXY:-}}" ]] && PROXY_ARGS="$PROXY_ARGS -e HTTPS_PROXY=$HTTPS_PROXY"
@@ -403,7 +547,8 @@ install_docker() {{
   docker run -d --name "$CONTAINER_NAME" --restart unless-stopped \\
     --add-host=host.docker.internal:host-gateway \\
     -e CENTRAL_API_URL="$DOCKER_CENTRAL_URL" -e AGENT_REGISTER="$AGENT_REGISTER" \\
-    -e AGENT_PORT="$AGENT_PORT" -e AGENT_LABEL="$AGENT_LABEL" -e AGENT_MODE="cdp" \\
+    -e AGENT_PORT="$AGENT_PORT" -e AGENT_ADVERTISE_URL="$AGENT_ADVERTISE_URL" \\
+    -e AGENT_LABEL="$AGENT_LABEL" -e AGENT_MODE="cdp" \\
     -e AGENT_API_TOKEN="$AGENT_API_TOKEN" \\
     $PROXY_ARGS -p "${{AGENT_PORT}}:${{AGENT_PORT}}" \\
     "xjh1994/opencli-admin-agent:${{IMAGE_TAG}}"
@@ -415,17 +560,21 @@ install_python() {{
   VENV_DIR="$HOME/.opencli-agent-venv"
   if python3 -m pip install --user --quiet fastapi uvicorn httpx pyyaml websockets 2>/dev/null; then
     PYTHON_BIN="python3"
-  elif python3 -m venv "$VENV_DIR" 2>/dev/null && "$VENV_DIR/bin/pip" install --quiet fastapi uvicorn httpx pyyaml websockets; then
+  elif python3 -m venv "$VENV_DIR" 2>/dev/null && \\
+      "$VENV_DIR/bin/pip" install --quiet fastapi uvicorn httpx pyyaml websockets; then
     PYTHON_BIN="$VENV_DIR/bin/python3"
   else
-    die "Cannot install Python deps. Try: python3 -m venv ~/.opencli-agent-venv && source ~/.opencli-agent-venv/bin/activate && pip install fastapi uvicorn httpx pyyaml websockets"
+    die "Cannot install Python deps. Try a venv and install fastapi uvicorn httpx pyyaml websockets"
   fi
   CENTRAL_API_URL="$CENTRAL_API_URL" AGENT_REGISTER="$AGENT_REGISTER" \\
-  AGENT_PORT="$AGENT_PORT" AGENT_LABEL="$AGENT_LABEL" AGENT_MODE="cdp" \\
+  AGENT_PORT="$AGENT_PORT" AGENT_ADVERTISE_URL="$AGENT_ADVERTISE_URL" \\
+  AGENT_LABEL="$AGENT_LABEL" AGENT_MODE="cdp" \\
   AGENT_API_TOKEN="$AGENT_API_TOKEN" \\
   nohup "$PYTHON_BIN" -m backend.agent_server > /tmp/opencli-agent.log 2>&1 &
   info "Agent started (PID=$!). Logs: /tmp/opencli-agent.log"
 }}
+
+install_netbird
 
 case "$INSTALL_MODE" in
   docker) install_docker ;;
@@ -433,10 +582,11 @@ case "$INSTALL_MODE" in
   *) die "Usage: $0 [docker|python]" ;;
 esac
 info "Done! Nodes will appear at: $CENTRAL_API_URL → 节点管理"
-'''
+"""
 
 
 # ── WebSocket reverse channel ─────────────────────────────────────────────────
+
 
 @router.websocket("/ws")
 async def node_ws_endpoint(ws: WebSocket) -> None:
@@ -483,10 +633,21 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
         # ── 2. Upsert node + write event ──────────────────────────────────
         try:
             async with AsyncSessionLocal() as db:
-                node = await _upsert_node(db, agent_url, label, "ws", mode, node_type=node_type,
-                                          runtimes=runtimes)
-                await _write_event(db, node.id, "online",
-                                   event_meta={"mode": mode, "node_type": node_type, "protocol": "ws"})
+                node = await _upsert_node(
+                    db,
+                    agent_url,
+                    label,
+                    "ws",
+                    mode,
+                    node_type=node_type,
+                    runtimes=runtimes,
+                )
+                await _write_event(
+                    db,
+                    node.id,
+                    "online",
+                    event_meta={"mode": mode, "node_type": node_type, "protocol": "ws"},
+                )
                 # BrowserInstance compat
                 result = await db.execute(
                     select(BrowserInstance).where(BrowserInstance.endpoint == agent_url)
@@ -500,8 +661,11 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
                         inst.label = label
                 else:
                     inst = BrowserInstance(
-                        endpoint=agent_url, mode=mode,
-                        agent_url=agent_url, agent_protocol="ws", label=label,
+                        endpoint=agent_url,
+                        mode=mode,
+                        agent_url=agent_url,
+                        agent_protocol="ws",
+                        label=label,
                     )
                     db.add(inst)
                 await db.commit()
@@ -511,7 +675,13 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
         _pool_add(agent_url, mode, "ws", node_type)
         ws_agent_manager.register_connection(agent_url, ws)
         await ws.send_json({"type": "registered", "agent_url": agent_url})
-        logger.info("WS node registered: %s (node_type=%s mode=%s label=%r)", agent_url, node_type, mode, label)
+        logger.info(
+            "WS node registered: %s (node_type=%s mode=%s label=%r)",
+            agent_url,
+            node_type,
+            mode,
+            label,
+        )
 
         # ── 3. Receive loop ───────────────────────────────────────────────
         while True:
@@ -539,9 +709,8 @@ async def node_ws_endpoint(ws: WebSocket) -> None:
             try:
                 async with AsyncSessionLocal() as db:
                     from backend.models.edge_node import EdgeNode
-                    result = await db.execute(
-                        select(EdgeNode).where(EdgeNode.url == agent_url)
-                    )
+
+                    result = await db.execute(select(EdgeNode).where(EdgeNode.url == agent_url))
                     node = result.scalar_one_or_none()
                     if node:
                         node.status = "offline"

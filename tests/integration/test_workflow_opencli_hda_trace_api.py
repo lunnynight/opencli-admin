@@ -1,8 +1,13 @@
 """HTTP-seam tests for Multi Source OpenCLI HDA tracing."""
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import select
 
+from backend import browser_pool
+from backend.models.browser import BrowserBinding, BrowserInstance
+from backend.models.edge_node import EdgeNode
 from backend.models.record import CollectedRecord
 from backend.models.source import DataSource
 from backend.models.task import CollectionTask
@@ -78,9 +83,7 @@ def _multi_source_opencli_hda_project() -> dict:
                                 "queue": "opencli-hda-output",
                                 "archive": False,
                             },
-                            "ui": {
-                                "catalogId": "intelligence.output.collection-result"
-                            },
+                            "ui": {"catalogId": "intelligence.output.collection-result"},
                         },
                     ],
                     "edges": [
@@ -353,6 +356,67 @@ async def _seed_collected_record(
     return source, task, record
 
 
+def _fleet_trace_opencli_catalog() -> tuple[dict, ...]:
+    return (
+        {
+            "site": "twitter",
+            "name": "search",
+            "description": "X search",
+            "access": "read",
+            "browser": True,
+            "strategy": "cookie",
+            "args": [
+                {
+                    "name": "query",
+                    "type": "str",
+                    "required": True,
+                    "positional": True,
+                }
+            ],
+            "columns": ["id", "text"],
+        },
+    )
+
+
+def _install_fleet_trace_pool(monkeypatch) -> None:
+    pool = browser_pool.LocalBrowserPool(["http://agent-x:19823"])
+    pool.set_mode("http://agent-x:19823", "bridge")
+    pool.set_agent_url("http://agent-x:19823", "http://agent-x:19823")
+    pool.set_agent_protocol("http://agent-x:19823", "ws")
+    pool.set_node_type("http://agent-x:19823", "shell")
+    monkeypatch.setattr(browser_pool, "_pool", pool)
+
+
+async def _seed_fleet_trace_agent(db_session) -> None:
+    db_session.add_all(
+        [
+            BrowserInstance(
+                endpoint="http://agent-x:19823",
+                mode="bridge",
+                label="X desk",
+                agent_url="http://agent-x:19823",
+                agent_protocol="ws",
+            ),
+            EdgeNode(
+                url="http://agent-x:19823",
+                label="X desk",
+                protocol="ws",
+                mode="bridge",
+                node_type="shell",
+                status="online",
+                last_seen_at=datetime.now(UTC),
+                runtimes=["opencli"],
+            ),
+            BrowserBinding(
+                site="twitter",
+                browser_endpoint="http://agent-x:19823",
+                notes="Logged into X",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+
 @pytest.mark.asyncio
 async def test_opencli_hda_trace_builds_iii_fanout_payloads(client):
     response = await client.post(
@@ -591,6 +655,67 @@ async def test_workflow_run_events_projection_and_stream(client):
 
 
 @pytest.mark.asyncio
+async def test_workflow_run_trace_records_fleet_match_for_opencli_source(
+    client,
+    db_session,
+    monkeypatch,
+):
+    _install_fleet_trace_pool(monkeypatch)
+    await _seed_fleet_trace_agent(db_session)
+    monkeypatch.setattr(
+        "backend.workflow.fleet_inventory.ws_agent_manager.list_connected",
+        lambda: ["http://agent-x:19823"],
+    )
+    monkeypatch.setattr(
+        "backend.workflow.opencli_adapter_nodes._load_opencli_catalog",
+        _fleet_trace_opencli_catalog,
+    )
+    project = _multi_source_opencli_hda_project()
+    twitter_source = project["nodes"][0]["internals"]["nodes"][1]
+    twitter_source["params"].update(
+        {
+            "site": "twitter",
+            "command": "search",
+            "args": {"query": "ai"},
+            "opencliAdapterNodeId": "opencli.adapter.twitter.search",
+        }
+    )
+
+    start = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": project,
+            "packageNodeId": "multi-source-opencli",
+            "runId": "run-events-fleet-match",
+            "traceId": "trace-events-fleet-match",
+        },
+    )
+
+    assert start.status_code == 202
+    assert start.json()["data"]["status"] == "completed"
+    events = (await client.get("/api/v1/workflows/runs/run-events-fleet-match/events")).json()[
+        "data"
+    ]
+    source_events = [
+        event for event in events if event["nodeId"] == "multi-source-opencli::source-bilibili"
+    ]
+    batch_ready = next(event for event in source_events if event["eventType"] == "batch_ready")
+    partial = next(event for event in source_events if event["eventType"] == "partial")
+
+    fleet_match = batch_ready["details"]["fleetMatch"]
+    assert fleet_match["matched"] is True
+    assert fleet_match["adapterNodeId"] == "opencli.adapter.twitter.search"
+    assert fleet_match["requiresBrowser"] is True
+    assert fleet_match["requiresSiteBinding"] is True
+    assert fleet_match["selected"]["endpoint"] == "http://agent-x:19823"
+    assert fleet_match["selected"]["agentProtocol"] == "ws"
+    assert fleet_match["selected"]["missing"] == []
+    assert "site_binding" in fleet_match["selected"]["reasons"]
+    assert partial["details"]["fleetMatch"]["selected"] == fleet_match["selected"]
+    assert "iii" not in batch_ready["details"]
+
+
+@pytest.mark.asyncio
 async def test_workflow_run_emits_native_first_loop_trace_events(client, db_session):
     response = await client.post(
         "/api/v1/workflows/runs",
@@ -610,9 +735,9 @@ async def test_workflow_run_emits_native_first_loop_trace_events(client, db_sess
     assert states["accept-records"]["status"] == "completed"
     assert states["record-sink"]["status"] == "completed"
 
-    events = (
-        await client.get("/api/v1/workflows/runs/run-native-first-loop/events")
-    ).json()["data"]
+    events = (await client.get("/api/v1/workflows/runs/run-native-first-loop/events")).json()[
+        "data"
+    ]
     by_node = {}
     for event in events:
         by_node.setdefault(event["nodeId"], []).append(event)
@@ -649,34 +774,33 @@ async def test_workflow_run_emits_native_first_loop_trace_events(client, db_sess
     assert sink_partial["details"]["storedRecordCount"] == 2
     assert len(sink_partial["details"]["storedRefs"]) == 2
     assert sink_partial["details"]["storedRefs"][0]["target"] == "records"
-    assert sink_partial["details"]["storedRefs"][0]["lineage"][0]["nodeId"] == (
-        "source-bilibili"
-    )
+    assert sink_partial["details"]["storedRefs"][0]["lineage"][0]["nodeId"] == ("source-bilibili")
 
     records = (
-        await db_session.execute(
-            select(CollectedRecord).order_by(CollectedRecord.created_at)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(CollectedRecord).order_by(CollectedRecord.created_at)))
+        .scalars()
+        .all()
+    )
     assert len(records) == 2
     assert {record.normalized_data["title"] for record in records} == {
         "Bilibili AI video",
         "XHS AI note",
     }
     assert {record.status for record in records} == {"normalized"}
-    assert {
-        record.raw_data["_workflowLineage"][0]["nodeId"] for record in records
-    } == {"source-bilibili", "source-xhs"}
+    assert {record.raw_data["_workflowLineage"][0]["nodeId"] for record in records} == {
+        "source-bilibili",
+        "source-xhs",
+    }
 
     tasks = (
-        await db_session.execute(select(CollectionTask).order_by(CollectionTask.created_at))
-    ).scalars().all()
+        (await db_session.execute(select(CollectionTask).order_by(CollectionTask.created_at)))
+        .scalars()
+        .all()
+    )
     assert len(tasks) == 2
     assert {task.trigger_type for task in tasks} == {"workflow"}
     assert {task.status for task in tasks} == {"completed"}
-    assert {task.parameters["workflowRunId"] for task in tasks} == {
-        "run-native-first-loop"
-    }
+    assert {task.parameters["workflowRunId"] for task in tasks} == {"run-native-first-loop"}
 
 
 @pytest.mark.asyncio
@@ -720,9 +844,9 @@ async def test_workflow_run_loads_bound_source_task_records_as_items(client, db_
     data = response.json()["data"]
     assert data["status"] == "completed"
 
-    events = (
-        await client.get("/api/v1/workflows/runs/run-bound-source-records/events")
-    ).json()["data"]
+    events = (await client.get("/api/v1/workflows/runs/run-bound-source-records/events")).json()[
+        "data"
+    ]
     by_node = {}
     for event in events:
         by_node.setdefault(event["nodeId"], []).append(event)
@@ -734,24 +858,27 @@ async def test_workflow_run_loads_bound_source_task_records_as_items(client, db_
     assert by_node["normalize-bilibili"][2]["details"]["inputItemCount"] == 1
     assert by_node["merge-candidates"][2]["details"]["mergedCandidateCount"] == 2
     assert by_node["record-sink"][2]["details"]["storedRecordCount"] == 2
-    assert by_node["record-sink"][2]["details"]["storedRefs"][0]["lineage"][0][
-        "artifact"
-    ] == "collected_records"
+    assert (
+        by_node["record-sink"][2]["details"]["storedRefs"][0]["lineage"][0]["artifact"]
+        == "collected_records"
+    )
 
     records = (
-        await db_session.execute(
-            select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+        (
+            await db_session.execute(
+                select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(records) == 4
     workflow_record_run_ids = {
         record.raw_data.get("_workflowRunId")
         for record in records
         if "_workflowRunId" in record.raw_data
     }
-    assert workflow_record_run_ids == {
-        "run-bound-source-records"
-    }
+    assert workflow_record_run_ids == {"run-bound-source-records"}
 
 
 @pytest.mark.asyncio
@@ -789,9 +916,9 @@ async def test_workflow_run_uses_runtime_source_outputs_as_items(client, db_sess
     assert response.status_code == 202
     data = response.json()["data"]
     assert data["status"] == "completed"
-    events = (
-        await client.get("/api/v1/workflows/runs/run-runtime-source-outputs/events")
-    ).json()["data"]
+    events = (await client.get("/api/v1/workflows/runs/run-runtime-source-outputs/events")).json()[
+        "data"
+    ]
     by_node = {}
     for event in events:
         by_node.setdefault(event["nodeId"], []).append(event)
@@ -802,15 +929,17 @@ async def test_workflow_run_uses_runtime_source_outputs_as_items(client, db_sess
     assert by_node["merge-candidates"][2]["details"]["mergedCandidateCount"] == 2
     sink_partial = by_node["record-sink"][2]
     assert sink_partial["details"]["storedRecordCount"] == 2
-    assert sink_partial["details"]["storedRefs"][0]["lineage"][0]["artifact"] == (
-        "sourceOutputs"
-    )
+    assert sink_partial["details"]["storedRefs"][0]["lineage"][0]["artifact"] == ("sourceOutputs")
 
     records = (
-        await db_session.execute(
-            select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+        (
+            await db_session.execute(
+                select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(records) == 2
     assert {record.normalized_data["title"] for record in records} == {
         "Runtime Bilibili AI video",
@@ -838,9 +967,7 @@ async def test_workflow_run_continues_with_late_source_outputs(client, db_sessio
     initial_data = initial.json()["data"]
     assert initial_data["status"] == "completed"
     initial_event_count = initial_data["eventCount"]
-    initial_records = (
-        await db_session.execute(select(CollectedRecord))
-    ).scalars().all()
+    initial_records = (await db_session.execute(select(CollectedRecord))).scalars().all()
     assert initial_records == []
 
     continued = await client.post(
@@ -870,9 +997,9 @@ async def test_workflow_run_continues_with_late_source_outputs(client, db_sessio
     assert continued_data["status"] == "completed"
     assert continued_data["eventCount"] > initial_event_count
 
-    events = (
-        await client.get("/api/v1/workflows/runs/run-late-source-outputs/events")
-    ).json()["data"]
+    events = (await client.get("/api/v1/workflows/runs/run-late-source-outputs/events")).json()[
+        "data"
+    ]
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     late_source_events = [
         event
@@ -884,10 +1011,14 @@ async def test_workflow_run_continues_with_late_source_outputs(client, db_sessio
     assert late_source_events[0]["sequence"] > initial_event_count
 
     records = (
-        await db_session.execute(
-            select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+        (
+            await db_session.execute(
+                select(CollectedRecord).order_by(CollectedRecord.created_at, CollectedRecord.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(records) == 2
     assert {record.normalized_data["title"] for record in records} == {
         "Late Bilibili AI video",
@@ -896,9 +1027,7 @@ async def test_workflow_run_continues_with_late_source_outputs(client, db_sessio
 
 
 @pytest.mark.asyncio
-async def test_workflow_run_trace_persists_and_recovers_without_memory_cache(
-    client, db_session
-):
+async def test_workflow_run_trace_persists_and_recovers_without_memory_cache(client, db_session):
     project = _native_first_loop_project()
     for node in project["nodes"]:
         if node["id"] in {"source-bilibili", "source-xhs"}:
@@ -936,12 +1065,16 @@ async def test_workflow_run_trace_persists_and_recovers_without_memory_cache(
     assert persisted_run.request["traceId"] == "trace-persisted-trace"
     assert persisted_run.projection["eventCount"] == started_projection["eventCount"]
     persisted_events = (
-        await db_session.execute(
-            select(WorkflowRunEvent)
-            .where(WorkflowRunEvent.run_id == "run-persisted-trace")
-            .order_by(WorkflowRunEvent.sequence)
+        (
+            await db_session.execute(
+                select(WorkflowRunEvent)
+                .where(WorkflowRunEvent.run_id == "run-persisted-trace")
+                .order_by(WorkflowRunEvent.sequence)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(persisted_events) == started_projection["eventCount"]
     assert persisted_events[0].event_id == "run-persisted-trace:0001:queued:source-bilibili"
 
@@ -976,12 +1109,16 @@ async def test_workflow_run_trace_persists_and_recovers_without_memory_cache(
     assert continued_projection["eventCount"] > started_projection["eventCount"]
 
     continued_events = (
-        await db_session.execute(
-            select(WorkflowRunEvent)
-            .where(WorkflowRunEvent.run_id == "run-persisted-trace")
-            .order_by(WorkflowRunEvent.sequence)
+        (
+            await db_session.execute(
+                select(WorkflowRunEvent)
+                .where(WorkflowRunEvent.run_id == "run-persisted-trace")
+                .order_by(WorkflowRunEvent.sequence)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [event.sequence for event in continued_events] == list(
         range(1, continued_projection["eventCount"] + 1)
     )
@@ -1027,9 +1164,7 @@ async def test_workflow_run_checkpoint_and_trace_query_resume_cursor(client):
     started_projection = started.json()["data"]
     _RUNS.pop("run-checkpoint-query", None)
 
-    checkpoint_response = await client.get(
-        "/api/v1/workflows/runs/run-checkpoint-query/checkpoint"
-    )
+    checkpoint_response = await client.get("/api/v1/workflows/runs/run-checkpoint-query/checkpoint")
     assert checkpoint_response.status_code == 200
     checkpoint = checkpoint_response.json()["data"]
     assert checkpoint["checkpointId"] == (
@@ -1117,13 +1252,9 @@ async def test_workflow_run_blocks_webhook_notify_until_projection_delivery(clie
     data = response.json()["data"]
     states = {state["nodeId"]: state for state in data["nodeStates"]}
     assert states["notify-webhook"]["status"] == "blocked"
-    assert states["notify-webhook"]["blockReasons"][0]["code"] == (
-        "missing_delivery_projection"
-    )
+    assert states["notify-webhook"]["blockReasons"][0]["code"] == ("missing_delivery_projection")
 
-    events = (await client.get("/api/v1/workflows/runs/run-events-webhook/events")).json()[
-        "data"
-    ]
+    events = (await client.get("/api/v1/workflows/runs/run-events-webhook/events")).json()["data"]
     notify_events = [event for event in events if event["nodeId"] == "notify-webhook"]
     assert [event["eventType"] for event in notify_events] == [
         "queued",

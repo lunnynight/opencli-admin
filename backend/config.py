@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     # when behind a reverse proxy with changeOrigin=true).
     public_url: str = ""
 
+    # Fleet network bootstrap used by the generated edge-agent installer.
+    # NetBird is the supported overlay for fleet LAN deployments, but remains
+    # orthogonal to API auth: API_AUTH_TOKEN still gates every /api route.
+    fleet_network_provider: Literal["lan", "netbird"] = "lan"
+    netbird_mode: Literal["off", "host", "docker"] = "off"
+    netbird_setup_key: str = ""
+    netbird_management_url: str = ""
+    netbird_image_tag: str = "latest"
+
     # Agent pool: comma-separated agent/CDP endpoint URLs.
     # Each entry is a Chrome agent node (local or remote).
     # Single-instance fallback when agent_pool_endpoints is empty.

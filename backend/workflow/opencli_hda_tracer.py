@@ -20,6 +20,8 @@ from backend.pipeline.storer import store_records
 from backend.schemas.workflow import (
     CompiledWorkflowNode,
     WorkflowCompileError,
+    WorkflowFleetCapabilityMatchRequest,
+    WorkflowFleetCapabilityMatchResponse,
     WorkflowNodeRunEvent,
     WorkflowNodeRunEventType,
     WorkflowOpenCLIHDATraceDispatch,
@@ -35,6 +37,7 @@ from backend.schemas.workflow import (
     WorkflowRunStatus,
 )
 from backend.workflow.compiler import INTERNAL_ID_SEPARATOR, compile_workflow_project
+from backend.workflow.fleet_inventory import match_workflow_fleet_capability
 from backend.workflow.realtime_market_executor import (
     OKX_MARKET_TICKER_SNAPSHOT_EXECUTOR,
     RealtimeMarketExecutionError,
@@ -217,9 +220,9 @@ async def start_workflow_run(
     )
     runtime_nodes = compile_result.plan.runtime.nodes
     runtime_nodes_by_id = {node.id: node for node in runtime_nodes}
-    should_trace_opencli = body.packageNodeId is not None or _select_package_id(
-        runtime_nodes, None
-    ) is not None
+    should_trace_opencli = (
+        body.packageNodeId is not None or _select_package_id(runtime_nodes, None) is not None
+    )
     trace = (
         build_opencli_hda_trace(
             body.project,
@@ -417,6 +420,15 @@ async def start_workflow_run(
             continue
 
         emitter.emit(node, "started", message="OpenCLI source dispatch started")
+        fleet_match = await _match_dispatch_fleet_target(
+            dispatch,
+            node,
+            session=session,
+        )
+        fleet_match_details = _fleet_match_trace_details(fleet_match)
+        if fleet_match_details:
+            emitter.events[-1].details["fleetMatch"] = fleet_match_details
+
         batch = _batch_reference(body.project.id, run_id, dispatch)
         emitter.emit(
             node,
@@ -426,6 +438,7 @@ async def start_workflow_run(
             details={
                 "functionId": OPENCLI_FUNCTION_ID,
                 "worker": OPENCLI_WORKER,
+                **({"fleetMatch": fleet_match_details} if fleet_match_details else {}),
             },
         )
         emitter.emit(
@@ -435,6 +448,7 @@ async def start_workflow_run(
             details={
                 "adapterTaskId": dispatch.taskId,
                 "sourceGroup": dispatch.sourceGroup,
+                **({"fleetMatch": fleet_match_details} if fleet_match_details else {}),
             },
         )
         emitter.emit(node, "completed", message="OpenCLI source dispatch completed")
@@ -655,10 +669,7 @@ async def _load_workflow_run(
     stored = _StoredWorkflowRun(
         request=WorkflowRunStartRequest.model_validate(row.request),
         projection=WorkflowRunProjection.model_validate(row.projection),
-        events=[
-            WorkflowNodeRunEvent.model_validate(event_row.payload)
-            for event_row in event_rows
-        ],
+        events=[WorkflowNodeRunEvent.model_validate(event_row.payload) for event_row in event_rows],
     )
     _RUNS[run_id] = stored
     return stored
@@ -899,6 +910,32 @@ def _batch_reference(
     )
 
 
+async def _match_dispatch_fleet_target(
+    dispatch: WorkflowOpenCLIHDATraceDispatch,
+    node: CompiledWorkflowNode,
+    *,
+    session: AsyncSession | None,
+) -> WorkflowFleetCapabilityMatchResponse | None:
+    if session is None:
+        return None
+
+    adapter_node_id = _read_string(node.params.get("opencliAdapterNodeId"))
+    request = WorkflowFleetCapabilityMatchRequest(
+        adapterNodeId=adapter_node_id,
+        site=None if adapter_node_id else dispatch.site,
+        command=None if adapter_node_id else dispatch.command,
+    )
+    return await match_workflow_fleet_capability(session, request)
+
+
+def _fleet_match_trace_details(
+    match: WorkflowFleetCapabilityMatchResponse | None,
+) -> dict[str, Any] | None:
+    if match is None:
+        return None
+    return match.model_dump(mode="json", exclude_none=True)
+
+
 def _reason_from_compile_error(error: WorkflowCompileError) -> WorkflowRunBlockReason:
     return WorkflowRunBlockReason(
         code=error.code,
@@ -1112,10 +1149,7 @@ async def _execute_native_node(
     if binding_id == MERGE_BINDING_ID:
         binding = _read_dict(node.runtime.get("binding"))
         binding_input = _read_dict(binding.get("input"))
-        merged = [
-            _append_lineage(item, node, step="merge", run_id=run_id)
-            for item in input_items
-        ]
+        merged = [_append_lineage(item, node, step="merge", run_id=run_id) for item in input_items]
         return (
             {
                 "bindingId": binding_id,
@@ -1194,9 +1228,7 @@ async def _execute_native_node(
                 "inputItemCount": len(input_items),
                 "outputItemCount": len(output_items),
                 "outputPort": binding_input.get("outputPort", "unknown"),
-                "sampleOutputs": [
-                    _trace_sample_output(item) for item in output_items[:3]
-                ],
+                "sampleOutputs": [_trace_sample_output(item) for item in output_items[:3]],
                 "externalWorkflow": binding_input.get("externalWorkflow", {}),
                 "lineage": _lineage_pointer(node),
             },
@@ -1261,11 +1293,7 @@ def _external_tool_output(
         "raw": output,
         "normalizedData": output,
         "lineage": [
-            *[
-                lineage
-                for item in input_items
-                for lineage in _read_dict_list(item.get("lineage"))
-            ],
+            *[lineage for item in input_items for lineage in _read_dict_list(item.get("lineage"))],
             {
                 "nodeId": node.id,
                 "step": "external_tool_capability",
@@ -1326,9 +1354,8 @@ async def _store_record_sink_outputs(
         return (
             [
                 {
-                    "recordId": _read_string(item.get("recordId")) or _stable_id(
-                        "record", run_id, node.id, str(index)
-                    ),
+                    "recordId": _read_string(item.get("recordId"))
+                    or _stable_id("record", run_id, node.id, str(index)),
                     "target": target,
                     "lineage": item.get("lineage", []),
                 }
@@ -1358,11 +1385,7 @@ async def _store_record_sink_outputs(
         normalized, content_hash = normalize_item(raw, source_id)
         accepted_normalized = _read_dict(item.get("normalizedData"))
         normalized.update(
-            {
-                key: value
-                for key, value in accepted_normalized.items()
-                if key not in {"source_id"}
-            }
+            {key: value for key, value in accepted_normalized.items() if key not in {"source_id"}}
         )
         normalized["source_id"] = source_id
         triples_by_source_node.setdefault(source_node_id, []).append(
@@ -1439,9 +1462,7 @@ async def _materialize_source_task(
     if source is None:
         source = DataSource(
             name=f"Workflow Source: {source_node.id}",
-            description=(
-                "Materialized source ownership for a WorkflowProject Record Sink run."
-            ),
+            description=("Materialized source ownership for a WorkflowProject Record Sink run."),
             channel_type=_workflow_source_channel_type(source_node),
             channel_config={
                 "workflowId": workflow_id,
@@ -1531,9 +1552,7 @@ def _upstream_outputs(
     outputs_by_node: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     return [
-        item
-        for upstream_id in node.depends_on
-        for item in outputs_by_node.get(upstream_id, [])
+        item for upstream_id in node.depends_on for item in outputs_by_node.get(upstream_id, [])
     ]
 
 
@@ -1680,9 +1699,7 @@ def _to_dispatch(
     binding_input = binding.get("input") if isinstance(binding, dict) else {}
     site = _read_string(binding_input.get("site")) if isinstance(binding_input, dict) else None
     command = (
-        _read_string(binding_input.get("command"))
-        if isinstance(binding_input, dict)
-        else None
+        _read_string(binding_input.get("command")) if isinstance(binding_input, dict) else None
     )
     if site is None or command is None:
         site = _read_string(node.params.get("site")) or ""
