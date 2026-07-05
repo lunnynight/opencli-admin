@@ -429,7 +429,21 @@ async def start_workflow_run(
         if fleet_match_details:
             emitter.events[-1].details["fleetMatch"] = fleet_match_details
 
+        output_items, agent_dispatch_details = await _dispatch_opencli_source_to_fleet(
+            dispatch,
+            fleet_match,
+        )
         batch = _batch_reference(body.project.id, run_id, dispatch)
+        if output_items:
+            batch = batch.model_copy(update={"itemCount": len(output_items)})
+        dispatch_trace_details = {
+            **({"fleetMatch": fleet_match_details} if fleet_match_details else {}),
+            **(
+                {"agentDispatch": agent_dispatch_details}
+                if agent_dispatch_details
+                else {}
+            ),
+        }
         emitter.emit(
             node,
             "batch_ready",
@@ -438,21 +452,62 @@ async def start_workflow_run(
             details={
                 "functionId": OPENCLI_FUNCTION_ID,
                 "worker": OPENCLI_WORKER,
-                **({"fleetMatch": fleet_match_details} if fleet_match_details else {}),
+                **dispatch_trace_details,
+            },
+        )
+        if agent_dispatch_details and agent_dispatch_details.get("success") is False:
+            reason = WorkflowRunBlockReason(
+                code="fleet_agent_dispatch_failed",
+                message=str(
+                    agent_dispatch_details.get("error")
+                    or "Fleet agent dispatch failed"
+                ),
+                source="workflow_fleet",
+                details={
+                    "adapterTaskId": dispatch.taskId,
+                    "sourceGroup": dispatch.sourceGroup,
+                    "agentDispatch": agent_dispatch_details,
+                    **({"fleetMatch": fleet_match_details} if fleet_match_details else {}),
+                },
+            )
+            emitter.emit(
+                node,
+                "failed",
+                message="OpenCLI source dispatch failed on selected fleet agent",
+                block_reason=reason,
+                details=reason.details,
+            )
+            if package_parent_id:
+                blocked_by_package.setdefault(package_parent_id, []).append(reason)
+            outputs_by_node[node.id] = []
+            continue
+
+        emitter.emit(
+            node,
+            "partial",
+            message=(
+                "OpenCLI source items collected through selected fleet agent"
+                if agent_dispatch_details
+                else "OpenCLI dispatch envelope is ready for worker fanout"
+            ),
+            details={
+                "adapterTaskId": dispatch.taskId,
+                "sourceGroup": dispatch.sourceGroup,
+                "itemCount": len(output_items),
+                "outputPort": "items[]",
+                **dispatch_trace_details,
             },
         )
         emitter.emit(
             node,
-            "partial",
-            message="OpenCLI dispatch envelope is ready for worker fanout",
-            details={
-                "adapterTaskId": dispatch.taskId,
-                "sourceGroup": dispatch.sourceGroup,
-                **({"fleetMatch": fleet_match_details} if fleet_match_details else {}),
-            },
+            "completed",
+            message=(
+                "OpenCLI source dispatch completed through selected fleet agent"
+                if agent_dispatch_details
+                else "OpenCLI source dispatch completed"
+            ),
         )
-        emitter.emit(node, "completed", message="OpenCLI source dispatch completed")
-        outputs_by_node[node.id] = []
+        outputs_by_node[node.id] = output_items
 
     for package_node in package_nodes:
         trace_errors = [
@@ -934,6 +989,109 @@ def _fleet_match_trace_details(
     if match is None:
         return None
     return match.model_dump(mode="json", exclude_none=True)
+
+
+async def _dispatch_opencli_source_to_fleet(
+    dispatch: WorkflowOpenCLIHDATraceDispatch,
+    match: WorkflowFleetCapabilityMatchResponse | None,
+) -> tuple[list[dict[str, Any]], dict[str, object] | None]:
+    target = _fleet_agent_dispatch_target(dispatch, match)
+    if target is None:
+        return [], None
+
+    from backend.channels.opencli_channel import _collect_via_agent, _collect_via_ws_agent
+
+    agent_url = str(target["agentUrl"])
+    protocol = str(target["protocol"])
+    mode = str(target["mode"])
+    output_format = str(target["format"])
+    positional_args = target["positionalArgs"]
+    if not isinstance(positional_args, list):
+        positional_args = []
+    positional_args = [str(item) for item in positional_args]
+
+    details: dict[str, object] = {
+        "attempted": True,
+        "protocol": protocol,
+        "agentUrl": agent_url,
+        "endpoint": target["endpoint"],
+        "mode": mode,
+        "site": dispatch.site,
+        "command": dispatch.command,
+        "format": output_format,
+    }
+    try:
+        if protocol == "ws":
+            result = await _collect_via_ws_agent(
+                agent_url,
+                dispatch.site,
+                dispatch.command,
+                dispatch.args,
+                positional_args,
+                output_format,
+                mode,
+            )
+        else:
+            result = await _collect_via_agent(
+                agent_url,
+                dispatch.site,
+                dispatch.command,
+                dispatch.args,
+                positional_args,
+                output_format,
+                mode,
+            )
+    except Exception as exc:
+        details.update(
+            {
+                "success": False,
+                "itemCount": 0,
+                "error": str(exc),
+                "errorType": type(exc).__name__,
+            }
+        )
+        return [], details
+
+    details.update(
+        {
+            "success": result.success,
+            "itemCount": len(result.items) if result.success else 0,
+        }
+    )
+    if result.error:
+        details["error"] = result.error
+    if result.error_type:
+        details["errorType"] = result.error_type
+    if result.metadata:
+        details["metadata"] = result.metadata
+    return (result.items if result.success else []), details
+
+
+def _fleet_agent_dispatch_target(
+    dispatch: WorkflowOpenCLIHDATraceDispatch,
+    match: WorkflowFleetCapabilityMatchResponse | None,
+) -> dict[str, object] | None:
+    if match is None or not match.matched or match.selected is None:
+        return None
+    selected = match.selected
+    protocol = (selected.agentProtocol or "").lower()
+    if protocol not in {"http", "ws"}:
+        return None
+    agent_url = (selected.agentUrl or selected.endpoint or "").rstrip("/")
+    if not agent_url:
+        return None
+    payload = _read_dict(dispatch.iii.get("payload"))
+    positional_args = payload.get("positional_args", payload.get("positionalArgs"))
+    if not isinstance(positional_args, list):
+        positional_args = []
+    return {
+        "endpoint": selected.endpoint,
+        "agentUrl": agent_url,
+        "protocol": protocol,
+        "mode": _read_string(payload.get("mode")) or selected.mode or "cdp",
+        "format": _read_string(payload.get("format")) or "json",
+        "positionalArgs": positional_args,
+    }
 
 
 def _reason_from_compile_error(error: WorkflowCompileError) -> WorkflowRunBlockReason:

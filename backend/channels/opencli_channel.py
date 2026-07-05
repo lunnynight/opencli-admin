@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _DAEMON_PORT = 19825
 # Binary to invoke. Override with OPENCLI_BIN env var if needed.
-_OPENCLI_BIN = os.environ.get("OPENCLI_BIN", "opencli")
+_OPENCLI_BIN = os.environ.get("OPENCLI_BIN") or "opencli"
 
 # Cache: (bin, site, command) → frozenset of accepted --option names (excluding builtins)
 _help_cache: dict[tuple[str, str, str], frozenset[str]] = {}
@@ -94,7 +94,8 @@ async def _command_requires_browser(bin_path: str, site: str, command: str) -> b
 
 
 def _resolve_bin(mode: str) -> str:  # noqa: ARG001 — mode unused, kept for call-site compat
-    return shutil.which(_OPENCLI_BIN) or _OPENCLI_BIN
+    configured = _OPENCLI_BIN or "opencli"
+    return shutil.which(configured) or configured
 
 
 def _parse_json(raw: str) -> list[dict]:

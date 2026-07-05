@@ -6,13 +6,39 @@ httpx POST calls, and the `additional_headers` -> `extra_headers` fallback in
 `_register_via_ws`'s connect call.
 """
 
-import asyncio
 import json
 
 import pytest
 
 from backend import agent_server
 from backend.agent_runtimes.base import RuntimeInvocationError
+
+# ── opencli binary resolution ────────────────────────────────────────────────
+
+
+def test_resolve_bin_prefers_windows_cmd_shim(monkeypatch):
+    resolved_cmd = r"C:\Users\Administrator\AppData\Roaming\npm\opencli.cmd"
+
+    def fake_which(name: str) -> str | None:
+        if name == "opencli.cmd":
+            return resolved_cmd
+        if name == "opencli.ps1":
+            return r"C:\Users\Administrator\AppData\Roaming\npm\opencli.ps1"
+        return None
+
+    monkeypatch.setattr(agent_server, "_OPENCLI_BIN", "opencli")
+    monkeypatch.setattr(agent_server.os, "name", "nt")
+    monkeypatch.setattr(agent_server.shutil, "which", fake_which)
+
+    assert agent_server._resolve_bin("cdp") == resolved_cmd
+
+
+def test_resolve_bin_treats_empty_opencli_bin_as_default(monkeypatch):
+    monkeypatch.setattr(agent_server, "_OPENCLI_BIN", "")
+    monkeypatch.setattr(agent_server.os, "name", "posix")
+    monkeypatch.setattr(agent_server.shutil, "which", lambda name: None)
+
+    assert agent_server._resolve_bin("cdp") == "opencli"
 
 
 # ── _auth_headers ────────────────────────────────────────────────────────────

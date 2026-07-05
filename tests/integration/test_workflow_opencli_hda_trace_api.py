@@ -670,6 +670,35 @@ async def test_workflow_run_trace_records_fleet_match_for_opencli_source(
         "backend.workflow.opencli_adapter_nodes._load_opencli_catalog",
         _fleet_trace_opencli_catalog,
     )
+    dispatched = []
+
+    async def fake_dispatch(dispatch, fleet_match):
+        dispatched.append((dispatch, fleet_match))
+        if dispatch.site != "twitter":
+            return [], None
+        return [
+            {
+                "id": "tweet-1",
+                "text": "Agent-collected X post",
+                "url": "https://x.com/example/status/1",
+            }
+        ], {
+            "attempted": True,
+            "success": True,
+            "protocol": "ws",
+            "agentUrl": "http://agent-x:19823",
+            "endpoint": "http://agent-x:19823",
+            "mode": "bridge",
+            "site": "twitter",
+            "command": "search",
+            "format": "json",
+            "itemCount": 1,
+        }
+
+    monkeypatch.setattr(
+        "backend.workflow.opencli_hda_tracer._dispatch_opencli_source_to_fleet",
+        fake_dispatch,
+    )
     project = _multi_source_opencli_hda_project()
     twitter_source = project["nodes"][0]["internals"]["nodes"][1]
     twitter_source["params"].update(
@@ -712,7 +741,20 @@ async def test_workflow_run_trace_records_fleet_match_for_opencli_source(
     assert fleet_match["selected"]["missing"] == []
     assert "site_binding" in fleet_match["selected"]["reasons"]
     assert partial["details"]["fleetMatch"]["selected"] == fleet_match["selected"]
+    assert batch_ready["batch"]["itemCount"] == 1
+    assert batch_ready["details"]["agentDispatch"]["success"] is True
+    assert batch_ready["details"]["agentDispatch"]["itemCount"] == 1
+    assert partial["details"]["itemCount"] == 1
+    assert partial["details"]["agentDispatch"]["agentUrl"] == "http://agent-x:19823"
     assert "iii" not in batch_ready["details"]
+    normalize_partial = next(
+        event
+        for event in events
+        if event["nodeId"] == "multi-source-opencli::internal-normalize"
+        and event["eventType"] == "partial"
+    )
+    assert normalize_partial["details"]["inputItemCount"] == 1
+    assert dispatched[0][0].site == "twitter"
 
 
 @pytest.mark.asyncio

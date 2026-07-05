@@ -66,17 +66,25 @@ from pydantic import BaseModel
 # stdlib-only). agent_server.py runs standalone on edge nodes with a minimal
 # dependency set (see module docstring); this avoids depending on the package
 # __init__ staying lightweight as more adapters are added later.
-from backend.agent_runtimes.registry import available_runtimes, get_runtime
 from backend.agent_runtimes.base import AgentTask, RuntimeInvocationError
+from backend.agent_runtimes.registry import available_runtimes, get_runtime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger("agent_server")
 
-_OPENCLI_BIN = os.environ.get("OPENCLI_BIN", "opencli")
+_OPENCLI_BIN = os.environ.get("OPENCLI_BIN") or "opencli"
 
 
 def _resolve_bin(mode: str) -> str:  # noqa: ARG001
-    return _OPENCLI_BIN
+    configured = _OPENCLI_BIN or "opencli"
+    if os.path.isabs(configured) or os.path.dirname(configured):
+        return configured
+    if os.name == "nt" and not os.path.splitext(configured)[1]:
+        for suffix in (".cmd", ".bat", ".exe", ".ps1"):
+            resolved = shutil.which(f"{configured}{suffix}")
+            if resolved:
+                return resolved
+    return shutil.which(configured) or configured
 _DEFAULT_CDP = os.environ.get("OPENCLI_CDP_ENDPOINT", "http://localhost:19222")
 _DAEMON_PORT = int(os.environ.get("OPENCLI_DAEMON_PORT", "19825"))
 _AGENT_PORT = int(os.environ.get("AGENT_PORT", "19823"))
@@ -486,7 +494,7 @@ def _parse_output(raw: str, fmt: str) -> list[dict]:
 
 @app.get("/health")
 def health() -> dict:
-    bin_path = _OPENCLI_BIN
+    bin_path = _resolve_bin(_AGENT_MODE)
     return {
         "status": "ok",
         "opencli_bin": bin_path,
