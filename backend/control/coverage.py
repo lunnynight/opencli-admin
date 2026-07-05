@@ -50,7 +50,7 @@ signal" measurements, and doubles as the discriminator for cursor/error_kinds
 coverage without adding a new field to the contract.
 """
 
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 from backend.control.measurements import SourceMeasurement
 

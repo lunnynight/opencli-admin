@@ -36,7 +36,7 @@ beyond what the caller already baked into ``measurement``/``trend``.
 
 from __future__ import annotations
 
-from typing import Optional, TypedDict
+from typing_extensions import TypedDict
 
 from backend.control.coverage import compute_sensor_coverage, derive_confidence
 from backend.control.measurements import SourceMeasurement
@@ -95,8 +95,8 @@ def evaluate(
     measurement: SourceMeasurement,
     objective: SourceObjective,
     *,
-    trend: Optional[Trend] = None,
-    system_context: Optional[SystemContext] = None,
+    trend: Trend | None = None,
+    system_context: SystemContext | None = None,
 ) -> SourceControlState:
     """Derive a :class:`SourceControlState` from multi-signal evidence.
 
