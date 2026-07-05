@@ -147,6 +147,7 @@ class NodeRegisterRequest(BaseModel):
     node_type: str = "docker"
     label: str = ""
     agent_protocol: str = "http"
+    runtimes: list[str] | None = None
 
 
 @router.post("/register", response_model=ApiResponse[EdgeNodeRead])
@@ -174,7 +175,14 @@ async def register_node(
 
     ip = _extract_ip(request)
     node = await _upsert_node(
-        db, url, body.label, body.agent_protocol, body.mode, ip, body.node_type
+        db,
+        url,
+        body.label,
+        body.agent_protocol,
+        body.mode,
+        ip,
+        body.node_type,
+        runtimes=body.runtimes,
     )
     await _write_event(
         db,
@@ -185,6 +193,7 @@ async def register_node(
             "mode": body.mode,
             "node_type": body.node_type,
             "protocol": body.agent_protocol,
+            "runtimes": body.runtimes,
         },
     )
 

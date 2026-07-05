@@ -87,6 +87,7 @@ class _FakeAsyncClient:
 async def test_register_with_center_attaches_authorization_header(monkeypatch):
     monkeypatch.setattr(agent_server, "_AGENT_API_TOKEN", "secret-token")
     monkeypatch.setattr(agent_server, "_CENTRAL_API_URL", "http://center.example")
+    monkeypatch.setattr(agent_server, "available_runtimes", lambda: ["opentabs"])
 
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
@@ -96,6 +97,7 @@ async def test_register_with_center_attaches_authorization_header(monkeypatch):
     assert _FakeAsyncClient.last_post_kwargs.get("headers") == {
         "Authorization": "Bearer secret-token"
     }
+    assert _FakeAsyncClient.last_post_kwargs["json"]["runtimes"] == ["opentabs"]
     assert _FakeAsyncClient.last_post_args == ("http://center.example/api/v1/nodes/register",)
 
 
@@ -103,6 +105,7 @@ async def test_register_with_center_attaches_authorization_header(monkeypatch):
 async def test_register_with_center_sends_empty_headers_without_token(monkeypatch):
     monkeypatch.setattr(agent_server, "_AGENT_API_TOKEN", "")
     monkeypatch.setattr(agent_server, "_CENTRAL_API_URL", "http://center.example")
+    monkeypatch.setattr(agent_server, "available_runtimes", lambda: [])
 
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)

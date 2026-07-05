@@ -154,8 +154,14 @@ async def _register_with_center(advertise_url: str) -> None:
     import httpx
 
     url = f"{_CENTRAL_API_URL}/api/v1/nodes/register"
-    payload = {"agent_url": advertise_url, "mode": _AGENT_MODE, "node_type": _AGENT_DEPLOY_TYPE,
-               "label": _AGENT_LABEL, "agent_protocol": "http"}
+    payload = {
+        "agent_url": advertise_url,
+        "mode": _AGENT_MODE,
+        "node_type": _AGENT_DEPLOY_TYPE,
+        "label": _AGENT_LABEL,
+        "agent_protocol": "http",
+        "runtimes": available_runtimes(),
+    }
     proxies = _build_proxies()
 
     for attempt in range(1, 6):
