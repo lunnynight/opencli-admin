@@ -27,9 +27,11 @@ Wire protocol — every reverse-channel message type, one-line field shapes:
                                 "runtime": str, "workflow": str, "input": dict,
                                 "config": dict, "session_id": str|None}
   agent_event   agent→center  {"type": "agent_event", "request_id": uuid,
-                                "event": dict}  # one RuntimeEvent (base.py EVENT_TYPES); 0..N per task
+                                "event": dict}
+                                # one RuntimeEvent; 0..N per task
   agent_result  agent→center  {"type": "agent_result", "request_id": uuid,
-                                "result": dict}  # the terminal done/error RuntimeEvent; exactly 1 per task
+                                "result": dict}
+                                # terminal done/error RuntimeEvent; exactly 1
 
 Protocol (collect/result path):
   1. Agent connects to  ws(s)://{center}/api/v1/browsers/agents/ws
@@ -51,7 +53,7 @@ import asyncio
 import inspect
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import WebSocket
@@ -157,7 +159,7 @@ async def dispatch_collect(
         logger.debug("WS dispatch | agent=%s request_id=%s site=%s cmd=%s",
                      agent_url, request_id, site, command)
         return await asyncio.wait_for(fut, timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise TimeoutError(f"WS agent {agent_url!r} did not respond in {timeout}s")
     finally:
         _pending.pop(request_id, None)
@@ -212,14 +214,17 @@ async def send_agent_task(
         logger.debug("WS agent_task dispatch | agent=%s request_id=%s runtime=%s",
                      agent_url, request_id, task.get("runtime"))
         return await asyncio.wait_for(fut, timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise TimeoutError(f"WS agent {agent_url!r} did not complete agent_task in {timeout}s")
     finally:
         _pending_agent_tasks.pop(request_id, None)
         _agent_task_callbacks.pop(request_id, None)
 
 
-async def _invoke_on_event(on_event: Callable[[dict[str, Any]], Any], event: dict[str, Any]) -> None:
+async def _invoke_on_event(
+    on_event: Callable[[dict[str, Any]], Any],
+    event: dict[str, Any],
+) -> None:
     """Call *on_event*, awaiting it if it returned an awaitable (async callable)."""
     result = on_event(event)
     if inspect.isawaitable(result):
@@ -244,6 +249,9 @@ def resolve_agent_result(request_id: str, msg: dict[str, Any]) -> None:
     """Called from the WS receive loop when an agent sends the terminal 'agent_result' frame."""
     fut = _pending_agent_tasks.get(request_id)
     if fut is None or fut.done():
-        logger.warning("WS: unexpected agent_result for request_id=%s (no waiting future)", request_id)
+        logger.warning(
+            "WS: unexpected agent_result for request_id=%s (no waiting future)",
+            request_id,
+        )
         return
     fut.set_result(msg.get("result", {}))

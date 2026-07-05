@@ -150,6 +150,82 @@ async def test_each_preset_declares_id_label_description_and_params(client):
             assert preset["params"].get("channel_type") == preset["channel_type"]
 
 
+@pytest.mark.asyncio
+async def test_opinion_monitor_preset_preview_is_read_only(client):
+    response = await client.get("/api/v1/presets/opinion-monitor")
+    assert response.status_code == 200
+    data = response.json()["data"]
+
+    assert data["id"] == "opinion-monitor.visual-feed.v1"
+    assert data["source_count"] == 2
+    assert data["sources"][0]["channel_type"] == "opencli"
+    assert data["sources"][0]["ai_config"]["prompt_template"]
+    assert data["notification"]["notifier_type"] == "feishu"
+    assert data["notification"]["requires_config"] is True
+
+    sources = await client.get("/api/v1/sources")
+    assert sources.json()["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_apply_opinion_monitor_preset_creates_sources_schedules_and_feishu_rule(
+    client,
+):
+    response = await client.post(
+        "/api/v1/presets/opinion-monitor/apply",
+        json={
+            "source_prefix": "实战舆情",
+            "account_slots": [
+                {
+                    "label": "account-a",
+                    "site": "aibase",
+                    "command": "news",
+                    "limit": 1,
+                    "cron_expression": "*/15 * * * *",
+                    "timezone": "Asia/Shanghai",
+                },
+                {
+                    "label": "account-b",
+                    "site": "aibase",
+                    "command": "news",
+                    "limit": 2,
+                    "cron_expression": "*/30 * * * *",
+                    "timezone": "Asia/Shanghai",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()["data"]
+    assert len(data["sources"]) == 2
+    assert len(data["schedules"]) == 2
+    assert data["notification_rule"]["enabled"] is False
+    assert data["notification_rule"]["requires_config"] is True
+    assert data["warnings"][0]["warning"] == "feishu_webhook_url_missing"
+
+    sources = (await client.get("/api/v1/sources?limit=10")).json()["data"]
+    assert {source["name"] for source in sources} == {
+        "实战舆情 · account-a",
+        "实战舆情 · account-b",
+    }
+    assert all(source["channel_config"]["resource_policy"] for source in sources)
+    assert all(source["ai_config"]["processor_type"] == "openai" for source in sources)
+
+    schedules = (await client.get("/api/v1/schedules?limit=10")).json()["data"]
+    assert len(schedules) == 2
+    assert {schedule["cron_expression"] for schedule in schedules} == {
+        "*/15 * * * *",
+        "*/30 * * * *",
+    }
+
+    rules = (await client.get("/api/v1/notifications/rules")).json()["data"]
+    assert len(rules) == 1
+    assert rules[0]["notifier_type"] == "feishu"
+    assert rules[0]["enabled"] is False
+    assert "{{summary}}" in rules[0]["notifier_config"]["content"]
+
+
 # ── unit coverage of the presets module directly ────────────────────────────
 
 

@@ -1,7 +1,7 @@
 """Shared pipeline runner — used by both local executor and Celery tasks."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 # Unfilled {{placeholders}} render to empty strings (see OpenAIProcessor._render).
 DEFAULT_ENRICH_PROMPT = (
     "分析下面这条采集记录, 只返回一个 JSON 对象, 字段: "
-    '{"summary": "一句话摘要", "tags": ["关键词"], "category": "分类"}。\n'
+    '{"summary": "一句话摘要", "tags": ["关键词"], '
+    '"sentiment": "positive|neutral|negative", "category": "分类"}。\n'
     "标题: {{title}}\n内容: {{content}}{{text}}{{description}}\n链接: {{url}}"
 )
 
@@ -51,7 +52,7 @@ async def run_collection_pipeline(
             status="running",
             celery_task_id=celery_task_id,
             worker_id=worker_id,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
         session.add(run)
         task.status = "running"
@@ -132,7 +133,8 @@ async def run_collection_pipeline(
                 if provider.base_url:
                     cfg["base_url"] = provider.base_url
                 agent_config = {
-                    "processor_type": "openai",  # OpenAI-compatible: covers Ollama/local/openai gateways
+                    # OpenAI-compatible: covers Ollama/local/openai gateways.
+                    "processor_type": "openai",
                     "model": provider.default_model,
                     "prompt_template": DEFAULT_ENRICH_PROMPT,
                     **cfg,
@@ -177,7 +179,7 @@ async def run_collection_pipeline(
                 if err_run:
                     err_run.status = "failed"
                     err_run.error_message = str(exc)
-                    err_run.finished_at = datetime.now(timezone.utc)
+                    err_run.finished_at = datetime.now(UTC)
                 await session.commit()
             raise
 
@@ -187,7 +189,7 @@ async def run_collection_pipeline(
         run = await session.get(TaskRun, run_id)
 
         if run:
-            run.finished_at = datetime.now(timezone.utc)
+            run.finished_at = datetime.now(UTC)
             run.duration_ms = pipeline_result.duration_ms
             run.records_collected = pipeline_result.stored
             if pipeline_result.metadata.get("node_url"):
@@ -312,7 +314,7 @@ async def run_scheduled_pipeline(
             agent_id=schedule_agent_id,
         )
         if schedule:
-            schedule.last_run_at = datetime.now(timezone.utc)
+            schedule.last_run_at = datetime.now(UTC)
             is_one_time = schedule.is_one_time
         await session.commit()
         task_id = task.id

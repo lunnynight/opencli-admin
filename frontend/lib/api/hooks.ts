@@ -19,6 +19,14 @@ export function useDashboardActivity(days = 14) {
   })
 }
 
+export function useOpinionMonitor() {
+  return useQuery({
+    queryKey: ['dashboard', 'opinion-monitor'],
+    queryFn: () => api.getOpinionMonitor({ range: '7d', limit: 8 }),
+    refetchInterval: 30_000,
+  })
+}
+
 export function useSources(params?: { page?: number; limit?: number; enabled?: boolean }) {
   return useQuery({
     queryKey: ['sources', params],

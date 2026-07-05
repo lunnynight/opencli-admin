@@ -20,6 +20,7 @@ import type {
   NotificationLog,
   NotificationRule,
   OdpSystemState,
+  OpinionMonitor,
   PlanGraph,
   PlanHealthRead,
   PlanRead,
@@ -40,6 +41,13 @@ export const getDashboardStats = (params?: { range?: string; start?: string; end
 
 export const getDashboardActivity = (params?: { days?: number; tz_offset?: number }) =>
   apiClient.get<ApiResponse<DashboardActivity>>('/dashboard/activity', { params }).then((r) => r.data.data)
+
+export const getOpinionMonitor = (params?: {
+  range?: string
+  start?: string
+  end?: string
+  limit?: number
+}) => apiClient.get<ApiResponse<OpinionMonitor>>('/dashboard/opinion-monitor', { params }).then((r) => r.data.data)
 
 // ── Sources ────────────────────────────────────────────────────────────────────
 export const listSources = (params?: { page?: number; limit?: number; enabled?: boolean }) =>

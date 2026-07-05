@@ -283,6 +283,44 @@ export interface DashboardActivity {
   daily: DailyActivity[]
 }
 
+export interface OpinionMonitorRecord {
+  id: string
+  source_id: string
+  source_name: string
+  title: string
+  url?: string | null
+  summary: string
+  tags: string[]
+  sentiment: string
+  status: string
+  notification_status: 'sent' | 'failed' | 'pending'
+  created_at: string
+}
+
+export interface OpinionMonitor {
+  window: { range: string; since?: string | null; until?: string | null }
+  summary: {
+    records: number
+    ai_processed: number
+    feishu_sent: number
+    feishu_failed: number
+    active_sources: number
+    active_feishu_rules: number
+  }
+  tags: Array<{ label: string; count: number }>
+  sentiment: Array<{ label: string; count: number }>
+  sources: Array<{
+    id: string
+    name: string
+    channel_type: string
+    records: number
+    ai_processed: number
+    feishu_sent: number
+    feishu_failed: number
+  }>
+  recent: OpinionMonitorRecord[]
+}
+
 // ── Control-state (C0 Control Room v0 — docs/CONTROL_THEORY_ARCHITECTURE.md §0) ─
 // Read-only sensor-honesty view of a source: GET /sources/{id}/control-state.
 // `measurement`/`control_state`/`confidence`/`sensor_coverage` are all null when

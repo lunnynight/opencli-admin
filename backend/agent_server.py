@@ -91,7 +91,8 @@ _AGENT_PORT = int(os.environ.get("AGENT_PORT", "19823"))
 _CENTRAL_API_URL = os.environ.get("CENTRAL_API_URL", "").rstrip("/")
 _AGENT_ADVERTISE_URL = os.environ.get("AGENT_ADVERTISE_URL", "")
 _AGENT_MODE = os.environ.get("AGENT_MODE", "cdp")
-# Deployment/startup type reported to center: "docker" (running in container) | "shell" (native process)
+# Deployment/startup type reported to center:
+# "docker" (container) | "shell" (native process).
 _AGENT_DEPLOY_TYPE = os.environ.get("AGENT_DEPLOY_TYPE", "docker")
 # True when the image was built with INSTALL_CHROME=true (Chrome bundled inside container).
 # False → Chrome runs on the host; localhost must be remapped to host.docker.internal.
@@ -99,7 +100,8 @@ _AGENT_HAS_CHROME = os.environ.get("AGENT_HAS_CHROME", "false").lower() == "true
 _AGENT_LABEL = os.environ.get("AGENT_LABEL", socket.gethostname())
 # Registration mode:
 #   http — LAN mode: agent POSTs its URL to center, center calls back via HTTP (default)
-#   ws   — NAT/reverse-channel mode: agent opens WS to center, registration via WS handshake (Phase 2)
+#   ws   — NAT/reverse-channel mode: agent opens WS to center, then
+#          registers through the WS handshake.
 #   off  — disable auto-registration entirely
 _AGENT_REGISTER = os.environ.get("AGENT_REGISTER", "http").lower()
 # opencli subprocess execution timeout in seconds
@@ -191,7 +193,12 @@ async def _register_with_center(advertise_url: str) -> None:
             return
         except Exception as exc:
             wait = attempt * 3
-            logger.warning("Registration attempt %d failed: %s — retrying in %ds", attempt, exc, wait)
+            logger.warning(
+                "Registration attempt %d failed: %s — retrying in %ds",
+                attempt,
+                exc,
+                wait,
+            )
             await asyncio.sleep(wait)
     logger.error("Could not register with center after 5 attempts")
 
@@ -281,7 +288,11 @@ async def _handle_ws_agent_task(ws, msg: dict) -> None:
                     "event": event,
                 }))
             except Exception as exc:
-                logger.error("WS: failed to send agent_event for request_id=%s: %s", request_id, exc)
+                logger.error(
+                    "WS: failed to send agent_event for request_id=%s: %s",
+                    request_id,
+                    exc,
+                )
         if terminal_event is None:
             # Contract violation (adapter yielded nothing) — still must resolve
             # the center's pending future rather than hang it until timeout.
@@ -293,7 +304,11 @@ async def _handle_ws_agent_task(ws, msg: dict) -> None:
             }
         await _send_result(terminal_event)
     except RuntimeInvocationError as exc:
-        logger.exception("WS agent_task request_id=%s: adapter invocation error: %s", request_id, exc)
+        logger.exception(
+            "WS agent_task request_id=%s: adapter invocation error: %s",
+            request_id,
+            exc,
+        )
         await _send_result({
             "type": "error",
             "task_id": request_id,
@@ -409,11 +424,19 @@ async def lifespan(app: FastAPI):
                     _CENTRAL_API_URL or "", _AGENT_REGISTER)
     elif _AGENT_REGISTER == "http":
         advertise_url = _detect_advertise_url()
-        logger.info("LAN registration: advertise_url=%s → center=%s", advertise_url, _CENTRAL_API_URL)
+        logger.info(
+            "LAN registration: advertise_url=%s → center=%s",
+            advertise_url,
+            _CENTRAL_API_URL,
+        )
         asyncio.get_event_loop().create_task(_register_with_center(advertise_url))
     elif _AGENT_REGISTER == "ws":
         advertise_url = _detect_advertise_url()
-        logger.info("WS registration: advertise_url=%s → center=%s", advertise_url, _CENTRAL_API_URL)
+        logger.info(
+            "WS registration: advertise_url=%s → center=%s",
+            advertise_url,
+            _CENTRAL_API_URL,
+        )
         _ws_task = asyncio.get_event_loop().create_task(_register_via_ws(advertise_url))
     yield
     if _ws_task and not _ws_task.done():
@@ -468,7 +491,11 @@ async def _cleanup_cdp_tabs(cdp_endpoint: str, pre_existing_ids: set[str]) -> No
                 if tab.get("type") == "page" and tab_id not in pre_existing_ids:
                     try:
                         await client.get(f"{cdp_endpoint}/json/close/{tab_id}")
-                        logger.info("cleanup: closed new tab %s url=%s", tab_id, tab.get("url", "")[:80])
+                        logger.info(
+                            "cleanup: closed new tab %s url=%s",
+                            tab_id,
+                            tab.get("url", "")[:80],
+                        )
                         remaining_pages -= 1
                     except Exception:
                         pass
@@ -560,7 +587,7 @@ async def collect(req: CollectRequest) -> dict:
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_OPENCLI_TIMEOUT)
         rc = proc.returncode
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("timeout | cmd=%s", " ".join(cmd))
         if proc:
             proc.kill()

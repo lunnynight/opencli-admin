@@ -1,9 +1,9 @@
 'use client'
 
-import { Activity, ArrowDownToLine, CheckCircle2, Send, Server } from 'lucide-react'
+import { Activity, ArrowDownToLine, BellRing, BrainCircuit, CheckCircle2, Send, Server, Tags } from 'lucide-react'
 
-import { useDashboardActivity, useDashboardStats, useWorkers } from '@/lib/api/hooks'
-import type { WorkerNode } from '@/lib/api/types'
+import { useDashboardActivity, useDashboardStats, useOpinionMonitor, useWorkers } from '@/lib/api/hooks'
+import type { OpinionMonitor, WorkerNode } from '@/lib/api/types'
 import {
   useMonitorFeed,
   type FailureItem,
@@ -11,7 +11,7 @@ import {
   type ThroughputPoint,
   type WorkerView,
 } from '@/lib/demo/monitor'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatRelative } from '@/lib/format'
 import { FailureFeed, TaskStream } from '@/components/monitor/task-stream'
 import { ThroughputChart } from '@/components/monitor/throughput-chart'
 import { WorkerAllocation } from '@/components/monitor/worker-allocation'
@@ -40,6 +40,117 @@ function KpiCard({
       <CardContent>
         <div className="font-mono text-2xl tabular-nums">{value}</div>
         {sub ? <p className="mt-1 text-xs text-muted-foreground">{sub}</p> : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function OpinionMonitorPanel({
+  data,
+  isLoading,
+  isError,
+}: {
+  data?: OpinionMonitor
+  isLoading: boolean
+  isError: boolean
+}) {
+  const topTags = data?.tags.slice(0, 6) ?? []
+  const topSentiment = data?.sentiment.slice(0, 4) ?? []
+  const recent = data?.recent ?? []
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <BrainCircuit className="size-4 text-primary" aria-hidden />
+            舆情监控
+          </CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">采集、AI 打标、飞书推送的最近 7 天实况</p>
+        </div>
+        {isError ? (
+          <Badge variant="outline">未连接</Badge>
+        ) : isLoading ? (
+          <Badge variant="outline">同步中</Badge>
+        ) : (
+          <Badge variant="outline" className="gap-1.5">
+            <span className="size-1.5 rounded-full bg-success" aria-hidden />
+            真实数据
+          </Badge>
+        )}
+      </CardHeader>
+      <CardContent className="grid gap-4 lg:grid-cols-[280px_1fr]">
+        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <ArrowDownToLine className="size-3.5" aria-hidden />
+              记录 / AI
+            </div>
+            <div className="mt-2 font-mono text-xl">
+              {formatNumber(data?.summary.records ?? 0)} / {formatNumber(data?.summary.ai_processed ?? 0)}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <BellRing className="size-3.5" aria-hidden />
+              飞书发送
+            </div>
+            <div className="mt-2 font-mono text-xl">
+              {formatNumber(data?.summary.feishu_sent ?? 0)}
+              <span className="ml-2 text-xs text-muted-foreground">失败 {data?.summary.feishu_failed ?? 0}</span>
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Tags className="size-3.5" aria-hidden />
+              标签 / 情绪
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {[...topTags, ...topSentiment].slice(0, 7).map((item) => (
+                <Badge key={`${item.label}-${item.count}`} variant="secondary">
+                  {item.label} · {item.count}
+                </Badge>
+              ))}
+              {!topTags.length && !topSentiment.length ? <span className="text-sm text-muted-foreground">暂无</span> : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-md border">
+          {recent.length === 0 ? (
+            <div className="p-6 text-sm text-muted-foreground">暂无已采集舆情记录</div>
+          ) : (
+            <div className="divide-y">
+              {recent.map((item) => (
+                <div key={item.id} className="grid gap-2 p-3 md:grid-cols-[1fr_auto]">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-medium">{item.title}</span>
+                      <Badge variant={item.notification_status === 'sent' ? 'secondary' : 'outline'}>
+                        飞书 {item.notification_status === 'sent' ? '已发' : item.notification_status === 'failed' ? '失败' : '待发'}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                      {item.summary || item.source_name}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {item.tags.slice(0, 4).map((tag) => (
+                        <Badge key={tag} variant="outline">
+                          {tag}
+                        </Badge>
+                      ))}
+                      <Badge variant="outline">{item.sentiment}</Badge>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground md:text-right">
+                    <div>{item.source_name}</div>
+                    <div className="mt-1">{formatRelative(item.created_at)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   )
@@ -82,6 +193,7 @@ function runsToStream(
 export default function DashboardPage() {
   const stats = useDashboardStats()
   const activity = useDashboardActivity()
+  const opinion = useOpinionMonitor()
   const workersQuery = useWorkers()
 
   const demoMode = stats.isError
@@ -220,6 +332,8 @@ export default function DashboardPage() {
           <KpiCard key={k.title} {...k} />
         ))}
       </div>
+
+      <OpinionMonitorPanel data={opinion.data} isLoading={opinion.isLoading} isError={opinion.isError} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">

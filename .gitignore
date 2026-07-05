@@ -81,3 +81,7 @@ odp-rs/target/
 .gstack/
 .repowise/
 .understand-anything/
+.codex/
+.sentrux/agent-sessions/
+.sentrux/baseline.json
+artifacts/

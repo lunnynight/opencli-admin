@@ -101,6 +101,52 @@ docker compose up -d   # 启动中心 + agent-1
 
 ---
 
+### 舆情监控实战闭环
+
+当前实战链路已经投到真实运行面，而不是只停留在配置说明：
+
+1. **多账号 / 多节点采集** — 通过「节点管理」和站点绑定，把 `opencli` 采集路由到指定 WS agent；验收脚本会证明 `chrome_endpoint` 和 `node_url` 都落在绑定节点。
+2. **AI 摘要与打标** — `collect → normalize → store → ai → notify` 流水线会把模型输出写入 `ai_enrichment`，监控台读取真实记录展示摘要、标签和情绪分布。
+3. **飞书推送** — 飞书模板可以直接引用 `{{summary}}`、`{{tags}}`、`{{sentiment}}`，把 AI 处理后的内容推到群机器人。
+4. **可视化验收** — 「监控台」的舆情监控卡片读取 `/api/v1/dashboard/opinion-monitor`，展示最近热点、AI 处理量、Feishu sent/failed 证据和来源贡献。
+
+一键生成实战配置：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/presets/opinion-monitor/apply \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_prefix": "实战舆情",
+    "feishu_webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+  }'
+```
+
+这会创建两条默认 `aibase news` 多账号采集源、对应定时计划，以及一个飞书规则。
+如果暂时不填 `feishu_webhook_url`，飞书规则会以 disabled 状态创建，不会伪造推送成功。
+
+关键验收命令：
+
+```powershell
+scripts\acceptance\fleet-acceptance.ps1 `
+  -Site aibase `
+  -Command news `
+  -Limit 1 `
+  -CenterPort 8032 `
+  -AgentPort 19824 `
+  -FreshDb
+```
+
+如果本机已有旧 API/agent 进程占用端口，可以换一组固定端口，例如
+`-CenterPort 8035 -AgentPort 19828`。
+
+最终应输出：
+
+```text
+ACCEPTANCE: PASS
+```
+
+---
+
 ## 快速开始
 
 ### 方式零：前后端本地开发（推荐）

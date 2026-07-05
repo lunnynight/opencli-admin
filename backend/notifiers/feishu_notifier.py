@@ -18,6 +18,25 @@ def _render(template: str, data: dict[str, Any]) -> str:
     return _PLACEHOLDER_RE.sub(lambda m: str(data.get(m.group(1), "")), template)
 
 
+def _stringify_template_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "、".join(str(item) for item in value)
+    if isinstance(value, dict):
+        return "、".join(f"{key}: {val}" for key, val in value.items())
+    return str(value)
+
+
+def _template_data(payload: NotificationPayload) -> dict[str, Any]:
+    data = {"source_id": payload.source_id, **(payload.data or {})}
+    for key, value in (payload.ai_enrichment or {}).items():
+        rendered = _stringify_template_value(value)
+        data[key] = rendered
+        data[f"ai_{key}"] = rendered
+    return data
+
+
 def _feishu_sign(secret: str, timestamp: int) -> str:
     """Generate Feishu webhook signature (加签)."""
     string_to_sign = f"{timestamp}\n{secret}"
@@ -38,7 +57,12 @@ class FeishuNotifier(AbstractNotifier):
         secret: str = config.get("secret", "")
         title_template: str = config.get("title", "【新采集】{{title}}")
         content_template: str = config.get(
-            "content", "**来源**：{{source_id}}\n**标题**：{{title}}\n**链接**：{{url}}"
+            "content",
+            "**来源**：{{source_id}}\n"
+            "**标题**：{{title}}\n"
+            "**摘要**：{{summary}}\n"
+            "**标签**：{{tags}}\n"
+            "**链接**：{{url}}",
         )
         timeout: int = config.get("timeout", 15)
 
@@ -51,7 +75,7 @@ class FeishuNotifier(AbstractNotifier):
         except SSRFValidationError:
             return False
 
-        data = {"source_id": payload.source_id, **(payload.data or {})}
+        data = _template_data(payload)
         title = _render(title_template, data)
         content = _render(content_template, data)
 
@@ -77,4 +101,4 @@ class FeishuNotifier(AbstractNotifier):
         async with client as opened_client:
             resp = await opened_client.post(webhook_url, json=body)
             result = resp.json()
-            return result.get("code", -1) == 0
+            return result.get("code", result.get("StatusCode", -1)) == 0
