@@ -806,6 +806,45 @@ def _resource_capabilities() -> list[WorkflowRuntimeCapability]:
         _resource("resource.browser-worker-pool", "Browser worker pool"),
         _resource("resource.turbopush-local-service", "TurboPush local service"),
         _capability(
+            id="resource.workflow-fleet-runtime",
+            label="Workflow Fleet Runtime Projection",
+            surface="resource",
+            status="runnable",
+            backend_available=True,
+            provider="opencli-admin",
+            runtime_binding="workflow.fleet.inventory",
+            reason=(
+                "Existing browser pool, HTTP/WS agents, EdgeNode state, and "
+                "site bindings are projected into a workflow-runtime fleet view."
+            ),
+            missing=[],
+            tags=["resource", "fleet", "agent", "browser-pool"],
+            source="backend.workflow.fleet_inventory",
+            manifest={
+                "schema": "resource.workflow-fleet-runtime.v1",
+                "canvas": {"node": False},
+                "endpoints": {
+                    "inventory": "/api/v1/workflows/fleet/inventory",
+                    "match": "/api/v1/workflows/fleet/match",
+                },
+                "inputs": [
+                    "browser_pool",
+                    "browser_instances",
+                    "edge_nodes",
+                    "browser_bindings",
+                    "ws_agent_connections",
+                    "opencli_adapter_nodes",
+                ],
+                "trace": {
+                    "events": [
+                        "fleet_agent_selected",
+                        "fleet_dispatch_started",
+                        "fleet_dispatch_completed",
+                    ]
+                },
+            },
+        ),
+        _capability(
             id="resource.opencli-adapter-nodes",
             label="OpenCLI Adapter Node Registry",
             surface="resource",

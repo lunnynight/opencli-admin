@@ -291,6 +291,15 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client, monke
     assert triggers["trigger.webhook"]["status"] == "blocked"
 
     resources = {item["id"]: item for item in data["resources"]}
+    fleet_resource = resources["resource.workflow-fleet-runtime"]
+    assert fleet_resource["status"] == "runnable"
+    assert fleet_resource["backendAvailable"] is True
+    assert fleet_resource["runtimeBinding"] == "workflow.fleet.inventory"
+    assert fleet_resource["manifest"]["canvas"]["node"] is False
+    assert fleet_resource["manifest"]["endpoints"] == {
+        "inventory": "/api/v1/workflows/fleet/inventory",
+        "match": "/api/v1/workflows/fleet/match",
+    }
     adapter_registry = resources["resource.opencli-adapter-nodes"]
     assert adapter_registry["status"] == "runnable"
     assert adapter_registry["backendAvailable"] is True

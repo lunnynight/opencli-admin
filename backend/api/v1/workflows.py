@@ -10,6 +10,10 @@ from backend.workflow.capability_projection import build_workflow_capabilities
 from backend.workflow.compiler import compile_workflow_project
 from backend.workflow.demand_assembler import draft_workflow_demand
 from backend.workflow.external_importer import import_external_workflow
+from backend.workflow.fleet_inventory import (
+    build_workflow_fleet_inventory,
+    match_workflow_fleet_capability,
+)
 from backend.workflow.opencli_adapter_nodes import list_opencli_adapter_nodes
 from backend.workflow.opencli_hda_tracer import (
     build_opencli_hda_trace,
@@ -60,6 +64,31 @@ async def get_workflow_tool_capabilities() -> ApiResponse[
     """Return registered OpenCLI Admin Tool Capabilities."""
 
     return ApiResponse.ok(list_workflow_tool_capabilities())
+
+
+@router.get(
+    "/fleet/inventory",
+    response_model=ApiResponse[workflow_schemas.WorkflowFleetInventoryResponse],
+)
+async def get_workflow_fleet_inventory(
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[workflow_schemas.WorkflowFleetInventoryResponse]:
+    """Project existing browser pool, agents, WS links, and site bindings."""
+
+    return ApiResponse.ok(await build_workflow_fleet_inventory(db))
+
+
+@router.post(
+    "/fleet/match",
+    response_model=ApiResponse[workflow_schemas.WorkflowFleetCapabilityMatchResponse],
+)
+async def match_workflow_fleet_target(
+    body: workflow_schemas.WorkflowFleetCapabilityMatchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[workflow_schemas.WorkflowFleetCapabilityMatchResponse]:
+    """Match an OpenCLI adapter capability to an existing fleet endpoint."""
+
+    return ApiResponse.ok(await match_workflow_fleet_capability(db, body))
 
 
 @router.get(

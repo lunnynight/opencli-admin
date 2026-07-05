@@ -418,6 +418,68 @@ class WorkflowOpenCLIAdapterNodesResponse(BaseModel):
     nodes: list[WorkflowOpenCLIAdapterNode] = Field(default_factory=list)
 
 
+class WorkflowFleetSiteBinding(BaseModel):
+    site: str = Field(..., min_length=1)
+    browserEndpoint: str = Field(..., min_length=1)
+    notes: Optional[str] = None
+
+
+class WorkflowFleetAgent(BaseModel):
+    endpoint: str = Field(..., min_length=1)
+    label: str = ""
+    mode: str = "bridge"
+    nodeType: str = "docker"
+    agentUrl: Optional[str] = None
+    agentProtocol: Optional[str] = None
+    status: str = "unknown"
+    connected: bool = False
+    available: bool = False
+    sites: list[str] = Field(default_factory=list)
+    runtimes: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    source: str = "runtime"
+
+
+class WorkflowFleetInventoryResponse(BaseModel):
+    version: str = WORKFLOW_COMPILE_VERSION
+    summary: dict[str, Any] = Field(default_factory=dict)
+    agents: list[WorkflowFleetAgent] = Field(default_factory=list)
+    siteBindings: list[WorkflowFleetSiteBinding] = Field(default_factory=list)
+
+
+class WorkflowFleetCapabilityMatchRequest(BaseModel):
+    adapterNodeId: Optional[str] = None
+    site: Optional[str] = None
+    command: Optional[str] = None
+
+
+class WorkflowFleetCapabilityCandidate(BaseModel):
+    endpoint: str = Field(..., min_length=1)
+    label: str = ""
+    mode: str = "bridge"
+    agentUrl: Optional[str] = None
+    agentProtocol: Optional[str] = None
+    status: str = "unknown"
+    connected: bool = False
+    available: bool = False
+    score: int = 0
+    reasons: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    sites: list[str] = Field(default_factory=list)
+
+
+class WorkflowFleetCapabilityMatchResponse(BaseModel):
+    matched: bool
+    adapterNodeId: Optional[str] = None
+    site: Optional[str] = None
+    command: Optional[str] = None
+    requiresBrowser: bool = False
+    requiresSiteBinding: bool = False
+    selected: Optional[WorkflowFleetCapabilityCandidate] = None
+    candidates: list[WorkflowFleetCapabilityCandidate] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+
+
 class WorkflowOpenCLIHDATraceRequest(BaseModel):
     project: WorkflowProject
     packageNodeId: Optional[str] = None
