@@ -5,6 +5,8 @@ means the system can be deployed on a NAS or edge host, register an Agent, expos
 its runtime capabilities to Fleet, dispatch a workflow to the matched node, and
 leave a durable run trace.
 
+Product compass: `openspec/changes/internet-situation-awareness-loop`.
+
 ## Scope
 
 PTT-0 is local/static validation. PTT-1 through PTT-5 require a running center
