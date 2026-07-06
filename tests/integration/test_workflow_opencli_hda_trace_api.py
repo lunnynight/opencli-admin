@@ -13,6 +13,7 @@ from backend.models.source import DataSource
 from backend.models.task import CollectionTask
 from backend.models.workflow_run import WorkflowRun, WorkflowRunEvent
 from backend.workflow.opencli_hda_tracer import _RUNS
+from tests.fixtures.workflow_conformance import workflow_conformance_project
 
 
 def _multi_source_opencli_hda_project() -> dict:
@@ -309,6 +310,14 @@ def _native_first_loop_project() -> dict:
             "allowedDomains": ["bilibili.com", "xiaohongshu.com"],
         },
     }
+
+
+def _legacy_canvas_intelligence_project() -> dict:
+    return workflow_conformance_project(
+        can_fetch_network=False,
+        can_send_notifications=False,
+        delivery_configured=False,
+    )
 
 
 async def _seed_collected_record(
@@ -843,6 +852,93 @@ async def test_workflow_run_emits_native_first_loop_trace_events(client, db_sess
     assert {task.trigger_type for task in tasks} == {"workflow"}
     assert {task.status for task in tasks} == {"completed"}
     assert {task.parameters["workflowRunId"] for task in tasks} == {"run-native-first-loop"}
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_resolves_legacy_canvas_runtime_bindings(client, db_session):
+    response = await client.post(
+        "/api/v1/workflows/runs",
+        json={
+            "project": _legacy_canvas_intelligence_project(),
+            "runId": "run-legacy-canvas-bindings",
+            "traceId": "trace-legacy-canvas-bindings",
+            "sourceOutputs": {
+                "source-jin10": [
+                    {
+                        "title": "Important macro flash",
+                        "url": "https://www.jin10.com/flash/important",
+                        "important": True,
+                        "score": 0.91,
+                    },
+                    {
+                        "title": "Low priority flash",
+                        "url": "https://www.jin10.com/flash/low",
+                        "important": False,
+                        "score": 0.2,
+                    },
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    data = response.json()["data"]
+    assert data["valid"] is True
+    assert data["status"] == "blocked"
+    states = {state["nodeId"]: state for state in data["nodeStates"]}
+    assert states["source-jin10"]["status"] == "completed"
+    assert states["agent-normalize"]["status"] == "completed"
+    assert states["router-importance"]["status"] == "completed"
+    assert states["inbox-review"]["status"] == "completed"
+    assert states["notify-preview"]["status"] == "blocked"
+    assert states["notify-preview"]["blockReasons"][0]["code"] == "send_permission_required"
+    assert all(
+        reason["code"] != "missing_runtime_binding"
+        for state in data["nodeStates"]
+        for reason in state["blockReasons"]
+    )
+
+    events = (
+        await client.get("/api/v1/workflows/runs/run-legacy-canvas-bindings/events")
+    ).json()["data"]
+    by_node = {}
+    for event in events:
+        by_node.setdefault(event["nodeId"], []).append(event)
+
+    source_partial = by_node["source-jin10"][2]
+    assert source_partial["details"]["itemCount"] == 2
+    assert source_partial["details"]["outputPort"] == "items[]"
+
+    router_partial = by_node["router-importance"][2]
+    assert router_partial["details"]["bindingId"] == "workflow.router.route"
+    assert router_partial["details"]["inputCandidateCount"] == 2
+    assert router_partial["details"]["routedCandidateCount"] == 1
+
+    inbox_partial = by_node["inbox-review"][2]
+    assert inbox_partial["details"]["bindingId"] == "workflow.inbox.store"
+    assert inbox_partial["details"]["target"] == "macro-watch"
+    assert inbox_partial["details"]["inputRecordCount"] == 1
+    assert inbox_partial["details"]["storedRecordCount"] == 1
+
+    notify_events = by_node["notify-preview"]
+    assert [event["eventType"] for event in notify_events] == [
+        "queued",
+        "started",
+        "blocked",
+    ]
+    assert notify_events[-1]["blockReason"]["details"]["bindingId"] == (
+        "workflow.notify.send"
+    )
+
+    records = (
+        (await db_session.execute(select(CollectedRecord).order_by(CollectedRecord.created_at)))
+        .scalars()
+        .all()
+    )
+    assert len(records) == 1
+    assert records[0].normalized_data["title"] == "Important macro flash"
+    assert records[0].raw_data["_workflowRunId"] == "run-legacy-canvas-bindings"
+    assert records[0].raw_data["_workflowSinkNodeId"] == "inbox-review"
 
 
 @pytest.mark.asyncio

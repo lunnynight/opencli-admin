@@ -19,6 +19,7 @@ from backend.schemas.workflow import (
 )
 from backend.workflow.node_registry import WORKFLOW_PRIMITIVE_IDS
 from backend.workflow.opencli_adapter_nodes import get_opencli_adapter_node_summary
+from backend.workflow.runtime_contracts import runtime_io_contract_manifest
 from backend.workflow.runtime_registry import (
     COLLECTION_OUTPUT_BINDING_ID,
     DEMAND_DRAFT_BINDING_ID,
@@ -69,6 +70,7 @@ def _capability(
     source: str | None = None,
     manifest: dict[str, object] | None = None,
 ) -> WorkflowRuntimeCapability:
+    resolved_manifest = _manifest_with_runtime_contract(manifest or {}, runtime_binding)
     return WorkflowRuntimeCapability(
         id=id,
         label=label,
@@ -85,7 +87,7 @@ def _capability(
         missing=missing or [],
         tags=tags or [],
         source=source,
-        manifest=manifest or {},
+        manifest=resolved_manifest,
     )
 
 
@@ -385,13 +387,12 @@ def _catalog_capabilities() -> list[WorkflowRuntimeCapability]:
             provider="webhook",
             notifier_type="webhook",
             runtime_binding=WEBHOOK_NOTIFY_BINDING_ID,
-            reason="Backend notifier and workflow sink contract exist, but live "
-            "Canvas delivery waits for EvidenceBatch projection, permission, "
-            "and configured webhook URL.",
+            reason="Backend notifier and real workflow delivery path exist; "
+            "each run still requires send permission, an upstream EvidenceBatch "
+            "projection, and a configured webhook URL.",
             missing=[
-                "evidencebatch_projection_api",
-                "delivery_projection",
-                "notification_permission",
+                "evidencebatch_projection_input",
+                "send_permission",
                 "webhook_url_configuration",
             ],
             tags=["catalog", "notify", "webhook"],
@@ -732,11 +733,11 @@ def _notifier_capabilities() -> list[WorkflowRuntimeCapability]:
                     provider="webhook",
                     notifier_type="webhook",
                     runtime_binding=WEBHOOK_NOTIFY_BINDING_ID,
-                    reason="The guarded webhook notifier exists, but workflow "
-                    "delivery still requires projection and URL resources.",
+                    reason="The guarded webhook notifier is wired into workflow "
+                    "delivery; each run still requires projection input and URL "
+                    "configuration.",
                     missing=[
-                        "evidencebatch_projection_api",
-                        "delivery_projection",
+                        "evidencebatch_projection_input",
                         "webhook_url_configuration",
                     ],
                     tags=["notifier", "output", "webhook"],
@@ -922,6 +923,16 @@ def _read_manifest_runtime_binding(manifest: dict[str, object]) -> str | None:
         return None
     binding = runtime.get("binding")
     return binding if isinstance(binding, str) else None
+
+
+def _manifest_with_runtime_contract(
+    manifest: dict[str, object],
+    runtime_binding: str | None,
+) -> dict[str, object]:
+    contract = runtime_io_contract_manifest(runtime_binding)
+    if contract is None:
+        return manifest
+    return {**manifest, "contract": contract}
 
 
 def _label_from_id(value: str) -> str:

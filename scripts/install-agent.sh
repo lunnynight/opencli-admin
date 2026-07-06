@@ -78,7 +78,7 @@ if [[ "$INSTALL_CHROME" == "true" ]]; then
 else
   CHROME_SUFFIX=""
 fi
-AGENT_IMAGE="xjh1994/opencli-admin-agent:${IMAGE_TAG}${CHROME_SUFFIX}"
+AGENT_IMAGE="${DOCKER_IMAGE_NAMESPACE:-2233admin}/opencli-admin-agent:${IMAGE_TAG}${CHROME_SUFFIX}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -3,6 +3,13 @@
 import pytest
 
 
+def _assert_binding_includes(actual: dict, expected: dict) -> None:
+    for key, value in expected.items():
+        assert actual.get(key) == value
+    if "contract" in actual:
+        assert actual["contract"]["bindingId"] == expected["binding_id"]
+
+
 def _valid_workflow_project() -> dict:
     return {
         "id": "wf-opencli-multi-source",
@@ -274,7 +281,7 @@ async def test_compile_resolves_opencli_source_to_iii_runtime_binding(client):
     runtime = response.json()["data"]["plan"]["runtime"]
     source_node = runtime["nodes"][0]
     assert source_node["id"] == "source-bilibili"
-    assert source_node["runtime"]["binding"] == {
+    _assert_binding_includes(source_node["runtime"]["binding"], {
         "status": "bound",
         "binding_id": "iii.collector-opencli.snapshot",
         "runtime": "iii",
@@ -282,7 +289,7 @@ async def test_compile_resolves_opencli_source_to_iii_runtime_binding(client):
         "function_id": "odp.collect::opencli_snapshot",
         "channel": "opencli",
         "input": {"site": "bilibili", "command": "search"},
-    }
+    })
 
 
 @pytest.mark.asyncio
@@ -407,7 +414,7 @@ async def test_compile_resolves_normalize_to_native_transform_binding(client):
     runtime_nodes = response.json()["data"]["plan"]["runtime"]["nodes"]
     normalize_node = runtime_nodes[1]
     assert normalize_node["id"] == "normalize-items"
-    assert normalize_node["runtime"]["binding"] == {
+    _assert_binding_includes(normalize_node["runtime"]["binding"], {
         "status": "bound",
         "binding_id": "workflow.transform.normalize",
         "runtime": "workflow",
@@ -418,7 +425,7 @@ async def test_compile_resolves_normalize_to_native_transform_binding(client):
             "inputPort": "items[]",
             "outputPort": "recordCandidate[]",
         },
-    }
+    })
     assert normalize_node["runtime"]["normalize"] == {
         "node_id": "normalize-items",
         "candidate_port": "recordCandidate[]",
@@ -1026,7 +1033,7 @@ async def test_compile_resolves_schedule_trigger_binding(client):
         if node["id"] == "schedule-cron"
     )
     assert node["runtime"]["origin"]["catalog_id"] == "intelligence.schedule.cron"
-    assert node["runtime"]["binding"] == {
+    _assert_binding_includes(node["runtime"]["binding"], {
         "status": "bound",
         "binding_id": "workflow.trigger.schedule_tick",
         "runtime": "workflow",
@@ -1036,7 +1043,7 @@ async def test_compile_resolves_schedule_trigger_binding(client):
             "timezone": "Asia/Shanghai",
             "enabled": True,
         },
-    }
+    })
     assert node["runtime"]["trigger"] == {
         "node_id": "schedule-cron",
         "mode": "manual_schedule_tick",

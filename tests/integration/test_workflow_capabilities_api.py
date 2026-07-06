@@ -120,6 +120,10 @@ async def test_compile_reports_webhook_notify_contract_without_live_delivery(cli
     assert node["runtime"]["notifier"]["binding_id"] == "workflow.notifier.webhook.send"
     assert node["runtime"]["notifier"]["dispatch"] == "blocked_until_projection"
     assert node["runtime"]["notifier"]["input"]["delivery_configured"] is False
+    notifier_contract = node["runtime"]["notifier"]["contract"]
+    assert notifier_contract["bindingId"] == "workflow.notifier.webhook.send"
+    assert notifier_contract["certification"]["realNodeIoContract"] is True
+    assert notifier_contract["certification"]["realWebhookDelivery"] is True
     assert node["runtime"]["missing_runtime"] == {
         "status": "missing",
         "code": "missing_delivery_projection",
@@ -161,6 +165,16 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client, monke
     data = response.json()["data"]
 
     catalog = {item["id"]: item for item in data["catalog"]}
+    for item in catalog.values():
+        if item["status"] == "runnable" and item.get("runtimeBinding"):
+            contract = item["manifest"]["contract"]
+            assert contract["bindingId"] == item["runtimeBinding"]
+            assert contract["inputShape"]["ports"] is not None
+            assert contract["outputShape"]["ports"] is not None
+            assert contract["eventShape"]["events"]
+            assert contract["fixtureCoverage"]["cases"]
+            assert contract["canvas"]["exposeResourceInternals"] is False
+
     assert catalog["intelligence.input.collection-need"]["status"] == "runnable"
     assert catalog["intelligence.input.collection-need"]["backendAvailable"] is True
     assert catalog["intelligence.input.collection-need"]["runtimeBinding"] == (
@@ -256,7 +270,15 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client, monke
         "workflow.notifier.webhook.send"
     )
     assert "workflow_notifier_sink_binding" not in catalog["intelligence.output.webhook"]["missing"]
-    assert "delivery_projection" in catalog["intelligence.output.webhook"]["missing"]
+    assert "evidencebatch_projection_input" in catalog["intelligence.output.webhook"]["missing"]
+    webhook_contract = catalog["intelligence.output.webhook"]["manifest"]["contract"]
+    assert webhook_contract["status"] == "blocked_until_preconditions"
+    assert webhook_contract["certification"]["realWebhookDelivery"] is True
+    assert webhook_contract["configGate"]["required"] == [
+        "evidencebatch_projection_api",
+        "delivery_projection",
+        "webhook_url",
+    ]
 
     channels = {item["channelType"]: item for item in data["channels"]}
     assert set(channels) == {
@@ -279,7 +301,7 @@ async def test_workflow_capabilities_project_real_backend_surfaces(client, monke
     assert notifiers["webhook"]["status"] == "blocked"
     assert notifiers["webhook"]["backendAvailable"] is True
     assert notifiers["webhook"]["runtimeBinding"] == "workflow.notifier.webhook.send"
-    assert "delivery_projection" in notifiers["webhook"]["missing"]
+    assert "evidencebatch_projection_input" in notifiers["webhook"]["missing"]
 
     primitives = {item["id"]: item for item in data["primitives"]}
     assert primitives["primitive.ops.trigger-webhook"]["status"] == "blocked"

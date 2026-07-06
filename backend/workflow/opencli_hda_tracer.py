@@ -36,7 +36,15 @@ from backend.schemas.workflow import (
     WorkflowRunStartRequest,
     WorkflowRunStatus,
 )
+from backend.workflow.block_reasons import (
+    FETCH_PERMISSION_REQUIRED,
+    MISSING_DELIVERY_PROJECTION,
+    MISSING_SOURCE_CREDENTIAL,
+    SEND_PERMISSION_REQUIRED,
+    SOURCE_OUTPUT_REQUIRED,
+)
 from backend.workflow.compiler import INTERNAL_ID_SEPARATOR, compile_workflow_project
+from backend.workflow.event_mirror import publish_workflow_run_event_mirror
 from backend.workflow.fleet_inventory import match_workflow_fleet_capability
 from backend.workflow.realtime_market_executor import (
     OKX_MARKET_TICKER_SNAPSHOT_EXECUTOR,
@@ -45,18 +53,27 @@ from backend.workflow.realtime_market_executor import (
 )
 from backend.workflow.runtime_registry import (
     EXTERNAL_TOOL_BINDING_ID,
+    INBOX_STORE_BINDING_ID,
     MERGE_BINDING_ID,
     NORMALIZE_BINDING_ID,
+    NOTIFY_SEND_BINDING_ID,
     OPENCLI_FUNCTION_ID,
     OPENCLI_WORKER,
     RECORD_ACCEPTANCE_BINDING_ID,
     RECORD_SINK_BINDING_ID,
+    ROUTER_ROUTE_BINDING_ID,
+    SOURCE_FETCH_BINDING_ID,
+    WEBHOOK_NOTIFY_BINDING_ID,
 )
 from backend.workflow.turbopush_executor import (
     TurboPushPublishError,
     execute_turbopush_publish,
 )
 from backend.workflow.turbopush_runtime import TURBOPUSH_BINDING_ID
+from backend.workflow.webhook_delivery import (
+    WorkflowWebhookDeliveryError,
+    execute_workflow_webhook_delivery,
+)
 
 
 @dataclass
@@ -323,6 +340,19 @@ async def start_workflow_run(
             emitter.emit(node, "completed", message="Bound source records completed")
             continue
 
+        if _is_workflow_source_fetch_node(node):
+            reason = _source_fetch_block_reason(node, body.project.agentPermissions)
+            emitter.emit(node, "started", message="Workflow source fetch binding started")
+            emitter.emit(
+                node,
+                "blocked",
+                message=reason.message,
+                block_reason=reason,
+            )
+            if package_parent_id:
+                blocked_by_package.setdefault(package_parent_id, []).append(reason)
+            continue
+
         if _is_turbopush_publish_node(node):
             if not body.project.agentPermissions.canSendNotifications:
                 reason = WorkflowRunBlockReason(
@@ -377,16 +407,48 @@ async def start_workflow_run(
             emitter.emit(node, "completed", message="TurboPush publish completed")
             continue
 
-        if _is_first_loop_native_node(node):
-            details, output_items = await _execute_native_node(
+        if _is_workflow_notify_node(node) or _is_webhook_notify_node(node):
+            reason = _notify_send_block_reason(
                 node,
-                outputs_by_node,
-                run_id,
-                workflow_id=body.project.id,
-                session=session,
-                runtime_nodes_by_id=runtime_nodes_by_id,
-                materialized_source_tasks=materialized_source_tasks,
+                body.project.agentPermissions,
+                outputs_by_node=outputs_by_node,
             )
+            if reason is not None:
+                emitter.emit(node, "started", message="Workflow notification binding started")
+                emitter.emit(
+                    node,
+                    "blocked",
+                    message=reason.message,
+                    block_reason=reason,
+                )
+                continue
+
+        if _is_first_loop_native_node(node):
+            try:
+                details, output_items = await _execute_native_node(
+                    node,
+                    outputs_by_node,
+                    run_id,
+                    workflow_id=body.project.id,
+                    session=session,
+                    runtime_nodes_by_id=runtime_nodes_by_id,
+                    materialized_source_tasks=materialized_source_tasks,
+                )
+            except WorkflowWebhookDeliveryError as exc:
+                reason = WorkflowRunBlockReason(
+                    code=exc.code,
+                    message=exc.message,
+                    source="workflow_webhook_delivery",
+                    details=exc.details,
+                )
+                emitter.emit(
+                    node,
+                    "failed",
+                    message=exc.message,
+                    block_reason=reason,
+                    details=reason.details,
+                )
+                continue
             outputs_by_node[node.id] = output_items
             emitter.emit(node, "started", message=_native_node_started_message(node))
             if _binding_id(node) == EXTERNAL_TOOL_BINDING_ID:
@@ -438,11 +500,7 @@ async def start_workflow_run(
             batch = batch.model_copy(update={"itemCount": len(output_items)})
         dispatch_trace_details = {
             **({"fleetMatch": fleet_match_details} if fleet_match_details else {}),
-            **(
-                {"agentDispatch": agent_dispatch_details}
-                if agent_dispatch_details
-                else {}
-            ),
+            **({"agentDispatch": agent_dispatch_details} if agent_dispatch_details else {}),
         }
         emitter.emit(
             node,
@@ -458,10 +516,7 @@ async def start_workflow_run(
         if agent_dispatch_details and agent_dispatch_details.get("success") is False:
             reason = WorkflowRunBlockReason(
                 code="fleet_agent_dispatch_failed",
-                message=str(
-                    agent_dispatch_details.get("error")
-                    or "Fleet agent dispatch failed"
-                ),
+                message=str(agent_dispatch_details.get("error") or "Fleet agent dispatch failed"),
                 source="workflow_fleet",
                 details={
                     "adapterTaskId": dispatch.taskId,
@@ -658,44 +713,44 @@ async def _store_workflow_run(
 ) -> None:
     stored = _StoredWorkflowRun(request, projection, list(events))
     _RUNS[run_id] = stored
-    if session is None:
-        return
+    if session is not None:
+        row = await session.get(WorkflowRunRow, run_id)
+        if row is None:
+            row = WorkflowRunRow(id=run_id)
+            session.add(row)
 
-    row = await session.get(WorkflowRunRow, run_id)
-    if row is None:
-        row = WorkflowRunRow(id=run_id)
-        session.add(row)
+        row.workflow_id = projection.workflowId
+        row.trace_id = projection.traceId
+        row.status = projection.status
+        row.valid = projection.valid
+        row.package_node_id = projection.packageNodeId
+        row.request = request.model_dump(mode="json")
+        row.projection = projection.model_dump(mode="json")
 
-    row.workflow_id = projection.workflowId
-    row.trace_id = projection.traceId
-    row.status = projection.status
-    row.valid = projection.valid
-    row.package_node_id = projection.packageNodeId
-    row.request = request.model_dump(mode="json")
-    row.projection = projection.model_dump(mode="json")
-
-    existing_events = (
-        await session.execute(
-            select(WorkflowRunEventRow).where(WorkflowRunEventRow.run_id == run_id)
-        )
-    ).scalars()
-    for event_row in existing_events:
-        await session.delete(event_row)
-
-    for event in events:
-        session.add(
-            WorkflowRunEventRow(
-                run_id=run_id,
-                workflow_id=event.workflowId,
-                trace_id=event.traceId,
-                event_id=event.id,
-                node_id=event.nodeId,
-                sequence=event.sequence,
-                event_type=event.eventType,
-                payload=event.model_dump(mode="json"),
+        existing_events = (
+            await session.execute(
+                select(WorkflowRunEventRow).where(WorkflowRunEventRow.run_id == run_id)
             )
-        )
-    await session.flush()
+        ).scalars()
+        for event_row in existing_events:
+            await session.delete(event_row)
+
+        for event in events:
+            session.add(
+                WorkflowRunEventRow(
+                    run_id=run_id,
+                    workflow_id=event.workflowId,
+                    trace_id=event.traceId,
+                    event_id=event.id,
+                    node_id=event.nodeId,
+                    sequence=event.sequence,
+                    event_type=event.eventType,
+                    payload=event.model_dump(mode="json"),
+                )
+            )
+        await session.flush()
+
+    await publish_workflow_run_event_mirror(events)
 
 
 async def _load_workflow_run(
@@ -1163,6 +1218,18 @@ def _is_turbopush_publish_node(node: CompiledWorkflowNode) -> bool:
     return isinstance(binding, dict) and binding.get("binding_id") == TURBOPUSH_BINDING_ID
 
 
+def _is_workflow_source_fetch_node(node: CompiledWorkflowNode) -> bool:
+    return _binding_id(node) == SOURCE_FETCH_BINDING_ID
+
+
+def _is_workflow_notify_node(node: CompiledWorkflowNode) -> bool:
+    return _binding_id(node) == NOTIFY_SEND_BINDING_ID
+
+
+def _is_webhook_notify_node(node: CompiledWorkflowNode) -> bool:
+    return _binding_id(node) == WEBHOOK_NOTIFY_BINDING_ID
+
+
 def _is_first_loop_native_node(node: CompiledWorkflowNode) -> bool:
     binding = node.runtime.get("binding")
     if not isinstance(binding, dict):
@@ -1170,8 +1237,12 @@ def _is_first_loop_native_node(node: CompiledWorkflowNode) -> bool:
     return binding.get("binding_id") in {
         NORMALIZE_BINDING_ID,
         MERGE_BINDING_ID,
+        ROUTER_ROUTE_BINDING_ID,
         RECORD_ACCEPTANCE_BINDING_ID,
         RECORD_SINK_BINDING_ID,
+        INBOX_STORE_BINDING_ID,
+        NOTIFY_SEND_BINDING_ID,
+        WEBHOOK_NOTIFY_BINDING_ID,
         EXTERNAL_TOOL_BINDING_ID,
     }
 
@@ -1321,6 +1392,23 @@ async def _execute_native_node(
             },
             merged,
         )
+    if binding_id == ROUTER_ROUTE_BINDING_ID:
+        binding = _read_dict(node.runtime.get("binding"))
+        binding_input = _read_dict(binding.get("input"))
+        expression = _read_string(binding_input.get("expression")) or "true"
+        routed = _route_runtime_items(node, input_items, run_id, expression=expression)
+        return (
+            {
+                "bindingId": binding_id,
+                "expression": expression,
+                "inputType": binding_input.get("inputPort", "recordCandidate[]"),
+                "outputType": binding_input.get("outputPort", "recordCandidate[]"),
+                "inputCandidateCount": len(input_items),
+                "routedCandidateCount": len(routed),
+                "lineage": _lineage_pointer(node),
+            },
+            routed,
+        )
     if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
         binding = _read_dict(node.runtime.get("binding"))
         binding_input = _read_dict(binding.get("input"))
@@ -1343,15 +1431,20 @@ async def _execute_native_node(
             },
             accepted,
         )
-    if binding_id == RECORD_SINK_BINDING_ID:
+    if binding_id in {RECORD_SINK_BINDING_ID, INBOX_STORE_BINDING_ID}:
         binding = _read_dict(node.runtime.get("binding"))
         binding_input = _read_dict(binding.get("input"))
+        target = (
+            _read_string(binding_input.get("target"))
+            or _read_string(binding_input.get("queue"))
+            or "records"
+        )
         stored_refs, skipped_count = await _store_record_sink_outputs(
             node,
             input_items,
             run_id=run_id,
             workflow_id=workflow_id,
-            target=_read_string(binding_input.get("target")) or "records",
+            target=target,
             session=session,
             runtime_nodes_by_id=runtime_nodes_by_id or {},
             materialized_source_tasks=materialized_source_tasks or {},
@@ -1359,12 +1452,45 @@ async def _execute_native_node(
         return (
             {
                 "bindingId": binding_id,
-                "target": binding_input.get("target", "records"),
+                "target": target,
                 "writeMode": binding_input.get("writeMode", "append"),
                 "inputRecordCount": len(input_items),
                 "storedRecordCount": len(stored_refs),
                 "skippedRecordCount": skipped_count,
                 "storedRefs": stored_refs,
+                "lineage": _lineage_pointer(node),
+            },
+            input_items,
+        )
+    if binding_id == NOTIFY_SEND_BINDING_ID:
+        binding = _read_dict(node.runtime.get("binding"))
+        binding_input = _read_dict(binding.get("input"))
+        return (
+            {
+                "bindingId": binding_id,
+                "notifierType": binding_input.get("notifier_type", "workflow"),
+                "target": binding_input.get("target", "workflow"),
+                "template": binding_input.get("template", "brief"),
+                "deliveryConfigured": binding_input.get("delivery_configured", False),
+                "inputItemCount": len(input_items),
+                "lineage": _lineage_pointer(node),
+            },
+            input_items,
+        )
+    if binding_id == WEBHOOK_NOTIFY_BINDING_ID:
+        binding = _read_dict(node.runtime.get("binding"))
+        binding_input = _read_dict(binding.get("input"))
+        delivery = await execute_workflow_webhook_delivery(
+            binding_input,
+            input_items,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            node_id=node.id,
+        )
+        return (
+            {
+                "bindingId": binding_id,
+                **delivery,
                 "lineage": _lineage_pointer(node),
             },
             input_items,
@@ -1784,16 +1910,273 @@ def _candidate_has_lineage(item: dict[str, Any]) -> bool:
     return bool(_read_dict_list(item.get("lineage")))
 
 
+def _route_runtime_items(
+    node: CompiledWorkflowNode,
+    input_items: list[dict[str, Any]],
+    run_id: str,
+    *,
+    expression: str,
+) -> list[dict[str, Any]]:
+    return [
+        _append_lineage(item, node, step="route", run_id=run_id)
+        for item in input_items
+        if _matches_route_expression(item, expression)
+    ]
+
+
+def _matches_route_expression(item: dict[str, Any], expression: str) -> bool:
+    normalized_expression = expression.strip()
+    if not normalized_expression or normalized_expression.lower() == "true":
+        return True
+    if normalized_expression.lower() == "false":
+        return False
+
+    or_terms = [term.strip() for term in normalized_expression.split("||")]
+    if len(or_terms) > 1:
+        return any(_matches_route_expression(item, term) for term in or_terms)
+
+    and_terms = [term.strip() for term in normalized_expression.split("&&")]
+    if len(and_terms) > 1:
+        return all(_matches_route_expression(item, term) for term in and_terms)
+
+    for operator in (">=", "<=", "===", "==", ">", "<"):
+        if operator not in normalized_expression:
+            continue
+        left, right = [part.strip() for part in normalized_expression.split(operator, 1)]
+        if not left.startswith("item."):
+            return True
+        value = _item_value(item, left.removeprefix("item."))
+        expected = _parse_expression_literal(right)
+        if operator in {"===", "=="}:
+            return value == expected
+        if not isinstance(value, int | float) or not isinstance(expected, int | float):
+            return False
+        if operator == ">=":
+            return value >= expected
+        if operator == "<=":
+            return value <= expected
+        if operator == ">":
+            return value > expected
+        if operator == "<":
+            return value < expected
+
+    if normalized_expression.startswith("item."):
+        return bool(_item_value(item, normalized_expression.removeprefix("item.")))
+    return True
+
+
+def _parse_expression_literal(raw: str) -> object:
+    value = raw.strip().strip('"').strip("'")
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    try:
+        return float(value) if "." in value else int(value)
+    except ValueError:
+        return value
+
+
+def _item_value(item: dict[str, Any], path: str) -> object:
+    raw = _read_dict(item.get("raw"))
+    normalized = _read_dict(item.get("normalizedData"))
+    for source in (raw, normalized, item):
+        value: object = source
+        for part in path.split("."):
+            if not isinstance(value, dict) or part not in value:
+                value = None
+                break
+            value = value[part]
+        if value is not None:
+            return value
+    return None
+
+
+def _required_source_credential_key(binding_input: dict[str, Any]) -> str | None:
+    config = _read_dict(binding_input.get("adapterConfig"))
+    params = _read_dict(binding_input.get("params"))
+    for source in (params, config, binding_input):
+        for field in (
+            "requiredCredentialKey",
+            "requiredCredential",
+            "credentialKey",
+            "credentialName",
+        ):
+            value = _read_string(source.get(field))
+            if value:
+                return value
+
+        required = source.get("requiresCredential")
+        if isinstance(required, str) and required.strip():
+            return required.strip()
+        if required is True:
+            return "default"
+    return None
+
+
+def _source_credential_configured(binding_input: dict[str, Any]) -> bool:
+    config = _read_dict(binding_input.get("adapterConfig"))
+    params = _read_dict(binding_input.get("params"))
+    for source in (params, config, binding_input):
+        if source.get("credentialConfigured") is True:
+            return True
+        for field in ("credentialRef", "credentialId", "authRef", "secretRef"):
+            if _read_string(source.get(field)):
+                return True
+        auth = source.get("auth")
+        if isinstance(auth, dict) and auth:
+            return True
+    return False
+
+
+def _source_fetch_block_reason(
+    node: CompiledWorkflowNode,
+    permissions: object,
+) -> WorkflowRunBlockReason:
+    binding = _read_dict(node.runtime.get("binding"))
+    binding_input = _read_dict(binding.get("input"))
+    if not bool(getattr(permissions, "canFetchNetwork", False)):
+        return WorkflowRunBlockReason(
+            code=FETCH_PERMISSION_REQUIRED,
+            message=(
+                "Workflow source fetch is bound, but agentPermissions.canFetchNetwork is false."
+            ),
+            source="workflow_permissions",
+            details={
+                "nodeId": node.id,
+                "bindingId": SOURCE_FETCH_BINDING_ID,
+                "requiredPermission": "canFetchNetwork",
+            },
+        )
+
+    credential_key = _required_source_credential_key(binding_input)
+    if credential_key and not _source_credential_configured(binding_input):
+        return WorkflowRunBlockReason(
+            code=MISSING_SOURCE_CREDENTIAL,
+            message=(
+                "Workflow source fetch is bound, but the required source "
+                "credential is not configured."
+            ),
+            source="workflow_source_credentials",
+            details={
+                "nodeId": node.id,
+                "bindingId": SOURCE_FETCH_BINDING_ID,
+                "provider": binding_input.get("provider"),
+                "channelType": binding_input.get("channelType"),
+                "requiredCredentialKey": credential_key,
+            },
+        )
+
+    live_mode = _read_string(binding_input.get("liveMode")) or "live"
+    if live_mode in {"fixture", "mock"}:
+        return WorkflowRunBlockReason(
+            code=SOURCE_OUTPUT_REQUIRED,
+            message=(
+                "Fixture/mock source fetch requires sourceOutputs, fixtureItems, "
+                "or bound source records before downstream nodes can run."
+            ),
+            source="workflow_source",
+            details={
+                "nodeId": node.id,
+                "bindingId": SOURCE_FETCH_BINDING_ID,
+                "liveMode": live_mode,
+            },
+        )
+
+    return WorkflowRunBlockReason(
+        code="live_source_executor_pending",
+        message=(
+            "Workflow source fetch is bound, but this source provider does not "
+            "yet have a live executor in the workflow run service."
+        ),
+        source="workflow_source",
+        details={
+            "nodeId": node.id,
+            "bindingId": SOURCE_FETCH_BINDING_ID,
+            "provider": binding_input.get("provider"),
+            "channelType": binding_input.get("channelType"),
+        },
+    )
+
+
+def _notify_send_block_reason(
+    node: CompiledWorkflowNode,
+    permissions: object,
+    *,
+    outputs_by_node: dict[str, list[dict[str, Any]]] | None = None,
+) -> WorkflowRunBlockReason | None:
+    binding = _read_dict(node.runtime.get("binding"))
+    binding_input = _read_dict(binding.get("input"))
+    binding_id = _binding_id(node) or NOTIFY_SEND_BINDING_ID
+    if not bool(getattr(permissions, "canSendNotifications", False)):
+        return WorkflowRunBlockReason(
+            code=SEND_PERMISSION_REQUIRED,
+            message=(
+                "Workflow notification is bound, but "
+                "agentPermissions.canSendNotifications is false."
+            ),
+            source="workflow_permissions",
+            details={
+                "nodeId": node.id,
+                "bindingId": binding_id,
+                "requiredPermission": "canSendNotifications",
+            },
+        )
+    if not bool(binding_input.get("delivery_configured")):
+        return WorkflowRunBlockReason(
+            code=MISSING_DELIVERY_PROJECTION,
+            message=(
+                "Workflow notification is bound, but delivery requires a "
+                "configured notifier target."
+            ),
+            source="workflow_notifier",
+            details={
+                "nodeId": node.id,
+                "bindingId": binding_id,
+                "required_params": ["webhook_url"],
+            },
+        )
+    if binding_id == WEBHOOK_NOTIFY_BINDING_ID and not _upstream_outputs(
+        node,
+        outputs_by_node or {},
+    ):
+        return WorkflowRunBlockReason(
+            code=MISSING_DELIVERY_PROJECTION,
+            message=(
+                "Webhook delivery is bound, but EvidenceBatch/resource "
+                "projection is not available."
+            ),
+            source="workflow_webhook_delivery",
+            details={
+                "nodeId": node.id,
+                "bindingId": WEBHOOK_NOTIFY_BINDING_ID,
+                "required_params": [
+                    "evidencebatch_projection_api",
+                    "delivery_projection",
+                ],
+            },
+        )
+    return None
+
+
 def _native_node_started_message(node: CompiledWorkflowNode) -> str:
     binding_id = _binding_id(node)
     if binding_id == NORMALIZE_BINDING_ID:
         return "Normalize transform started"
     if binding_id == MERGE_BINDING_ID:
         return "Merge node started"
+    if binding_id == ROUTER_ROUTE_BINDING_ID:
+        return "Router node started"
     if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
         return "Record acceptance gate started"
     if binding_id == RECORD_SINK_BINDING_ID:
         return "Record sink started"
+    if binding_id == INBOX_STORE_BINDING_ID:
+        return "Inbox store started"
+    if binding_id == NOTIFY_SEND_BINDING_ID:
+        return "Notification send started"
+    if binding_id == WEBHOOK_NOTIFY_BINDING_ID:
+        return "Webhook delivery started"
     if binding_id == EXTERNAL_TOOL_BINDING_ID:
         return "OpenCLI Tool Capability started"
     return "Native workflow node started"
@@ -1805,10 +2188,18 @@ def _native_node_partial_message(node: CompiledWorkflowNode) -> str:
         return "Record Candidates projected"
     if binding_id == MERGE_BINDING_ID:
         return "Candidate streams merged with lineage"
+    if binding_id == ROUTER_ROUTE_BINDING_ID:
+        return "Candidates routed with lineage"
     if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
         return "Record Candidates accepted as Records"
     if binding_id == RECORD_SINK_BINDING_ID:
         return "Accepted Records stored through Record Sink boundary"
+    if binding_id == INBOX_STORE_BINDING_ID:
+        return "Items stored through Inbox boundary"
+    if binding_id == NOTIFY_SEND_BINDING_ID:
+        return "Notification payload projected"
+    if binding_id == WEBHOOK_NOTIFY_BINDING_ID:
+        return "Webhook delivery evidence emitted"
     if binding_id == EXTERNAL_TOOL_BINDING_ID:
         return "OpenCLI Tool Capability emitted output"
     return "Native workflow node emitted trace evidence"
@@ -1820,10 +2211,18 @@ def _native_node_completed_message(node: CompiledWorkflowNode) -> str:
         return "Normalize transform completed"
     if binding_id == MERGE_BINDING_ID:
         return "Merge node completed"
+    if binding_id == ROUTER_ROUTE_BINDING_ID:
+        return "Router node completed"
     if binding_id == RECORD_ACCEPTANCE_BINDING_ID:
         return "Record acceptance gate completed"
     if binding_id == RECORD_SINK_BINDING_ID:
         return "Record sink completed"
+    if binding_id == INBOX_STORE_BINDING_ID:
+        return "Inbox store completed"
+    if binding_id == NOTIFY_SEND_BINDING_ID:
+        return "Notification send completed"
+    if binding_id == WEBHOOK_NOTIFY_BINDING_ID:
+        return "Webhook delivery completed"
     if binding_id == EXTERNAL_TOOL_BINDING_ID:
         return "OpenCLI Tool Capability completed"
     return "Native workflow node completed"

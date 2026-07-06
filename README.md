@@ -1,6 +1,6 @@
 # OpenCLI Admin
 
-[![Docker](https://img.shields.io/badge/Docker%20Hub-0.3.6-blue?logo=docker)](https://hub.docker.com/u/xjh1994)
+[![Docker](https://img.shields.io/badge/Docker%20Hub-0.3.6-blue?logo=docker)](https://hub.docker.com/u/2233admin)
 
 **现代化的数据采集系统** — 可视化管理多渠道数据采集，接入 [opencli](https://github.com/jackwener/opencli) 驱动国内外主流平台，支持 AI 处理、多节点分布式调度与实时通知推送。
 
@@ -11,10 +11,10 @@
 - 后端位于 `backend/`，前端通过 `/api/v1/*` 与 `/health` 代理对接后端。
 - 扩展仍在 `chrome/extension-src/` 下独立构建。
 
-**OpenCLI WebUI** OpenCLI 可视化界面 [opencli-webui](https://github.com/xjh1994/opencli-webui)
+**OpenCLI WebUI** OpenCLI 可视化界面 [opencli-webui](https://github.com/2233admin/opencli-webui)
 
 **仪表盘**
-<img width="1600" height="900" alt="dashboard" src="https://raw.githubusercontent.com/xjh1994/opencli-admin/develop/docs/dashboard.png" />
+<img width="1600" height="900" alt="dashboard" src="https://raw.githubusercontent.com/2233admin/opencli-admin/develop/docs/dashboard.png" />
 
 **Agent 节点自动路由**
 <img width="949" height="726" alt="clipboard-image-1774003758" src="https://github.com/user-attachments/assets/2838af3b-2ecb-4d3b-8d8e-21c69db174fc" />
@@ -271,7 +271,7 @@ docker run -d --name opencli-agent --restart unless-stopped \
   -e CENTRAL_API_URL=http://<center-ip>:8030 \
   -e AGENT_REGISTER=ws -e AGENT_MODE=bridge \
   -p 19823:19823 \
-  xjh1994/opencli-admin-agent:0.3.6
+  2233admin/opencli-admin-agent:0.3.6
 
 # HTTP 模式（局域网）
 docker run -d --name opencli-agent --restart unless-stopped \
@@ -279,7 +279,7 @@ docker run -d --name opencli-agent --restart unless-stopped \
   -e CENTRAL_API_URL=http://<center-ip>:8030 \
   -e AGENT_REGISTER=http -e AGENT_MODE=bridge \
   -p 19823:19823 \
-  xjh1994/opencli-admin-agent:0.3.6
+  2233admin/opencli-admin-agent:0.3.6
 ```
 
 **一键脚本安装**
@@ -472,20 +472,20 @@ TAG=0.3.6
 docker buildx build --builder multiarch \
   --platform linux/amd64,linux/arm64 \
   --build-arg IMAGE_TAG=${TAG} \
-  -t xjh1994/opencli-admin-api:${TAG} --push .
+  -t 2233admin/opencli-admin-api:${TAG} --push .
 
 # Agent 基础版（~100 MB，通过宿主机 Chrome 连接）
 docker buildx build --builder multiarch \
   --platform linux/amd64,linux/arm64 \
   -f agent/Dockerfile \
-  -t xjh1994/opencli-admin-agent:${TAG} --push .
+  -t 2233admin/opencli-admin-agent:${TAG} --push .
 
 # Agent 内置 Chrome 版（~450 MB，完全自包含）
 docker buildx build --builder multiarch \
   --platform linux/amd64,linux/arm64 \
   -f agent/Dockerfile \
   --build-arg INSTALL_CHROME=true \
-  -t xjh1994/opencli-admin-agent:${TAG}-chrome --push .
+  -t 2233admin/opencli-admin-agent:${TAG}-chrome --push .
 ```
 
 如需并行构建所有镜像：
@@ -494,13 +494,13 @@ docker buildx build --builder multiarch \
 TAG=0.3.6
 docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 \
   --build-arg IMAGE_TAG=${TAG} \
-  -t xjh1994/opencli-admin-api:${TAG} --push . > /tmp/build-api.log 2>&1 &
+  -t 2233admin/opencli-admin-api:${TAG} --push . > /tmp/build-api.log 2>&1 &
 docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 \
   -f agent/Dockerfile \
-  -t xjh1994/opencli-admin-agent:${TAG} --push . > /tmp/build-agent.log 2>&1 &
+  -t 2233admin/opencli-admin-agent:${TAG} --push . > /tmp/build-agent.log 2>&1 &
 docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 \
   -f agent/Dockerfile --build-arg INSTALL_CHROME=true \
-  -t xjh1994/opencli-admin-agent:${TAG}-chrome --push . > /tmp/build-agent-chrome.log 2>&1 &
+  -t 2233admin/opencli-admin-agent:${TAG}-chrome --push . > /tmp/build-agent-chrome.log 2>&1 &
 wait && echo "done"
 ```
 

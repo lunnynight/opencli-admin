@@ -1,6 +1,6 @@
 # Shared backend config (DRY)
 x-backend-common: &backend-common
-  image: ${DOCKER_REGISTRY:-docker.io/}xjh1994/opencli-admin-api:${IMAGE_TAG:-0.3.6}
+  image: ${DOCKER_REGISTRY:-docker.io/}${DOCKER_IMAGE_NAMESPACE:-2233admin}/opencli-admin-api:${IMAGE_TAG:-0.3.6}
   env_file:
     - path: .env
       required: false
@@ -55,6 +55,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       DEBUG: ${DEBUG:-false}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Built-in sidecar agent URL (Chrome + agent_server in one container).
@@ -101,6 +102,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RUN_MIGRATIONS: "false"
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENCLI_CDP_ENDPOINT: ${OPENCLI_CDP_ENDPOINT:-http://agent-1:19823}
@@ -123,6 +125,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RUN_MIGRATIONS: "false"
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -138,7 +141,7 @@ services:
   #   • macOS/Linux: open -a "Google Chrome" --args --remote-debugging-port=9222
   #   • Or start the Bridge daemon: node $(npm root -g)/@jackwener/opencli/dist/daemon.js
   agent-1:
-    image: ${DOCKER_REGISTRY:-docker.io/}xjh1994/opencli-admin-agent:${IMAGE_TAG:-0.3.6}${CHROME_SUFFIX:-}
+    image: ${DOCKER_REGISTRY:-docker.io/}${DOCKER_IMAGE_NAMESPACE:-2233admin}/opencli-admin-agent:${IMAGE_TAG:-0.3.6}${CHROME_SUFFIX:-}
     environment:
       CENTRAL_API_URL: http://api:8000
       # Use container name so the API can reach this agent by DNS within the Docker network
@@ -155,6 +158,8 @@ services:
       # cdp mode: Chrome DevTools Protocol on host
       OPENCLI_CDP_ENDPOINT: ${OPENCLI_CDP_ENDPOINT:-http://host.docker.internal:9222}
       OPENCLI_TIMEOUT: ${OPENCLI_TIMEOUT:-120}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
     extra_hosts:
@@ -180,13 +185,13 @@ services:
   #     -e CENTRAL_API_URL=http://<center-ip>:8031 \
   #     -e AGENT_REGISTER=ws \
   #     -p 19823:19823 \
-  #     xjh1994/opencli-admin-agent:0.1.0
+  #     2233admin/opencli-admin-agent:0.3.6
   #
   # Or start the bundled agent profile (local network):
   #   docker compose --profile agent up agent
   agent:
     profiles: ["agent"]
-    image: ${DOCKER_REGISTRY:-docker.io/}xjh1994/opencli-admin-agent:${IMAGE_TAG:-0.3.6}${CHROME_SUFFIX:-}
+    image: ${DOCKER_REGISTRY:-docker.io/}${DOCKER_IMAGE_NAMESPACE:-2233admin}/opencli-admin-agent:${IMAGE_TAG:-0.3.6}${CHROME_SUFFIX:-}
     environment:
       CENTRAL_API_URL: ${CENTRAL_API_URL:-}
       AGENT_ADVERTISE_URL: ${AGENT_ADVERTISE_URL:-}
@@ -195,6 +200,8 @@ services:
       AGENT_LABEL: ${AGENT_LABEL:-}
       AGENT_REGISTER: ${AGENT_REGISTER:-http}
       OPENCLI_TIMEOUT: ${OPENCLI_TIMEOUT:-120}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
     volumes:

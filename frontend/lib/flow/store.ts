@@ -3,9 +3,6 @@
 import { create } from "zustand"
 import { nanoid } from "nanoid"
 import {
-  addEdge,
-  applyEdgeChanges,
-  applyNodeChanges,
   type Connection,
   type EdgeChange,
   type NodeChange,
@@ -23,13 +20,19 @@ import type {
   GeneratedWorkflowSpec,
   ParameterInterface,
 } from "./types"
-import { applyHelperLines, type HelperLines } from "./helper-lines"
-import { useSettingsStore } from "./settings-store"
-import { resolveCollisions, findFreePosition, nodeRect, COLLISION_GAP } from "./collision"
-import { connectedComponentEdges, findConnectedComponentForNode } from "./graph-components"
-import { getLayoutedElements, type LayoutDirection, type LayoutEngine } from "./layout"
-import { animateNodes } from "./animate"
+import type { HelperLines } from "./helper-lines"
+import { resolveCollisions, findFreePosition, nodeRect } from "./collision"
+import type { LayoutDirection, LayoutEngine } from "./layout"
 import { NODE_PALETTE } from "./palette"
+import { createLayoutActions } from "./store-layout-actions"
+import {
+  createCanvasChangeActions,
+  createEdgeActions,
+  createHistoryActions,
+  createSelectionActions,
+  createWhiteboardActions,
+} from "./store-slices"
+import { snapshot } from "./store-utils"
 import { COLLECTION_WORKFLOW_PROJECT } from "../workflow/collection-pipeline"
 import type { WorkflowProject } from "../workflow/schema"
 import { parseWorkflowProject, type AdapterBinding, type WorkflowProfile, type WorkflowProjectNode } from "../workflow/schema"
@@ -53,12 +56,11 @@ import type {
 
 export type { GeneratedWorkflowSpec } from "./types"
 
-const HISTORY_LIMIT = 100
 const STORAGE_KEY = "workflow-editor-state"
 const initialWorkflowProject = COLLECTION_WORKFLOW_PROJECT
 const initialWorkflowFlow = workflowProjectToReactFlow(initialWorkflowProject)
 
-type FlowState = {
+export type FlowState = {
   workflowProject: WorkflowProject
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
@@ -161,14 +163,6 @@ type FlowState = {
   focusProposalTargets: (nodeIds: string[], edgeIds?: string[]) => void
   clearProposalFocus: () => void
   applyGeneratedWorkflow: (spec: GeneratedWorkflowSpec) => void
-}
-
-function snapshot(state: Pick<FlowState, "nodes" | "edges" | "drawings">): FlowSnapshot {
-  return {
-    nodes: JSON.parse(JSON.stringify(state.nodes)),
-    edges: JSON.parse(JSON.stringify(state.edges)),
-    drawings: JSON.parse(JSON.stringify(state.drawings)),
-  }
 }
 
 function uniqueWorkflowNodeId(prefix: string, nodes: WorkflowProject["nodes"]): string {
@@ -598,82 +592,9 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   penColor: "var(--chart-1)",
   penSize: 4,
 
-  setToolMode: (mode) => set({ toolMode: mode }),
-  setPenColor: (color) => set({ penColor: color }),
-  setPenSize: (size) => set({ penSize: size }),
-  addStroke: (stroke) => set((state) => ({ drawings: [...state.drawings, stroke] })),
-  clearDrawings: () => {
-    get().takeSnapshot()
-    set({ drawings: [] })
-  },
-
-  onNodesChange: (changes) => {
-    const { changes: nextChanges, helperLines } = applyHelperLines(
-      changes,
-      get().nodes,
-      useSettingsStore.getState().snapToHelperLines,
-    )
-    set({
-      nodes: applyNodeChanges(nextChanges, get().nodes),
-      helperLines,
-    })
-  },
-
-  onEdgesChange: (changes) => {
-    set({ edges: applyEdgeChanges(changes, get().edges) })
-  },
-
-  onConnect: (connection) => {
-    get().takeSnapshot()
-    set({
-      edges: addEdge(
-        {
-          ...connection,
-          type: "workflow",
-          animated: true,
-        },
-        get().edges,
-      ),
-    })
-  },
-
-  takeSnapshot: () => {
-    set((state) => ({
-      past: [...state.past, snapshot(state)].slice(-HISTORY_LIMIT),
-      future: [],
-    }))
-  },
-
-  undo: () => {
-    const { past } = get()
-    if (past.length === 0) return
-    const previous = past[past.length - 1]
-    set((state) => ({
-      past: state.past.slice(0, -1),
-      future: [snapshot(state), ...state.future].slice(0, HISTORY_LIMIT),
-      nodes: previous.nodes,
-      edges: previous.edges,
-      drawings: previous.drawings ?? [],
-      helperLines: { snapPosition: {} },
-    }))
-  },
-
-  redo: () => {
-    const { future } = get()
-    if (future.length === 0) return
-    const next = future[0]
-    set((state) => ({
-      past: [...state.past, snapshot(state)].slice(-HISTORY_LIMIT),
-      future: state.future.slice(1),
-      nodes: next.nodes,
-      edges: next.edges,
-      drawings: next.drawings ?? [],
-      helperLines: { snapPosition: {} },
-    }))
-  },
-
-  canUndo: () => get().past.length > 0,
-  canRedo: () => get().future.length > 0,
+  ...createWhiteboardActions(set, get),
+  ...createCanvasChangeActions(set, get),
+  ...createHistoryActions(set, get),
 
   addNodeFromPalette: (item, position) => {
     get().takeSnapshot()
@@ -854,405 +775,10 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     }))
   },
 
-  deleteSelected: () => {
-    const { nodes, edges } = get()
-    const selectedNodeIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id))
-    const selectedEdgeIds = new Set(edges.filter((e) => e.selected).map((e) => e.id))
-    if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) return
-    get().takeSnapshot()
-    set({
-      nodes: nodes.filter((n) => !selectedNodeIds.has(n.id)),
-      edges: edges.filter(
-        (e) => !selectedEdgeIds.has(e.id) && !selectedNodeIds.has(e.source) && !selectedNodeIds.has(e.target),
-      ),
-    })
-  },
+  ...createSelectionActions(set, get),
+  ...createLayoutActions(set, get),
 
-  disconnectSelectedConnections: () => {
-    const { nodes, edges } = get()
-    const selectedNodeIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id))
-    const selectedEdgeIds = new Set(edges.filter((e) => e.selected).map((e) => e.id))
-    if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) return 0
-    const nextEdges = edges.filter(
-      (e) => !selectedEdgeIds.has(e.id) && !selectedNodeIds.has(e.source) && !selectedNodeIds.has(e.target),
-    )
-    const removed = edges.length - nextEdges.length
-    if (removed === 0) return 0
-    get().takeSnapshot()
-    set({ edges: nextEdges })
-    return removed
-  },
-
-  disconnectNodeConnections: (nodeId) => {
-    const { edges } = get()
-    const nextEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId)
-    const removed = edges.length - nextEdges.length
-    if (removed === 0) return 0
-    get().takeSnapshot()
-    set({ edges: nextEdges })
-    return removed
-  },
-
-  removeEdgesByIds: (edgeIds) => {
-    const ids = new Set(edgeIds)
-    if (ids.size === 0) return 0
-    const { edges } = get()
-    const nextEdges = edges.filter((e) => !ids.has(e.id))
-    const removed = edges.length - nextEdges.length
-    if (removed === 0) return 0
-    get().takeSnapshot()
-    set({ edges: nextEdges })
-    return removed
-  },
-
-  selectConnectedComponent: (nodeId) => {
-    const { nodes, edges } = get()
-    const nodeIds = findConnectedComponentForNode(nodeId, nodes, edges)
-    const edgeIds = connectedComponentEdges(nodeIds, edges)
-    const selectedNodes = new Set(nodeIds)
-    const selectedEdges = new Set(edgeIds)
-    set({
-      nodes: nodes.map((node) => ({ ...node, selected: selectedNodes.has(node.id) })),
-      edges: edges.map((edge) => ({ ...edge, selected: selectedEdges.has(edge.id) })),
-    })
-    return { nodeIds, edgeIds }
-  },
-
-  duplicateSelected: () => {
-    const { nodes } = get()
-    const selected = nodes.filter((n) => n.selected)
-    if (selected.length === 0) return
-    get().takeSnapshot()
-    const idMap = new Map<string, string>()
-    const clones = selected.map((n) => {
-      const newId = nanoid(8)
-      idMap.set(n.id, newId)
-      return {
-        ...n,
-        id: newId,
-        selected: true,
-        position: { x: n.position.x + 40, y: n.position.y + 40 },
-        data: JSON.parse(JSON.stringify(n.data)),
-      }
-    })
-    set({
-      nodes: [...nodes.map((n) => ({ ...n, selected: false })), ...clones],
-    })
-  },
-
-  copy: () => {
-    const { nodes, edges } = get()
-    const selectedNodes = nodes.filter((n) => n.selected)
-    if (selectedNodes.length === 0) return
-    const ids = new Set(selectedNodes.map((n) => n.id))
-    const internalEdges = edges.filter((e) => ids.has(e.source) && ids.has(e.target))
-    set({
-      clipboard: {
-        nodes: JSON.parse(JSON.stringify(selectedNodes)),
-        edges: JSON.parse(JSON.stringify(internalEdges)),
-      },
-    })
-  },
-
-  cut: () => {
-    get().copy()
-    get().deleteSelected()
-  },
-
-  paste: (position) => {
-    const { clipboard, nodes } = get()
-    if (!clipboard || clipboard.nodes.length === 0) return
-    get().takeSnapshot()
-
-    const idMap = new Map<string, string>()
-    // anchor offset
-    const minX = Math.min(...clipboard.nodes.map((n) => n.position.x))
-    const minY = Math.min(...clipboard.nodes.map((n) => n.position.y))
-    const offsetX = position ? position.x - minX : 48
-    const offsetY = position ? position.y - minY : 48
-
-    const newNodes = clipboard.nodes.map((n) => {
-      const newId = nanoid(8)
-      idMap.set(n.id, newId)
-      return {
-        ...n,
-        id: newId,
-        selected: true,
-        position: { x: n.position.x + offsetX, y: n.position.y + offsetY },
-        data: JSON.parse(JSON.stringify(n.data)),
-      }
-    })
-
-    const newEdges = clipboard.edges.map((e) => ({
-      ...e,
-      id: `e-${nanoid(6)}`,
-      source: idMap.get(e.source) ?? e.source,
-      target: idMap.get(e.target) ?? e.target,
-      selected: false,
-    }))
-
-    set((state) => ({
-      nodes: [...nodes.map((n) => ({ ...n, selected: false })), ...newNodes],
-      edges: [...state.edges, ...newEdges],
-    }))
-  },
-
-  autoLayout: async (direction, engine = "elk", animated = true) => {
-    get().takeSnapshot()
-    const current = get().nodes
-    const { nodes } = await getLayoutedElements(current, get().edges, direction, engine)
-    if (!animated || typeof window === "undefined") {
-      set({ nodes })
-      return
-    }
-    animateNodes(current, nodes, (frame) => set({ nodes: frame }))
-  },
-
-  toggleGroupCollapse: (id) => {
-    get().takeSnapshot()
-    set((state) => {
-      const target = state.nodes.find((n) => n.id === id)
-      if (!target) return {}
-      const collapsed = !target.data.collapsed
-      const expandedHeight = (target.data.expandedHeight as number) ?? (target.height as number) ?? 220
-      return {
-        nodes: state.nodes.map((n) => {
-          if (n.id === id) {
-            return {
-              ...n,
-              data: { ...n.data, collapsed, expandedHeight },
-              height: collapsed ? 56 : expandedHeight,
-              style: {
-                ...n.style,
-                width: (n.width as number) ?? 320,
-                height: collapsed ? 56 : expandedHeight,
-              },
-            }
-          }
-          if (n.parentId === id) {
-            return { ...n, hidden: collapsed }
-          }
-          return n
-        }),
-      }
-    })
-  },
-
-  groupSelection: () => {
-    const { nodes } = get()
-    const selected = nodes.filter((n) => n.selected && !n.parentId && n.type !== "group")
-    if (selected.length < 1) return
-    get().takeSnapshot()
-
-    const PAD = 40
-    const minX = Math.min(...selected.map((n) => n.position.x))
-    const minY = Math.min(...selected.map((n) => n.position.y))
-    const maxX = Math.max(...selected.map((n) => n.position.x + ((n.measured?.width ?? (n.width as number)) ?? 220)))
-    const maxY = Math.max(...selected.map((n) => n.position.y + ((n.measured?.height ?? (n.height as number)) ?? 90)))
-
-    const groupId = `group-${nanoid(6)}`
-    const width = maxX - minX + PAD * 2
-    const height = maxY - minY + PAD * 2
-    const groupNode: WorkflowNode = {
-      id: groupId,
-      type: "group",
-      position: { x: minX - PAD, y: minY - PAD },
-      width,
-      height,
-      style: { width, height },
-      data: {
-        label: "分组",
-        nodeType: "group",
-        category: "logic",
-        icon: "Group",
-        color: "var(--muted-foreground)",
-      },
-    }
-
-    const selectedIds = new Set(selected.map((n) => n.id))
-    const updated = nodes.map((n) => {
-      if (!selectedIds.has(n.id)) return { ...n, selected: false }
-      return {
-        ...n,
-        parentId: groupId,
-        selected: false,
-        position: { x: n.position.x - (minX - PAD), y: n.position.y - (minY - PAD) },
-      }
-    })
-
-    set({ nodes: [groupNode, ...updated] })
-  },
-
-  ungroupSelection: () => {
-    const { nodes } = get()
-    const groups = nodes.filter((n) => n.selected && n.type === "group")
-    if (groups.length === 0) return
-    get().takeSnapshot()
-    const groupIds = new Set(groups.map((g) => g.id))
-    const groupPos = new Map(groups.map((g) => [g.id, g.position]))
-
-    const detached = nodes
-      .filter((n) => !groupIds.has(n.id))
-      .map((n) => {
-        if (n.parentId && groupIds.has(n.parentId)) {
-          const gp = groupPos.get(n.parentId)!
-          const { parentId, extent, ...rest } = n
-          return { ...rest, position: { x: n.position.x + gp.x, y: n.position.y + gp.y } }
-        }
-        return n
-      })
-
-    set({ nodes: detached })
-  },
-
-  attachToParent: (childId, parentId) => {
-    const { nodes } = get()
-    const child = nodes.find((n) => n.id === childId)
-    const parent = nodes.find((n) => n.id === parentId)
-    if (!child || !parent || child.parentId === parentId) return
-    get().takeSnapshot()
-
-    const attached = nodes.map((n) =>
-      n.id === childId
-        ? {
-            ...n,
-            parentId,
-            position: { x: n.position.x - parent.position.x, y: n.position.y - parent.position.y },
-          }
-        : n,
-    )
-    // React Flow 要求 parent 必须出现在 child 之前，否则子节点渲染异常（"消失"）
-    const parentIdx = attached.findIndex((n) => n.id === parentId)
-    const childIdx = attached.findIndex((n) => n.id === childId)
-    if (childIdx < parentIdx) {
-      const [childNode] = attached.splice(childIdx, 1)
-      const newParentIdx = attached.findIndex((n) => n.id === parentId)
-      attached.splice(newParentIdx + 1, 0, childNode)
-    }
-    set({ nodes: attached })
-    get().resizeGroupToFit(parentId)
-  },
-
-  detachFromParent: (childId) => {
-    const { nodes } = get()
-    const child = nodes.find((n) => n.id === childId)
-    if (!child || !child.parentId) return
-    const parent = nodes.find((n) => n.id === child.parentId)
-    if (!parent) return
-    get().takeSnapshot()
-    set({
-      nodes: nodes.map((n) => {
-        if (n.id !== childId) return n
-        const { parentId, extent, ...rest } = n
-        return { ...rest, position: { x: n.position.x + parent.position.x, y: n.position.y + parent.position.y } }
-      }),
-    })
-  },
-
-  updateEdgeWaypoints: (edgeId, waypoints) => {
-    set((state) => ({
-      edges: state.edges.map((e) =>
-        e.id === edgeId ? { ...e, type: "editable", data: { ...e.data, waypoints } } : e,
-      ),
-    }))
-  },
-
-  updateEdgeData: (edgeId, data) => {
-    set((state) => ({
-      edges: state.edges.map((e) => (e.id === edgeId ? { ...e, data: { ...e.data, ...data } } : e)),
-    }))
-  },
-
-  updateEdgeType: (edgeId, type) => {
-    get().takeSnapshot()
-    set((state) => ({
-      edges: state.edges.map((e) =>
-        e.id === edgeId
-          ? { ...e, type, data: { ...e.data, ...(type === "editable" ? {} : { waypoints: undefined }) } }
-          : e,
-      ),
-    }))
-  },
-
-  toggleEdgeAnimated: (edgeId) => {
-    set((state) => ({
-      edges: state.edges.map((e) => (e.id === edgeId ? { ...e, animated: !e.animated } : e)),
-    }))
-  },
-
-  addChildNode: (parentId) => {
-    const { nodes, edges } = get()
-    const parent = nodes.find((n) => n.id === parentId)
-    if (!parent) return
-    get().takeSnapshot()
-    const id = nanoid(8)
-    const parentRect = nodeRect(parent)
-    const size = { width: 240, height: 96 }
-    // 端口在上下两侧 → 子节点放在父节点下方，同层不重叠（不做全图重排）
-    const childCount = edges.filter((e) => e.source === parentId).length
-    const desired = {
-      x: parentRect.x + childCount * (size.width + COLLISION_GAP),
-      y: parentRect.y + parentRect.height + 96,
-    }
-    const freePos = findFreePosition(nodes, desired, size, parent.parentId)
-    const newNode: WorkflowNode = {
-      id,
-      type: "workflow",
-      position: freePos,
-      ...(parent.parentId ? { parentId: parent.parentId } : {}),
-      data: {
-        label: "新节点",
-        nodeType: "action",
-        category: "action",
-        icon: "Zap",
-        color: "var(--chart-1)",
-        status: "idle",
-      },
-    }
-    const newEdge: WorkflowEdge = {
-      id: `e-${nanoid(6)}`,
-      source: parentId,
-      target: id,
-      type: "workflow",
-      animated: true,
-    }
-    set({ nodes: [...nodes, newNode], edges: [...edges, newEdge] })
-  },
-
-  insertNodeOnEdge: (edgeId) => {
-    const { nodes, edges } = get()
-    const edge = edges.find((e) => e.id === edgeId)
-    if (!edge) return
-    get().takeSnapshot()
-    const source = nodes.find((n) => n.id === edge.source)
-    const target = nodes.find((n) => n.id === edge.target)
-    if (!source || !target) return
-
-    const id = nanoid(8)
-    const newNode: WorkflowNode = {
-      id,
-      type: "workflow",
-      position: {
-        x: (source.position.x + target.position.x) / 2,
-        y: (source.position.y + target.position.y) / 2,
-      },
-      data: {
-        label: "插入节点",
-        nodeType: "action",
-        category: "action",
-        icon: "Zap",
-        color: "var(--chart-1)",
-        status: "idle",
-      },
-    }
-    const newEdges = edges.filter((e) => e.id !== edgeId)
-    newEdges.push(
-      { id: `e-${nanoid(6)}`, source: edge.source, target: id, type: "workflow", animated: true },
-      { id: `e-${nanoid(6)}`, source: id, target: edge.target, type: "workflow", animated: true },
-    )
-    // 插入点保持原位，把周围节点推开，避免全图重排
-    set({ nodes: resolveCollisions([...nodes, newNode], id), edges: newEdges })
-  },
+  ...createEdgeActions(set, get),
 
   enterNodeNetwork: (nodeId) => {
     const { workflowProject, nodes, edges, drawings, networkStack } = get()
@@ -1452,60 +978,6 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     })
     return internalIds.size
   },
-
-  resolveNodeCollisions: (movedId) => {
-    set((state) => ({ nodes: resolveCollisions(state.nodes, movedId) }))
-  },
-
-  resizeGroupToFit: (groupId) => {
-    const { nodes } = get()
-    const group = nodes.find((n) => n.id === groupId && n.type === "group")
-    if (!group || group.data.collapsed) return
-    const children = nodes.filter((n) => n.parentId === groupId && !n.hidden)
-    if (children.length === 0) return
-
-    const PAD = 32
-    const HEADER = 44
-    let minX = Number.POSITIVE_INFINITY
-    let minY = Number.POSITIVE_INFINITY
-    let maxX = Number.NEGATIVE_INFINITY
-    let maxY = Number.NEGATIVE_INFINITY
-    for (const c of children) {
-      const r = nodeRect(c)
-      minX = Math.min(minX, r.x)
-      minY = Math.min(minY, r.y)
-      maxX = Math.max(maxX, r.x + r.width)
-      maxY = Math.max(maxY, r.y + r.height)
-    }
-
-    // 子节点相对坐标可能为负（拖到分组左/上侧）→ 平移分组原点并修正所有子节点
-    const shiftX = Math.max(0, PAD - minX)
-    const shiftY = Math.max(0, HEADER + PAD - minY)
-    const width = Math.max((group.width as number) ?? 320, maxX + shiftX + PAD)
-    const height = Math.max((group.height as number) ?? 220, maxY + shiftY + PAD)
-
-    set({
-      nodes: nodes.map((n) => {
-        if (n.id === groupId) {
-          return {
-            ...n,
-            position: { x: n.position.x - shiftX, y: n.position.y - shiftY },
-            width,
-            height,
-            style: { ...n.style, width, height },
-          }
-        }
-        if (n.parentId === groupId) {
-          return { ...n, position: { x: n.position.x + shiftX, y: n.position.y + shiftY } }
-        }
-        return n
-      }),
-    })
-  },
-
-  setNodes: (updater) => set((state) => ({ nodes: updater(state.nodes) })),
-  setSelectedIds: (ids) => set({ selectedIds: ids }),
-  clearHelperLines: () => set({ helperLines: { snapPosition: {} } }),
 
   save: () => {
     const { nodes, edges, drawings } = get()
